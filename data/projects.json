@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Data Structure Review",
+    "path": "/Users/rzzz/Desktop/Workspace/Projects/ds-review",
+    "ide": "vscode",
+    "docs": [
+      "/Users/rzzz/Desktop/Workspace/Projects/ds-review/notes/handbook.pdf"
+    ],
+    "launch": [
+      "source .venv/bin/activate"
+    ],
+    "links": [
+      "https://brightspace.example.edu/d2l/home/12345"
+    ],
+    "notes": "Sample entry"
+  }
+]
