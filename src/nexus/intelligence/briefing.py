@@ -63,6 +63,8 @@ class Briefing:
     schedule: list[BriefingItem]
     warnings: list[str] = field(default_factory=list)
     task_index: dict[str, Task] = field(default_factory=dict)
+    warm_message: str | None = None
+    focus: list[BriefingItem] = field(default_factory=list)
 
 
 def select_exam_reminders(tasks: Iterable[Task], window_days: int = 180) -> list[Task]:
@@ -101,9 +103,10 @@ def build_briefing(
 
     warnings: list[str] = []
     client = LLMClient(config)
-    if use_llm and client.is_configured():
+    briefing: Briefing | None = None
+    if use_llm and config.llm_enabled and client.is_configured():
         try:
-            return _llm_briefing(
+            briefing = _llm_briefing(
                 filtered,
                 task_index,
                 now_local,
@@ -115,11 +118,14 @@ def build_briefing(
             warnings.append(str(exc))
         except Exception as exc:  # pragma: no cover - safety net for UI
             warnings.append(f"LLM parse failed: {exc}")
-    elif use_llm:
+    elif use_llm and config.llm_enabled:
         warnings.append("LLM not configured. Showing rule-based briefing only.")
 
-    briefing = _fallback_briefing(filtered, task_index, now_local)
+    if briefing is None:
+        briefing = _rule_briefing(filtered, task_index, now_local)
     briefing.warnings.extend(warnings)
+    briefing.warm_message = _build_warm_message(briefing, now_local)
+    briefing.focus = _select_focus_items(briefing, now_local, max_items=3)
     return briefing
 
 
@@ -151,7 +157,22 @@ def _item_payload(item: BriefingItem) -> dict[str, str | None | list[str]]:
     }
 
 
-def _filter_tasks(tasks: list[Task], now_local: datetime, window_days: int) -> list[Task]:
+def select_window_tasks(
+    tasks: Iterable[Task],
+    window_days: int = 7,
+    now: datetime | None = None,
+    include_noise: bool = False,
+) -> list[Task]:
+    now_local = (now or datetime.now().astimezone())
+    return _filter_tasks(list(tasks), now_local, window_days, include_noise=include_noise)
+
+
+def _filter_tasks(
+    tasks: list[Task],
+    now_local: datetime,
+    window_days: int,
+    include_noise: bool = False,
+) -> list[Task]:
     window_end = now_local + timedelta(days=window_days)
     window_start = now_local
     email_min = now_local - timedelta(days=window_days)
@@ -171,7 +192,7 @@ def _filter_tasks(tasks: list[Task], now_local: datetime, window_days: int) -> l
             else:
                 continue
 
-        if _is_noise(task):
+        if not include_noise and _is_noise(task):
             continue
 
         kept.append(task)
@@ -277,6 +298,7 @@ def _llm_briefing(
         max_tokens=1200,
     )
     data = extract_json(response.content)
+    _validate_llm_payload(data)
 
     todo_items = _parse_items(data.get("todo", []), task_index, now_local)
     schedule_items = _parse_items(data.get("schedule", []), task_index, now_local)
@@ -351,6 +373,15 @@ def _parse_items(
     return items
 
 
+def _validate_llm_payload(data: object) -> None:
+    if not isinstance(data, dict):
+        raise LLMError("LLM output is not a JSON object.")
+    if "todo" not in data or "schedule" not in data:
+        raise LLMError("LLM output missing required keys.")
+    if not isinstance(data.get("todo"), list) or not isinstance(data.get("schedule"), list):
+        raise LLMError("LLM output has invalid list types.")
+
+
 def _resolve_source_ids(
     raw_ids: Iterable[str],
     action_url: str | None,
@@ -366,7 +397,7 @@ def _resolve_source_ids(
     return []
 
 
-def _fallback_briefing(
+def _rule_briefing(
     tasks: list[Task],
     task_index: dict[str, Task],
     now_local: datetime,
@@ -375,7 +406,7 @@ def _fallback_briefing(
     schedule: list[BriefingItem] = []
     for task in tasks:
         title = _normalize_title(task)
-        text_en, text_zh = _fallback_text(title, task.due_at is not None)
+        text_en, text_zh = _friendly_text(task, title, now_local)
         item = BriefingItem(
             text_en=text_en,
             text_zh=text_zh,
@@ -406,12 +437,39 @@ def _normalize_title(task: Task) -> str:
     return title
 
 
-def _fallback_text(title: str, has_time: bool) -> tuple[str, str]:
-    if _contains_cjk(title):
-        return title, title
-    if has_time:
-        return title, f"{title}（记得关注）"
-    return f"Remember: {title}", f"记得处理：{title}"
+def _friendly_text(task: Task, title: str, now_local: datetime) -> tuple[str, str]:
+    due_at = _localize(task.due_at, now_local)
+    if due_at:
+        delta = due_at - now_local
+        if delta.total_seconds() < 0:
+            prefix_en = "Overdue"
+            prefix_zh = "已过期"
+        elif delta <= timedelta(hours=24):
+            prefix_en = "Top priority"
+            prefix_zh = "今天优先"
+        elif delta <= timedelta(days=2):
+            prefix_en = "Due soon"
+            prefix_zh = "尽快安排"
+        else:
+            prefix_en = "On the schedule"
+            prefix_zh = "日程安排"
+        return f"{prefix_en}: {title}", f"{prefix_zh}：{title}"
+
+    tags = set(task.tags or [])
+    if task.source == "gmail":
+        if "announcement" in tags:
+            prefix_en, prefix_zh = "FYI", "通知"
+        elif "course_notification" in tags:
+            prefix_en, prefix_zh = "Course update", "课程提醒"
+        else:
+            prefix_en, prefix_zh = "Mail to check", "邮件提醒"
+    elif task.source == "brightspace":
+        prefix_en, prefix_zh = "Course update", "课程更新"
+    elif task.source == "gcal":
+        prefix_en, prefix_zh = "Calendar", "日程"
+    else:
+        prefix_en, prefix_zh = "To review", "待处理"
+    return f"{prefix_en}: {title}", f"{prefix_zh}：{title}"
 
 
 def _contains_cjk(text: str) -> bool:
@@ -419,3 +477,47 @@ def _contains_cjk(text: str) -> bool:
         if "\u4e00" <= ch <= "\u9fff":
             return True
     return False
+
+
+def _build_warm_message(briefing: Briefing, now_local: datetime) -> str | None:
+    total = len(briefing.todo) + len(briefing.schedule)
+    if total == 0:
+        return "今天看起来很清爽，先保持状态就好。"
+    urgent = sum(
+        1
+        for item in briefing.schedule
+        if item.due_at and item.due_at <= now_local + timedelta(hours=24)
+    )
+    hour = now_local.hour
+    if 5 <= hour < 11:
+        base = "早上好。"
+    elif 11 <= hour < 15:
+        base = "中午好。"
+    elif 15 <= hour < 19:
+        base = "下午好。"
+    elif 19 <= hour < 23:
+        base = "晚上好。"
+    else:
+        base = "还在坚持，注意休息。"
+
+    if urgent >= 2:
+        return f"{base} 今天有点紧，先把最紧急的 1-2 件搞定就很稳。"
+    if urgent == 1:
+        return f"{base} 今天先处理最紧急的那一件就好。"
+    if total >= 6:
+        return f"{base} 任务有点多，先完成两件就算赢。"
+    return f"{base} 节奏不错，稳步推进就好。"
+
+
+def _select_focus_items(
+    briefing: Briefing, now_local: datetime, max_items: int = 3
+) -> list[BriefingItem]:
+    if briefing.schedule:
+        sorted_items = sorted(
+            briefing.schedule,
+            key=lambda item: item.due_at or now_local + timedelta(days=3650),
+        )
+        return sorted_items[:max_items]
+    if briefing.todo:
+        return briefing.todo[:max_items]
+    return []

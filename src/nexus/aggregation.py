@@ -6,7 +6,7 @@ from typing import Iterable
 from .aggregators.brightspace import BrightspaceAggregator, FeedConfig
 from .aggregators.google import GoogleAggregator
 from .models import FeedSource, Task
-from .storage import load_feeds, save_tasks
+from .storage import load_feeds, load_tasks, save_tasks
 
 
 @dataclass
@@ -82,6 +82,20 @@ def run_aggregation(include_google: bool = True) -> AggregationResult:
         except Exception as exc:
             errors.append(f"Google error: {exc}")
 
+    tasks = _dedupe(tasks)
+    save_tasks(tasks)
+    return AggregationResult(tasks=tasks, errors=errors)
+
+
+def sync_google_calendar(existing_tasks: list[Task] | None = None) -> AggregationResult:
+    tasks = list(existing_tasks) if existing_tasks is not None else load_tasks()
+    errors: list[str] = []
+    try:
+        calendar_tasks = GoogleAggregator(include_gmail=False, include_calendar=True).fetch_tasks()
+        tasks = [task for task in tasks if task.source != "gcal"]
+        tasks.extend(calendar_tasks)
+    except Exception as exc:
+        errors.append(f"Google Calendar sync error: {exc}")
     tasks = _dedupe(tasks)
     save_tasks(tasks)
     return AggregationResult(tasks=tasks, errors=errors)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -36,6 +37,12 @@ def save_tasks(tasks: Iterable[Task], path: Path = TASKS_FILE) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = [task.to_dict() for task in tasks]
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def tasks_last_updated(path: Path = TASKS_FILE) -> datetime | None:
+    if not path.exists():
+        return None
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).astimezone()
 
 
 def load_feeds(path: Path = FEEDS_FILE) -> list[FeedSource]:

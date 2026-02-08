@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+import re
 from pathlib import Path
 from typing import Iterable
 
@@ -60,13 +61,20 @@ def _build_service(api_name: str, api_version: str, creds):
 class GoogleAggregator(Aggregator):
     name = "google"
 
-    def __init__(self, credentials_path: str | None = None) -> None:
+    def __init__(
+        self,
+        credentials_path: str | None = None,
+        include_gmail: bool = True,
+        include_calendar: bool = True,
+    ) -> None:
         config = default_config()
         self.credentials_path = (
             Path(credentials_path) if credentials_path else config.google_credentials_path
         )
         self.token_path = config.google_token_path
         self.course_aliases = self._load_course_aliases(config.data_dir)
+        self.include_gmail = include_gmail
+        self.include_calendar = include_calendar
 
         if not self.credentials_path or not self.token_path:
             raise RuntimeError("Google credentials or token path not configured.")
@@ -77,8 +85,10 @@ class GoogleAggregator(Aggregator):
         calendar = _build_service("calendar", "v3", creds)
 
         tasks: list[Task] = []
-        tasks.extend(self._fetch_gmail(gmail))
-        tasks.extend(self._fetch_calendar(calendar))
+        if self.include_gmail:
+            tasks.extend(self._fetch_gmail(gmail))
+        if self.include_calendar:
+            tasks.extend(self._fetch_calendar(calendar))
         return tasks
 
     def _fetch_gmail(self, gmail) -> Iterable[Task]:
@@ -101,8 +111,10 @@ class GoogleAggregator(Aggregator):
             from_line = headers.get("From", "")
             title = f"{subject} — {from_line}".strip()
             snippet = msg_detail.get("snippet")
-            course = self._infer_course(subject, from_line)
+            course_from_subject = self._extract_course_from_subject(subject)
+            course = course_from_subject or self._infer_course(subject, from_line)
             is_course_notice = self._is_course_notification(subject, from_line, course)
+            is_announcement = self._is_brightspace_announcement(subject, from_line)
             received_at = None
             internal_date = msg_detail.get("internalDate")
             if internal_date:
@@ -115,6 +127,8 @@ class GoogleAggregator(Aggregator):
                 tags.append("course_notification")
             else:
                 tags.append("general")
+            if is_announcement:
+                tags.append("announcement")
             yield Task(
                 id=f"gmail:{msg['id']}",
                 title=title,
@@ -201,3 +215,22 @@ class GoogleAggregator(Aggregator):
         if "noreply" in from_line.lower() and "nyu" in from_line.lower():
             return True
         return False
+
+    @staticmethod
+    def _is_brightspace_announcement(subject: str, from_line: str) -> bool:
+        subj = subject.lower()
+        sender = from_line.lower()
+        if "brightspace" in sender or "mail.brightspace.nyu.edu" in sender:
+            return "announcement" in subj
+        return False
+
+    @staticmethod
+    def _extract_course_from_subject(subject: str) -> str | None:
+        # Example: "Operating Systems - Spring 2026 - Announcements: ..."
+        # Example: "Multivariable Calculus - Announcements: assignment"
+        pattern = r"^(?P<course>.+?)\s+[-–]\s+Announcements?:"
+        match = re.match(pattern, subject, flags=re.IGNORECASE)
+        if match:
+            course = match.group("course").strip()
+            return course or None
+        return None

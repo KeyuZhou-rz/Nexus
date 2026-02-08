@@ -39,10 +39,7 @@ class LLMClient:
         if not self.is_configured():
             raise LLMError("LLM not configured. Set NEXUS_LLM_BASE_URL and NEXUS_LLM_MODEL.")
 
-        if self.base_url.endswith("/v1"):
-            url = f"{self.base_url}/chat/completions"
-        else:
-            url = f"{self.base_url}/v1/chat/completions"
+        url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"

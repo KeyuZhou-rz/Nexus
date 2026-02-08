@@ -8,7 +8,7 @@ ProjectIDE = Literal["vscode", "unity", "pycharm", "other"]
 TaskStatus = Literal["open", "in_progress", "done", "blocked"]
 FeedKind = Literal["brightspace_ical", "brightspace_rss", "ical_file"]
 FeedAudience = Literal["ui", "llm"]
-FeedMode = Literal["default", "exams_only"]
+FeedMode = Literal["default", "exams_only", "assignments_only"]
 
 
 @dataclass

@@ -49,6 +49,12 @@ def _is_exam_title(title: str) -> bool:
     return any(word in lowered for word in keywords)
 
 
+def _is_assignment_title(title: str) -> bool:
+    lowered = title.lower()
+    keywords = ("assignment", "homework", "project", "lab", "due", "problem set", "pset")
+    return any(word in lowered for word in keywords)
+
+
 def _within_window(due_at: datetime | None, days_ahead: int = 180) -> bool:
     if due_at is None:
         return False
@@ -103,17 +109,24 @@ class BrightspaceAggregator(Aggregator):
                 course = feed.course or feed.name or str(cal_name or "").strip() or None
                 if not summary:
                     continue
+                is_exam = _is_exam_title(summary)
+                is_assignment = _is_assignment_title(summary)
                 if feed.mode == "exams_only":
-                    if not _is_exam_title(summary):
+                    if not is_exam:
                         continue
                     if not _within_window(due_at):
+                        continue
+                elif feed.mode == "assignments_only":
+                    if not is_assignment:
                         continue
                 seed = uid or f"{summary}|{due_at}|{course}|{feed.url}"
                 tags = ["brightspace", "deadline"]
                 if feed.audience == "llm":
                     tags.append("llm_only")
-                if feed.mode == "exams_only":
+                if is_exam:
                     tags.append("exam")
+                if is_assignment:
+                    tags.append("assignment")
                 tasks.append(
                     Task(
                         id=f"bspace_ical:{_stable_id(seed)}",
@@ -181,8 +194,10 @@ class BrightspaceAggregator(Aggregator):
                 tags = ["brightspace", "announcement"]
                 if feed.audience == "llm":
                     tags.append("llm_only")
-                if feed.mode == "exams_only":
+                if _is_exam_title(title):
                     tags.append("exam")
+                if _is_assignment_title(title):
+                    tags.append("assignment")
                 tasks.append(
                     Task(
                         id=f"bspace_rss:{_stable_id(seed)}",

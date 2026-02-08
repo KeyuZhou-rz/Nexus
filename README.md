@@ -10,7 +10,7 @@ MVP focus: aggregate sources, apply rules, and generate a bilingual (EN+ZH) brie
 python -m pip install -r requirements.txt
 ```
 
-2. Configure DeepSeek (OpenAI-compatible API)
+2. Configure DeepSeek (OpenAI-compatible API) (optional)
 
 DeepSeek exposes an OpenAI-compatible `/chat/completions` API. The recommended base URL is `https://api.deepseek.com`. You can also use `https://api.deepseek.com/v1` for OpenAI compatibility (the `/v1` here is not a model version). The API uses Bearer token auth and models like `deepseek-chat` or `deepseek-reasoner`.
 Nexus requests strict JSON output using `response_format: {\"type\": \"json_object\"}` when `NEXUS_LLM_JSON_OUTPUT=1`.
@@ -24,10 +24,19 @@ Protocol summary:
 Set these environment variables:
 
 ```bash
+export NEXUS_LLM_ENABLED="0"  # set to 1 to enable LLM summaries
 export NEXUS_LLM_BASE_URL="https://api.deepseek.com"
 export NEXUS_LLM_MODEL="deepseek-chat"
 export NEXUS_LLM_API_KEY="<your key>"
 export NEXUS_LLM_JSON_OUTPUT="1"
+```
+
+You can also copy `.env.example` to `.env` and load it:
+
+```bash
+set -a
+source .env
+set +a
 ```
 
 3. Aggregate + generate briefing JSON
