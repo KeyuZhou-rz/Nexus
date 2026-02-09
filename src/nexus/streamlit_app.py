@@ -869,7 +869,7 @@ with st.sidebar:
                     st.write(f"❌ {label} — error: {status.error}")
 
 with left_panel:
-    st.markdown('<div class="section-title" style="margin-top: 0;">Timeline</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title" style="margin-top: 0;">Welcome to Nexus</div>', unsafe_allow_html=True)
     
     tip_html = "".join(f'<div class="tip-line">{html.escape(line)}</div>' for line in [greeting, *tip_lines])
     st.markdown(f'<div class="status-tips">{tip_html}</div>', unsafe_allow_html=True)
@@ -926,7 +926,7 @@ with left_panel:
 
 with right_panel:
     st.markdown(
-        '<div class="section-title" style="margin-top: 0;">Upcoming Due</div>',
+        '<div class="section-title" style="margin-top: 0;">Upcoming Events</div>',
         unsafe_allow_html=True,
     )
     if not urgent:

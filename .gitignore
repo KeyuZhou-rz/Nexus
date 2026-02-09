@@ -1,5 +1,25 @@
-.env
-config.env
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# OS
 .DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Nexus Data & Credentials
+# Exclude all JSON in data/ as it contains personal tasks, tokens, and briefings
+data/*.json
+# Keep the data directory structure
+!data/.gitkeep
+
+# Environment variables
+.env
