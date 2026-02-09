@@ -4,9 +4,11 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import html
 import re
+import textwrap
 import os
 import importlib
 import sys
+from itertools import groupby
 
 import streamlit as st
 
@@ -366,7 +368,37 @@ html, body, [data-testid="stAppViewContainer"] {
     color: var(--text);
 }
 [data-testid="stHeader"] { background: transparent; }
-[data-testid="stSidebar"] { background: #0e1420; }
+[data-testid="stSidebar"] {
+    background: #0e1420;
+    border-right: 1px solid var(--border);
+}
+[data-testid="stSidebar"] * {
+    color: var(--text);
+}
+[data-testid="stSidebar"] .stButton > button,
+[data-testid="stSidebar"] button {
+    background: rgba(17, 24, 38, 0.75);
+    border: 1px solid var(--border);
+    color: var(--text);
+}
+[data-testid="stSidebar"] .stButton > button:hover,
+[data-testid="stSidebar"] button:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(17, 24, 38, 0.9);
+}
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] textarea,
+[data-testid="stSidebar"] select {
+    background: rgba(17, 24, 38, 0.75);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+[data-testid="stSidebar"] pre,
+[data-testid="stSidebar"] code {
+    background: rgba(17, 24, 38, 0.75) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--border);
+}
 * {
     font-family: "Noto Sans SC", "Manrope", "Helvetica Neue", Arial, sans-serif;
     overflow-wrap: break-word;
@@ -399,11 +431,14 @@ html, body, [data-testid="stAppViewContainer"] {
     opacity: 0.9;
 }
 .status-tips {
-    background: var(--panel);
-    border: 1px solid var(--border);
+    background: rgba(17, 24, 38, 0.6);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 14px;
-    padding: 12px 16px;
+    padding: 16px 20px;
     margin-bottom: 28px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
 .tip-line {
     font-size: 14px;
@@ -430,9 +465,20 @@ html, body, [data-testid="stAppViewContainer"] {
     font-size: 14px;
     padding: 8px 0 4px;
 }
+.date-header {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 24px 0 8px 2px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    opacity: 0.7;
+}
 .event-card {
-    background: var(--panel-2);
-    border: 1px solid var(--border);
+    background: rgba(19, 28, 43, 0.6);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-left: 4px solid #34C759;
     border-radius: 12px;
     padding: 14px 16px;
@@ -441,8 +487,9 @@ html, body, [data-testid="stAppViewContainer"] {
     animation: cardIn 0.35s ease both;
 }
 .event-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+    transform: translateY(-3px) scale(1.01);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+    border-color: rgba(255, 255, 255, 0.15);
 }
 .event-title {
     font-size: 18px;
@@ -475,30 +522,121 @@ html, body, [data-testid="stAppViewContainer"] {
     opacity: 1;
 }
 .event-link { color: var(--accent); text-decoration: none; }
-.event-urgent-24h { border-left-color: #FF3B30; background: rgba(255, 59, 48, 0.06); }
-.event-urgent-3day { border-left-color: #FF9500; background: rgba(255, 149, 0, 0.06); }
-.event-urgent-future { border-left-color: #34C759; background: rgba(52, 199, 89, 0.06); }
-.event-info { border-left-color: #007AFF; background: rgba(0, 122, 255, 0.06); }
-.event-overdue { border-left-color: #FF3B30; background: rgba(255, 59, 48, 0.12); }
+.event-urgent-24h { border-left-color: #FF453A; background: linear-gradient(90deg, rgba(255, 69, 58, 0.1), transparent); }
+.event-urgent-3day { border-left-color: #FF9F0A; background: linear-gradient(90deg, rgba(255, 159, 10, 0.08), transparent); }
+.event-urgent-future { border-left-color: #32D74B; background: linear-gradient(90deg, rgba(50, 215, 75, 0.06), transparent); }
+.event-info { border-left-color: #0A84FF; background: linear-gradient(90deg, rgba(10, 132, 255, 0.06), transparent); }
+.event-overdue { border-left-color: #FF453A; background: linear-gradient(90deg, rgba(255, 69, 58, 0.15), transparent); }
 .event-exam { border-left-width: 6px; }
 .event-meeting { border-style: dashed; }
 .event-holiday { background: rgba(0, 122, 255, 0.12); }
 .event-course { background: rgba(0, 122, 255, 0.08); }
+
+/* Timeline Specifics */
+.timeline-container {
+    position: relative;
+    margin-top: 10px;
+}
+/* Fix Expander Background */
+div[data-testid="stExpander"] {
+    background-color: transparent;
+    border: none;
+}
+div[data-testid="stExpander"] > details {
+    background-color: rgba(17, 24, 38, 0.55);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text);
+}
+div[data-testid="stExpander"] > details > summary {
+    color: var(--text) !important;
+    background: rgba(17, 24, 38, 0.6);
+    border-radius: 10px;
+    padding: 0.35rem 0.5rem;
+}
+div[data-testid="stExpander"] > details > div {
+    color: var(--muted);
+}
+/* Fix Alert Backgrounds */
+div[data-testid="stAlert"] {
+    background-color: rgba(17, 24, 38, 0.55);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 12px;
+}
+.timeline-block {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 0;
+    position: relative;
+}
+.timeline-time-col {
+    width: 50px;
+    text-align: right;
+    flex-shrink: 0;
+    padding-top: 16px;
+}
+.t-time {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 600;
+}
+.timeline-content {
+    flex-grow: 1;
+    padding-bottom: 24px;
+    border-left: 2px solid var(--border);
+    padding-left: 20px;
+    position: relative;
+}
+.timeline-dot {
+    width: 10px;
+    height: 10px;
+    background: var(--accent);
+    border-radius: 50%;
+    position: absolute;
+    left: -4px;
+    top: 20px;
+    border: 2px solid var(--bg);
+    z-index: 1;
+}
+.now-marker {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin: 0;
+    padding-bottom: 24px;
+}
+.now-time {
+    width: 50px;
+    text-align: right;
+    color: #FF453A;
+    font-weight: 700;
+    font-size: 12px;
+    font-family: "JetBrains Mono", monospace;
+    flex-shrink: 0;
+}
+.now-line {
+    flex-grow: 1;
+    height: 2px;
+    background: #FF453A;
+    position: relative;
+    opacity: 0.8;
+}
+.now-dot {
+    width: 8px;
+    height: 8px;
+    background: #FF453A;
+    border-radius: 50%;
+    position: absolute;
+    left: -4px;
+    top: -3px;
+}
+
 @keyframes cardIn {
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }
-}
-div[data-testid="stExpander"] {
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: rgba(17, 24, 38, 0.55);
-}
-div[data-testid="stExpander"] > details {
-    padding: 8px 10px;
-}
-div[data-testid="stExpander"] summary {
-    font-weight: 600;
-    color: var(--text);
 }
 @media (max-width: 720px) {
     .status-bar {
@@ -561,19 +699,38 @@ if not tip_lines:
 time_display = f"{now_local.strftime('%H:%M')} {_weekday_en(now_local)}"
 date_display = now_local.strftime("%b %d")
 
-action_tasks = [
-    task
-    for task in tasks
-    if task.due_at
-    and not _is_course_update(task)
-    and (_localize_dt(task.due_at, now_local) or now_local) >= cutoff_time
-]
-action_tasks.sort(key=lambda t: _localize_dt(t.due_at, now_local) or now_local + timedelta(days=3650))
+# Split tasks into Schedule (Timeline) and Deadlines (Action)
+schedule_items = []
+deadline_items = []
+
+for task in tasks:
+    if not task.due_at:
+        continue
+    
+    # Filter out past items (older than 2 hours ago for schedule, older than now for deadlines)
+    local_due = _localize_dt(task.due_at, now_local)
+    if not local_due:
+        continue
+        
+    etype = _event_type(task)
+    
+    # Schedule: Today's classes, meetings, events
+    if etype in {"course", "meeting", "event", "holiday"}:
+        if local_due.date() == now_local.date():
+            schedule_items.append(task)
+    
+    # Deadlines: Assignments, Exams (Future)
+    elif etype in {"assignment", "exam"}:
+        if local_due >= now_local:
+            deadline_items.append(task)
+
+schedule_items.sort(key=lambda t: _localize_dt(t.due_at, now_local))
+deadline_items.sort(key=lambda t: _localize_dt(t.due_at, now_local))
 
 urgent: list = []
 upcoming: list = []
 later: list = []
-for task in action_tasks:
+for task in deadline_items:
     due = _localize_dt(task.due_at, now_local)
     if not due:
         continue
@@ -598,9 +755,9 @@ course_updates.sort(
     reverse=True,
 )
 
-left_panel, right_panel = st.columns([2, 3], gap="large")
+left_panel, right_panel = st.columns([1, 1], gap="large")
 
-with left_panel:
+with st.sidebar:
     st.markdown(
         f"""
     <div class="status-bar">
@@ -614,13 +771,7 @@ with left_panel:
         unsafe_allow_html=True,
     )
 
-    tip_html = "".join(
-        f'<div class="tip-line">{html.escape(line)}</div>'
-        for line in [greeting, *tip_lines]
-    )
-    st.markdown(f'<div class="status-tips">{tip_html}</div>', unsafe_allow_html=True)
-
-    with st.expander("System", expanded=False):
+    with st.expander("System Controls", expanded=True):
         if briefing_error:
             st.warning(f"Briefing module not available: {briefing_error}")
         if calendar_sync_error:
@@ -717,9 +868,65 @@ with left_panel:
                 else:
                     st.write(f"❌ {label} — error: {status.error}")
 
+with left_panel:
+    st.markdown('<div class="section-title" style="margin-top: 0;">Timeline</div>', unsafe_allow_html=True)
+    
+    tip_html = "".join(f'<div class="tip-line">{html.escape(line)}</div>' for line in [greeting, *tip_lines])
+    st.markdown(f'<div class="status-tips">{tip_html}</div>', unsafe_allow_html=True)
+
+    # Render Timeline
+    timeline_html = []
+    
+    # Insert "Now" marker logic
+    now_inserted = False
+    
+    def _render_now():
+        return textwrap.dedent(
+            """
+            <div class="now-marker">
+                <div class="now-time">NOW</div>
+                <div class="now-line"><div class="now-dot"></div></div>
+            </div>
+            """
+        ).strip()
+
+    if not schedule_items:
+        timeline_html.append(_render_now())
+        timeline_html.append('<div class="section-empty" style="padding-left: 66px;">No more events today</div>')
+    else:
+        for task in schedule_items:
+            due = _localize_dt(task.due_at, now_local)
+            if not now_inserted and due > now_local:
+                timeline_html.append(_render_now())
+                now_inserted = True
+            
+            time_str = due.strftime("%H:%M")
+            card_html = _render_event_card(task, now_local)
+            
+            block = textwrap.dedent(
+                f"""
+                <div class="timeline-block">
+                    <div class="timeline-time-col"><div class="t-time">{time_str}</div></div>
+                    <div class="timeline-content">
+                        <div class="timeline-dot"></div>
+                        {card_html}
+                    </div>
+                </div>
+                """
+            ).strip()
+            timeline_html.append(block)
+        
+        if not now_inserted:
+            timeline_html.append(_render_now())
+
+    st.markdown(
+        f'<div class="timeline-container">{"\n".join(timeline_html)}</div>',
+        unsafe_allow_html=True,
+    )
+
 with right_panel:
     st.markdown(
-        '<div class="section-title" style="margin-top: 0;">🔥 Needs Attention</div>',
+        '<div class="section-title" style="margin-top: 0;">Upcoming Due</div>',
         unsafe_allow_html=True,
     )
     if not urgent:
@@ -743,11 +950,22 @@ with right_panel:
             unsafe_allow_html=True,
         )
     else:
-        for idx, task in enumerate(upcoming):
-            st.markdown(
-                _render_event_card(task, now_local, delay_ms=idx * 40),
-                unsafe_allow_html=True,
-            )
+        def _get_date_label(t):
+            dt = _localize_dt(t.due_at, now_local)
+            if not dt: return "Later"
+            delta = (dt.date() - now_local.date()).days
+            if delta == 0: return "Today"
+            if delta == 1: return "Tomorrow"
+            if delta < 7: return dt.strftime("%A")
+            return dt.strftime("%b %d")
+
+        for label, group in groupby(upcoming, key=_get_date_label):
+            st.markdown(f'<div class="date-header">{label}</div>', unsafe_allow_html=True)
+            for idx, task in enumerate(group):
+                st.markdown(
+                    _render_event_card(task, now_local, delay_ms=idx * 40),
+                    unsafe_allow_html=True,
+                )
 
     with st.expander("Other", expanded=False):
         if later:
