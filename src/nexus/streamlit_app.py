@@ -369,13 +369,15 @@ html, body, [data-testid="stAppViewContainer"] {
 [data-testid="stSidebar"] { background: #0e1420; }
 * {
     font-family: "Noto Sans SC", "Manrope", "Helvetica Neue", Arial, sans-serif;
+    overflow-wrap: break-word;
 }
-.block-container { max-width: 980px; padding-top: 2.5rem; }
+.block-container { max-width: 100%; padding-top: 2rem; padding-left: 3rem; padding-right: 3rem; }
 .status-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 12px;
+    flex-wrap: wrap;
 }
 .status-title {
     font-size: 24px;
@@ -559,22 +561,6 @@ if not tip_lines:
 time_display = f"{now_local.strftime('%H:%M')} {_weekday_en(now_local)}"
 date_display = now_local.strftime("%b %d")
 
-st.markdown(
-    f"""
-<div class="status-bar">
-  <div class="status-title">Nexus</div>
-  <div class="status-time">
-    <div class="time-main">{html.escape(time_display)}</div>
-    <div class="time-sub">{html.escape(date_display)}</div>
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-tip_html = "".join(f"<div class=\"tip-line\">{html.escape(line)}</div>" for line in [greeting, *tip_lines])
-st.markdown(f"<div class=\"status-tips\">{tip_html}</div>", unsafe_allow_html=True)
-
 action_tasks = [
     task
     for task in tasks
@@ -612,126 +598,183 @@ course_updates.sort(
     reverse=True,
 )
 
-st.markdown("<div class=\"section-title\">🔥 Needs Attention</div>", unsafe_allow_html=True)
-if not urgent:
-    st.markdown("<div class=\"section-empty\">No urgent items</div>", unsafe_allow_html=True)
-else:
-    for idx, task in enumerate(urgent):
-        st.markdown(_render_event_card(task, now_local, delay_ms=idx * 40), unsafe_allow_html=True)
+left_panel, right_panel = st.columns([2, 3], gap="large")
 
-st.markdown("<div class=\"section-title section-muted\">📅 Upcoming</div>", unsafe_allow_html=True)
-if not upcoming:
-    st.markdown("<div class=\"section-empty\">Nothing new in the next 7 days</div>", unsafe_allow_html=True)
-else:
-    for idx, task in enumerate(upcoming):
-        st.markdown(_render_event_card(task, now_local, delay_ms=idx * 40), unsafe_allow_html=True)
+with left_panel:
+    st.markdown(
+        f"""
+    <div class="status-bar">
+      <div class="status-title">Nexus</div>
+      <div class="status-time">
+        <div class="time-main">{html.escape(time_display)}</div>
+        <div class="time-sub">{html.escape(date_display)}</div>
+      </div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
 
-with st.expander("Other", expanded=False):
-    if later:
-        st.markdown("<div class=\"section-subtitle\">Later</div>", unsafe_allow_html=True)
-        for idx, task in enumerate(later):
-            st.markdown(_render_event_card(task, now_local, delay_ms=idx * 30), unsafe_allow_html=True)
-    else:
-        st.markdown("<div class=\"section-empty\">No later items</div>", unsafe_allow_html=True)
+    tip_html = "".join(
+        f'<div class="tip-line">{html.escape(line)}</div>'
+        for line in [greeting, *tip_lines]
+    )
+    st.markdown(f'<div class="status-tips">{tip_html}</div>', unsafe_allow_html=True)
 
-    if course_updates:
-        st.markdown("<div class=\"section-subtitle\">Course Updates</div>", unsafe_allow_html=True)
-        for idx, task in enumerate(course_updates):
-            st.markdown(_render_event_card(task, now_local, delay_ms=idx * 30), unsafe_allow_html=True)
-    else:
-        st.markdown("<div class=\"section-empty\">No course updates today</div>", unsafe_allow_html=True)
+    with st.expander("System", expanded=False):
+        if briefing_error:
+            st.warning(f"Briefing module not available: {briefing_error}")
+        if calendar_sync_error:
+            st.warning(f"Calendar sync issue: {calendar_sync_error}")
 
-with st.expander("System", expanded=False):
-    if briefing_error:
-        st.warning(f"Briefing module not available: {briefing_error}")
-    if calendar_sync_error:
-        st.warning(f"Calendar sync issue: {calendar_sync_error}")
+        st.subheader("Aggregation")
+        if st.button("Run Aggregation (Google + Brightspace)"):
+            with st.spinner("Aggregating..."):
+                result = run_aggregation(include_google=True)
+            if result.errors:
+                for err in result.errors:
+                    st.error(err)
+            st.success(f"Aggregated {len(result.tasks)} items.")
 
-    st.subheader("Aggregation")
-    if st.button("Run Aggregation (Google + Brightspace)"):
-        with st.spinner("Aggregating..."):
-            result = run_aggregation(include_google=True)
-        if result.errors:
-            for err in result.errors:
-                st.error(err)
-        st.success(f"Aggregated {len(result.tasks)} items.")
+            window_days = 14
+            if select_window_tasks is not None:
+                display_tasks = select_window_tasks(
+                    result.tasks, window_days=window_days, include_noise=True
+                )
+            else:
+                display_tasks = result.tasks
 
-        window_days = 14
-        if select_window_tasks is not None:
-            display_tasks = select_window_tasks(result.tasks, window_days=window_days, include_noise=True)
-        else:
-            display_tasks = result.tasks
+            gmail_tasks = [t for t in display_tasks if t.source == "gmail"]
+            cal_tasks = [t for t in display_tasks if t.source == "gcal"]
+            bspace_tasks = [
+                t
+                for t in display_tasks
+                if t.source == "brightspace" and "llm_only" not in t.tags
+            ]
+            st.caption(f"Showing next {window_days} days of items.")
 
-        gmail_tasks = [t for t in display_tasks if t.source == "gmail"]
-        cal_tasks = [t for t in display_tasks if t.source == "gcal"]
-        bspace_tasks = [
-            t
-            for t in display_tasks
-            if t.source == "brightspace" and "llm_only" not in t.tags
-        ]
-        st.caption(f"Showing next {window_days} days of items.")
-
-        if gmail_tasks:
-            course_mail = [t for t in gmail_tasks if "course_notification" in t.tags]
-            other_mail = [t for t in gmail_tasks if "course_notification" not in t.tags]
-            if course_mail:
-                st.markdown("**Gmail (Course Notifications)**")
-                grouped_mail: dict[str, list] = {}
-                for t in course_mail:
-                    course = t.course or "Uncategorized"
-                    grouped_mail.setdefault(course, []).append(t)
-                for course, items in sorted(grouped_mail.items()):
-                    st.markdown(f"**{course}**")
-                    for t in items:
+            if gmail_tasks:
+                course_mail = [t for t in gmail_tasks if "course_notification" in t.tags]
+                other_mail = [t for t in gmail_tasks if "course_notification" not in t.tags]
+                if course_mail:
+                    st.markdown("**Gmail (Course Notifications)**")
+                    grouped_mail: dict[str, list] = {}
+                    for t in course_mail:
+                        course = t.course or "Uncategorized"
+                        grouped_mail.setdefault(course, []).append(t)
+                    for course, items in sorted(grouped_mail.items()):
+                        st.markdown(f"**{course}**")
+                        for t in items:
+                            st.write(f"- {t.title}")
+                if other_mail:
+                    st.markdown("**Gmail (Other)**")
+                    for t in other_mail:
                         st.write(f"- {t.title}")
-            if other_mail:
-                st.markdown("**Gmail (Other)**")
-                for t in other_mail:
-                    st.write(f"- {t.title}")
 
-        if cal_tasks:
-            st.markdown("**Calendar (Next 7 Days)**")
-            for t in cal_tasks:
-                when = _format_dt(t.due_at, now_local)
-                st.write(f"- {when} — {t.title}")
-
-        if bspace_tasks:
-            st.markdown("**Brightspace**")
-            grouped: dict[str, list] = {}
-            for t in bspace_tasks:
-                course = t.course or "Uncategorized"
-                grouped.setdefault(course, []).append(t)
-            for course, items in sorted(grouped.items()):
-                st.markdown(f"**{course}**")
-                for t in items:
+            if cal_tasks:
+                st.markdown("**Calendar (Next 7 Days)**")
+                for t in cal_tasks:
                     when = _format_dt(t.due_at, now_local)
                     st.write(f"- {when} — {t.title}")
 
-    st.divider()
-    st.subheader("Google Status")
-    cred_path = config.google_credentials_path or Path("")
-    token_path = config.google_token_path or Path("")
-    st.write(f"Client secret: {'OK' if cred_path.exists() else 'Missing'}")
-    st.write(f"Token: {'OK' if token_path.exists() else 'Missing'}")
-    st.code("python -m nexus.google_auth", language="bash")
+            if bspace_tasks:
+                st.markdown("**Brightspace**")
+                grouped: dict[str, list] = {}
+                for t in bspace_tasks:
+                    course = t.course or "Uncategorized"
+                    grouped.setdefault(course, []).append(t)
+                for course, items in sorted(grouped.items()):
+                    st.markdown(f"**{course}**")
+                    for t in items:
+                        when = _format_dt(t.due_at, now_local)
+                        st.write(f"- {when} — {t.title}")
 
-    st.divider()
-    st.subheader("Feed Diagnostics")
-    missing_courses = _missing_ical_courses()
-    if missing_courses:
-        st.warning(
-            "Missing Brightspace iCal feeds for courses (assignments will not appear): "
-            + ", ".join(missing_courses)
+        st.divider()
+        st.subheader("Google Status")
+        cred_path = config.google_credentials_path or Path("")
+        token_path = config.google_token_path or Path("")
+        st.write(f"Client secret: {'OK' if cred_path.exists() else 'Missing'}")
+        st.write(f"Token: {'OK' if token_path.exists() else 'Missing'}")
+        st.code("python -m nexus.google_auth", language="bash")
+
+        st.divider()
+        st.subheader("Feed Diagnostics")
+        missing_courses = _missing_ical_courses()
+        if missing_courses:
+            st.warning(
+                "Missing Brightspace iCal feeds for courses (assignments will not appear): "
+                + ", ".join(missing_courses)
+            )
+        if st.button("Test Brightspace Feeds"):
+            statuses = check_brightspace_feeds()
+            if not statuses:
+                st.info("No feeds configured. Update data/feeds.json.")
+            for status in statuses:
+                label = f"{status.name} ({status.kind})"
+                if not status.enabled:
+                    st.write(f"⏸️ {label} — disabled")
+                elif status.ok:
+                    st.write(f"✅ {label} — items: {status.item_count}")
+                else:
+                    st.write(f"❌ {label} — error: {status.error}")
+
+with right_panel:
+    st.markdown(
+        '<div class="section-title" style="margin-top: 0;">🔥 Needs Attention</div>',
+        unsafe_allow_html=True,
+    )
+    if not urgent:
+        st.markdown(
+            '<div class="section-empty">No urgent items</div>', unsafe_allow_html=True
         )
-    if st.button("Test Brightspace Feeds"):
-        statuses = check_brightspace_feeds()
-        if not statuses:
-            st.info("No feeds configured. Update data/feeds.json.")
-        for status in statuses:
-            label = f"{status.name} ({status.kind})"
-            if not status.enabled:
-                st.write(f"⏸️ {label} — disabled")
-            elif status.ok:
-                st.write(f"✅ {label} — items: {status.item_count}")
-            else:
-                st.write(f"❌ {label} — error: {status.error}")
+    else:
+        for idx, task in enumerate(urgent):
+            st.markdown(
+                _render_event_card(task, now_local, delay_ms=idx * 40),
+                unsafe_allow_html=True,
+            )
+
+    st.markdown(
+        '<div class="section-title section-muted">📅 Upcoming</div>',
+        unsafe_allow_html=True,
+    )
+    if not upcoming:
+        st.markdown(
+            '<div class="section-empty">Nothing new in the next 7 days</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        for idx, task in enumerate(upcoming):
+            st.markdown(
+                _render_event_card(task, now_local, delay_ms=idx * 40),
+                unsafe_allow_html=True,
+            )
+
+    with st.expander("Other", expanded=False):
+        if later:
+            st.markdown(
+                '<div class="section-subtitle">Later</div>', unsafe_allow_html=True
+            )
+            for idx, task in enumerate(later):
+                st.markdown(
+                    _render_event_card(task, now_local, delay_ms=idx * 30),
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                '<div class="section-empty">No later items</div>', unsafe_allow_html=True
+            )
+
+        if course_updates:
+            st.markdown(
+                '<div class="section-subtitle">Course Updates</div>', unsafe_allow_html=True
+            )
+            for idx, task in enumerate(course_updates):
+                st.markdown(
+                    _render_event_card(task, now_local, delay_ms=idx * 30),
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                '<div class="section-empty">No course updates today</div>',
+                unsafe_allow_html=True,
+            )
