@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -146,38 +147,62 @@ class GoogleAggregator(Aggregator):
     def _fetch_calendar(self, calendar) -> Iterable[Task]:
         now = datetime.now(timezone.utc)
         horizon = now + timedelta(days=7)
-        events_result = (
-            calendar.events()
-            .list(
-                calendarId="primary",
-                timeMin=now.isoformat(),
-                timeMax=horizon.isoformat(),
-                singleEvents=True,
-                orderBy="startTime",
-                maxResults=50,
+        calendars = self._list_calendars(calendar)
+        for cal_id, cal_name in calendars:
+            events_result = (
+                calendar.events()
+                .list(
+                    calendarId=cal_id,
+                    timeMin=now.isoformat(),
+                    timeMax=horizon.isoformat(),
+                    singleEvents=True,
+                    orderBy="startTime",
+                    maxResults=50,
+                )
+                .execute()
             )
-            .execute()
-        )
-        events = events_result.get("items", [])
-        for event in events:
-            start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
-            due_at = None
-            if start:
-                try:
-                    due_at = datetime.fromisoformat(start.replace("Z", "+00:00"))
-                except ValueError:
-                    due_at = None
-            yield Task(
-                id=f"gcal:{event.get('id', '')}",
-                title=event.get("summary", "(no title)"),
-                due_at=due_at,
-                source="gcal",
-                url=event.get("htmlLink"),
-                course=None,
-                status="open",
-                priority=0,
-                tags=["calendar"],
-            )
+            events = events_result.get("items", [])
+            for event in events:
+                start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
+                due_at = None
+                if start:
+                    try:
+                        due_at = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                    except ValueError:
+                        due_at = None
+                seed = f"{cal_id}:{event.get('id', '')}:{start}"
+                event_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+                yield Task(
+                    id=f"gcal:{event_id}",
+                    title=event.get("summary", "(no title)"),
+                    due_at=due_at,
+                    source="gcal",
+                    url=event.get("htmlLink"),
+                    course=cal_name,
+                    status="open",
+                    priority=0,
+                    tags=["calendar"],
+                )
+
+    def _list_calendars(self, calendar) -> list[tuple[str, str]]:
+        calendars: list[tuple[str, str]] = []
+        page_token = None
+        while True:
+            response = calendar.calendarList().list(pageToken=page_token).execute()
+            for item in response.get("items", []):
+                if not item.get("selected", False) and not item.get("primary", False):
+                    continue
+                cal_id = item.get("id")
+                if not cal_id:
+                    continue
+                name = item.get("summary") or "Calendar"
+                calendars.append((cal_id, name))
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+        if not calendars:
+            calendars.append(("primary", "Primary"))
+        return calendars
 
     @staticmethod
     def _load_course_aliases(data_dir: Path) -> list[dict]:

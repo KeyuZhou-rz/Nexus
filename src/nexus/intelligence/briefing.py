@@ -482,7 +482,7 @@ def _contains_cjk(text: str) -> bool:
 def _build_warm_message(briefing: Briefing, now_local: datetime) -> str | None:
     total = len(briefing.todo) + len(briefing.schedule)
     if total == 0:
-        return "今天看起来很清爽，先保持状态就好。"
+        return "Looks light today. Keep the momentum going."
     urgent = sum(
         1
         for item in briefing.schedule
@@ -490,23 +490,23 @@ def _build_warm_message(briefing: Briefing, now_local: datetime) -> str | None:
     )
     hour = now_local.hour
     if 5 <= hour < 11:
-        base = "早上好。"
+        base = "Good morning."
     elif 11 <= hour < 15:
-        base = "中午好。"
+        base = "Good afternoon."
     elif 15 <= hour < 19:
-        base = "下午好。"
+        base = "Good afternoon."
     elif 19 <= hour < 23:
-        base = "晚上好。"
+        base = "Good evening."
     else:
-        base = "还在坚持，注意休息。"
+        base = "Still up late—take care of yourself."
 
     if urgent >= 2:
-        return f"{base} 今天有点紧，先把最紧急的 1-2 件搞定就很稳。"
+        return f"{base} It's a bit tight today—finish the top 1-2 items first."
     if urgent == 1:
-        return f"{base} 今天先处理最紧急的那一件就好。"
+        return f"{base} Start with the most urgent one and you'll be in good shape."
     if total >= 6:
-        return f"{base} 任务有点多，先完成两件就算赢。"
-    return f"{base} 节奏不错，稳步推进就好。"
+        return f"{base} It's a full list—knock out two items and call it a win."
+    return f"{base} You're on a good rhythm. Keep it steady."
 
 
 def _select_focus_items(
