@@ -11,6 +11,7 @@ from ..config import default_config
 from ..models import Task
 from .base import Aggregator
 
+# Permissions we request from the user: Read-only access to Gmail and Calendar.
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
@@ -18,6 +19,7 @@ SCOPES = [
 
 
 def _ensure_google_deps() -> None:
+    """Checks if Google API libraries are installed. Raises error if missing."""
     try:
         import googleapiclient  # noqa: F401
         import google_auth_oauthlib  # noqa: F401
@@ -31,6 +33,7 @@ def _ensure_google_deps() -> None:
 
 
 def _load_credentials(token_path: Path, client_secret_path: Path):
+    """Loads user login token. Refreshes it automatically if expired."""
     _ensure_google_deps()
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -41,6 +44,7 @@ def _load_credentials(token_path: Path, client_secret_path: Path):
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
     if not creds or not creds.valid:
+        # If token expired but we have a refresh token, get a new access token.
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
             token_path.write_text(creds.to_json(), encoding="utf-8")
@@ -53,6 +57,7 @@ def _load_credentials(token_path: Path, client_secret_path: Path):
 
 
 def _build_service(api_name: str, api_version: str, creds):
+    """Creates a Google API client for a specific service (e.g., 'gmail', 'calendar')."""
     _ensure_google_deps()
     from googleapiclient.discovery import build
 
@@ -60,6 +65,7 @@ def _build_service(api_name: str, api_version: str, creds):
 
 
 class GoogleAggregator(Aggregator):
+    """Fetches emails and calendar events from Google."""
     name = "google"
 
     def __init__(
@@ -81,6 +87,7 @@ class GoogleAggregator(Aggregator):
             raise RuntimeError("Google credentials or token path not configured.")
 
     def fetch_tasks(self) -> list[Task]:
+        """Main entry point: Connects to Google and gets all data."""
         creds = _load_credentials(self.token_path, self.credentials_path)
         gmail = _build_service("gmail", "v1", creds)
         calendar = _build_service("calendar", "v3", creds)
@@ -93,6 +100,7 @@ class GoogleAggregator(Aggregator):
         return tasks
 
     def _fetch_gmail(self, gmail) -> Iterable[Task]:
+        """Gets the last 10 unread emails."""
         response = (
             gmail.users()
             .messages()
@@ -101,6 +109,7 @@ class GoogleAggregator(Aggregator):
         )
         messages = response.get("messages", [])
         for msg in messages:
+            # Fetch email details (Subject, Sender, Date) without body content for speed.
             msg_detail = (
                 gmail.users()
                 .messages()
@@ -112,6 +121,8 @@ class GoogleAggregator(Aggregator):
             from_line = headers.get("From", "")
             title = f"{subject} — {from_line}".strip()
             snippet = msg_detail.get("snippet")
+            
+            # Try to guess which course this email belongs to.
             course_from_subject = self._extract_course_from_subject(subject)
             course = course_from_subject or self._infer_course(subject, from_line)
             is_course_notice = self._is_course_notification(subject, from_line, course)
@@ -123,6 +134,8 @@ class GoogleAggregator(Aggregator):
                     received_at = datetime.fromtimestamp(int(internal_date) / 1000, tz=timezone.utc)
                 except Exception:
                     received_at = None
+            
+            # Add tags for filtering in the UI.
             tags = ["email", "unread"]
             if is_course_notice:
                 tags.append("course_notification")
@@ -145,10 +158,12 @@ class GoogleAggregator(Aggregator):
             )
 
     def _fetch_calendar(self, calendar) -> Iterable[Task]:
+        """Gets calendar events for the next 7 days."""
         now = datetime.now(timezone.utc)
         horizon = now + timedelta(days=7)
         calendars = self._list_calendars(calendar)
         for cal_id, cal_name in calendars:
+            # 'singleEvents=True' expands recurring events (like weekly classes) into individual items.
             events_result = (
                 calendar.events()
                 .list(
@@ -164,6 +179,7 @@ class GoogleAggregator(Aggregator):
             events = events_result.get("items", [])
             for event in events:
                 start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
+                # Parse the start time.
                 due_at = None
                 if start:
                     try:
@@ -185,6 +201,7 @@ class GoogleAggregator(Aggregator):
                 )
 
     def _list_calendars(self, calendar) -> list[tuple[str, str]]:
+        """Finds all calendars the user has selected/checked in Google Calendar UI."""
         calendars: list[tuple[str, str]] = []
         page_token = None
         while True:
@@ -206,6 +223,7 @@ class GoogleAggregator(Aggregator):
 
     @staticmethod
     def _load_course_aliases(data_dir: Path) -> list[dict]:
+        """Loads the alias mapping file to help identify courses from email subjects."""
         aliases_path = data_dir / "course_aliases.json"
         if not aliases_path.exists():
             return []
@@ -218,6 +236,7 @@ class GoogleAggregator(Aggregator):
         return payload
 
     def _infer_course(self, subject: str, from_line: str) -> str | None:
+        """Matches email subject/sender against known course aliases."""
         haystack = f"{subject} {from_line}".lower()
         for entry in self.course_aliases:
             course = str(entry.get("course", "")).strip()
@@ -231,6 +250,7 @@ class GoogleAggregator(Aggregator):
 
     @staticmethod
     def _is_course_notification(subject: str, from_line: str, course: str | None) -> bool:
+        """Heuristic: Is this email likely related to school work?"""
         if course:
             return True
         haystack = f"{subject} {from_line}".lower()
@@ -243,6 +263,7 @@ class GoogleAggregator(Aggregator):
 
     @staticmethod
     def _is_brightspace_announcement(subject: str, from_line: str) -> bool:
+        """Heuristic: Is this specifically a Brightspace announcement?"""
         subj = subject.lower()
         sender = from_line.lower()
         if "brightspace" in sender or "mail.brightspace.nyu.edu" in sender:
@@ -251,6 +272,7 @@ class GoogleAggregator(Aggregator):
 
     @staticmethod
     def _extract_course_from_subject(subject: str) -> str | None:
+        """Extracts course name from standard announcement patterns."""
         # Example: "Operating Systems - Spring 2026 - Announcements: ..."
         # Example: "Multivariable Calculus - Announcements: assignment"
         pattern = r"^(?P<course>.+?)\s+[-–]\s+Announcements?:"

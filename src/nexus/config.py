@@ -7,6 +7,7 @@ from pathlib import Path
 
 @dataclass
 class AppConfig:
+    """Application configuration container."""
     data_dir: Path
     timezone: str = "local"
     google_credentials_path: Path | None = None
@@ -22,6 +23,7 @@ class AppConfig:
 
 
 def default_config() -> AppConfig:
+    """Loads configuration from environment variables or default paths."""
     data_dir = Path(__file__).resolve().parents[2] / "data"
     credentials_env = os.getenv("NEXUS_GOOGLE_CREDENTIALS")
     token_env = os.getenv("NEXUS_GOOGLE_TOKEN")

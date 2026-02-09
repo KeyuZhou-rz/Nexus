@@ -6,10 +6,11 @@ from ..models import Task
 
 
 class Aggregator(ABC):
-    """Base class for data source integrations."""
+    """Abstract base class for all data source integrations."""
 
     name: str
 
     @abstractmethod
     def fetch_tasks(self) -> list[Task]:
+        """Must be implemented by subclasses to return a list of Task objects."""
         raise NotImplementedError

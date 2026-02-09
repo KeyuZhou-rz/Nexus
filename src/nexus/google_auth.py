@@ -7,6 +7,7 @@ from .aggregators.google import SCOPES, _ensure_google_deps
 
 
 def authorize_google(credentials_path: Path, token_path: Path) -> None:
+    """Runs the local OAuth server to let the user log in to Google."""
     _ensure_google_deps()
     from google_auth_oauthlib.flow import InstalledAppFlow
 
@@ -24,6 +25,7 @@ def authorize_google(credentials_path: Path, token_path: Path) -> None:
 
 
 def main() -> None:
+    """Main entry point for the auth script."""
     config = default_config()
     if not config.google_credentials_path or not config.google_token_path:
         raise RuntimeError("Google paths not configured.")

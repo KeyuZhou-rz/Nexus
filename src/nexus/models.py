@@ -13,7 +13,7 @@ FeedMode = Literal["default", "exams_only", "assignments_only"]
 
 @dataclass
 class Project:
-    """Project context for one-click workspace launch."""
+    """Represents a coding project (for the 'Projects' dashboard)."""
 
     name: str
     path: str
@@ -24,6 +24,7 @@ class Project:
     notes: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Converts object to dictionary for JSON saving."""
         return {
             "name": self.name,
             "path": self.path,
@@ -36,6 +37,7 @@ class Project:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Project":
+        """Creates object from dictionary (JSON loading)."""
         return cls(
             name=str(data.get("name", "")),
             path=str(data.get("path", "")),
@@ -49,7 +51,7 @@ class Project:
 
 @dataclass
 class Task:
-    """Normalized task item aggregated from external sources."""
+    """A unified task object (from Email, Calendar, or Brightspace)."""
 
     id: str
     title: str
@@ -64,6 +66,7 @@ class Task:
     received_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Serializes task to dictionary."""
         return {
             "id": self.id,
             "title": self.title,
@@ -80,6 +83,7 @@ class Task:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Task":
+        """Deserializes task from dictionary."""
         due_at_raw = data.get("due_at")
         due_at = datetime.fromisoformat(due_at_raw) if due_at_raw else None
         return cls(
@@ -101,6 +105,7 @@ class Task:
 
 @dataclass
 class FeedSource:
+    """Configuration for a data feed (stored in feeds.json)."""
     kind: FeedKind
     name: str
     url: str
@@ -110,6 +115,7 @@ class FeedSource:
     mode: FeedMode = "default"
 
     def to_dict(self) -> dict[str, Any]:
+        """Serializes feed config."""
         return {
             "kind": self.kind,
             "name": self.name,
@@ -122,6 +128,7 @@ class FeedSource:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "FeedSource":
+        """Deserializes feed config."""
         return cls(
             kind=data.get("kind", "brightspace_ical"),
             name=str(data.get("name", "")),

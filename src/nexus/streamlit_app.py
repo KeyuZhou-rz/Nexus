@@ -26,6 +26,7 @@ from nexus.storage import load_feeds, load_tasks, tasks_last_updated  # noqa: E4
 
 
 def _load_briefing():
+    """Dynamically imports the briefing module to avoid hard crashes if dependencies are missing."""
     try:
         module = importlib.import_module("nexus.intelligence.briefing")
         module = importlib.reload(module)
@@ -40,6 +41,7 @@ def _load_briefing():
 
 
 def _missing_ical_courses():
+    """Identifies courses that have RSS feeds but are missing iCal feeds (common config error)."""
     feeds = load_feeds()
     rss_courses = {
         feed.course or feed.name
@@ -56,6 +58,7 @@ def _missing_ical_courses():
 
 
 def _localize_dt(value: datetime | None, now_local: datetime) -> datetime | None:
+    """Converts a datetime to the local timezone."""
     if value is None:
         return None
     if value.tzinfo:
@@ -64,16 +67,19 @@ def _localize_dt(value: datetime | None, now_local: datetime) -> datetime | None
 
 
 def _format_dt(value: datetime | None, now_local: datetime) -> str:
+    """Formats datetime as a readable string (YYYY-MM-DD HH:MM)."""
     local = _localize_dt(value, now_local)
     if not local:
         return "TBD"
     return local.strftime("%Y-%m-%d %H:%M %Z")
 
 def _task_title(task) -> str:
+    """Clean up task title."""
     return task.title.strip()
 
 
 def _is_course_reminder(task) -> bool:
+    """Checks if a task is a general course notification (not a deadline)."""
     tags = set(task.tags or [])
     if task.source == "gmail":
         return "course_notification" in tags
@@ -83,16 +89,19 @@ def _is_course_reminder(task) -> bool:
 
 
 def _display_name() -> str | None:
+    """Gets the user's display name from environment variables."""
     name = os.getenv("NEXUS_DISPLAY_NAME", "").strip()
     return name or None
 
 
 def _weekday_en(now_local: datetime) -> str:
+    """Returns the English abbreviation for the current weekday."""
     weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     return weekdays[now_local.weekday()]
 
 
 def _format_abs_date(value: datetime, now_local: datetime) -> str:
+    """Formats date as 'Month Day Hour:Minute'."""
     local = _localize_dt(value, now_local)
     if not local:
         return "Unknown time"
@@ -100,6 +109,7 @@ def _format_abs_date(value: datetime, now_local: datetime) -> str:
 
 
 def _relative_due_text(value: datetime | None, now_local: datetime) -> str:
+    """Generates relative time text (e.g., 'Tomorrow', 'In 3 days')."""
     local = _localize_dt(value, now_local)
     if not local:
         return "No time set"
@@ -121,6 +131,7 @@ def _relative_due_text(value: datetime | None, now_local: datetime) -> str:
 
 
 def _get_greeting(hour: int) -> str:
+    """Returns a greeting based on the time of day."""
     if 23 <= hour or hour < 6:
         return "🌙 Late night — get some rest"
     if 6 <= hour < 12:
@@ -131,6 +142,7 @@ def _get_greeting(hour: int) -> str:
 
 
 def _is_deadline_task(task) -> bool:
+    """Checks if a task represents a hard deadline (exam/assignment)."""
     tags = set(task.tags or [])
     if {"assignment", "exam", "deadline"} & tags:
         return True
@@ -138,6 +150,7 @@ def _is_deadline_task(task) -> bool:
 
 
 def _count_deadlines_in_range(tasks, start: datetime, end: datetime, now_local: datetime) -> int:
+    """Counts how many deadlines fall within a specific time range."""
     count = 0
     for task in tasks:
         if not _is_deadline_task(task):
@@ -149,6 +162,7 @@ def _count_deadlines_in_range(tasks, start: datetime, end: datetime, now_local: 
 
 
 def _get_smart_tip(deadlines, now_local: datetime) -> str | None:
+    """Generates a helpful tip based on upcoming workload."""
     today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
     tomorrow_start = today_start + timedelta(days=1)
     tomorrow_end = tomorrow_start + timedelta(days=1)
@@ -187,6 +201,7 @@ _MONTHS = {
 
 
 def _parse_holiday_range(title: str, now_local: datetime) -> tuple[datetime.date, datetime.date] | None:
+    """Extracts date ranges from holiday titles (e.g., 'Jan 1 - Jan 3')."""
     title = title.strip()
     if not title:
         return None
@@ -217,6 +232,7 @@ def _parse_holiday_range(title: str, now_local: datetime) -> tuple[datetime.date
 
 
 def _is_holiday_task(task) -> bool:
+    """Checks if a task is a holiday event."""
     tags = set(task.tags or [])
     title = (task.title or "").lower()
     if "holiday" in tags:
@@ -226,6 +242,7 @@ def _is_holiday_task(task) -> bool:
 
 
 def _holiday_ranges(tasks, now_local: datetime) -> list[tuple[datetime.date, datetime.date]]:
+    """Finds all holiday date ranges in the task list."""
     ranges: list[tuple[datetime.date, datetime.date]] = []
     for task in tasks:
         if not _is_holiday_task(task):
@@ -244,6 +261,7 @@ def _holiday_ranges(tasks, now_local: datetime) -> list[tuple[datetime.date, dat
 def _get_date_context(
     weekday: int, hour: int, is_before_holiday: bool, is_last_holiday_day: bool
 ) -> str | None:
+    """Provides context-aware messages (e.g., 'Friday', 'Before Holiday')."""
     if weekday == 4:
         return "📅 Friday — check weekend work"
     if weekday == 6 and hour >= 18:
@@ -256,16 +274,19 @@ def _get_date_context(
 
 
 def _is_course_update(task) -> bool:
+    """Alias for checking course reminders."""
     return _is_course_reminder(task)
 
 
 def _is_meeting_task(task) -> bool:
+    """Checks if a task is a meeting or office hour."""
     title = (task.title or "").lower()
     meeting_markers = ("meeting", "office hour", "office hours", "call", "sync", "standup", "会议", "答疑")
     return any(marker in title for marker in meeting_markers)
 
 
 def _event_type(task) -> str:
+    """Categorizes a task for UI styling (exam, assignment, meeting, etc.)."""
     tags = set(task.tags or [])
     if _is_course_update(task):
         return "course"
@@ -281,6 +302,7 @@ def _event_type(task) -> str:
 
 
 def _event_icon(event_type: str) -> str:
+    """Returns an emoji icon for the event type."""
     return {
         "assignment": "📝",
         "exam": "📄",
@@ -291,6 +313,7 @@ def _event_icon(event_type: str) -> str:
 
 
 def _urgency_class(event_type: str, due_at: datetime | None, now_local: datetime) -> str:
+    """Determines the CSS class for urgency (red for overdue/soon, green for future)."""
     if event_type in {"holiday", "course"}:
         return "event-info"
     if not due_at:
@@ -309,6 +332,7 @@ def _urgency_class(event_type: str, due_at: datetime | None, now_local: datetime
 
 
 def _render_event_card(task, now_local: datetime, delay_ms: int = 0) -> str:
+    """Generates the HTML for a single event card in the UI."""
     event_type = _event_type(task)
     icon = _event_icon(event_type)
     primary_time = task.due_at or task.received_at
@@ -345,6 +369,7 @@ def _render_event_card(task, now_local: datetime, delay_ms: int = 0) -> str:
         "</div>"
     )
 
+# --- Main Streamlit App Execution ---
 st.set_page_config(page_title="Nexus", page_icon="🧭", layout="wide")
 
 st.markdown(
@@ -657,6 +682,7 @@ div[data-testid="stAlert"] {
     unsafe_allow_html=True,
 )
 
+# Load configuration and data
 config = default_config()
 now_local = datetime.now().astimezone()
 calendar_sync_error = None
@@ -669,6 +695,7 @@ if config.google_calendar_sync_minutes > 0:
 tasks = load_tasks()
 _, select_window_tasks, briefing_error = _load_briefing()
 
+# Prepare header info
 display_name = _display_name()
 greeting = _get_greeting(now_local.hour)
 if display_name:
@@ -699,6 +726,7 @@ if not tip_lines:
 time_display = f"{now_local.strftime('%H:%M')} {_weekday_en(now_local)}"
 date_display = now_local.strftime("%b %d")
 
+# --- Task Filtering & Sorting ---
 # Split tasks into Schedule (Timeline) and Deadlines (Action)
 schedule_items = []
 deadline_items = []
@@ -727,6 +755,7 @@ for task in tasks:
 schedule_items.sort(key=lambda t: _localize_dt(t.due_at, now_local))
 deadline_items.sort(key=lambda t: _localize_dt(t.due_at, now_local))
 
+# Group deadlines by urgency
 urgent: list = []
 upcoming: list = []
 later: list = []
@@ -741,6 +770,7 @@ for task in deadline_items:
     else:
         later.append(task)
 
+# Filter recent course updates
 course_updates: list = []
 course_cutoff = cutoff_time
 for task in tasks:
@@ -757,6 +787,7 @@ course_updates.sort(
 
 left_panel, right_panel = st.columns([1, 1], gap="large")
 
+# --- Sidebar ---
 with st.sidebar:
     st.markdown(
         f"""
@@ -868,6 +899,7 @@ with st.sidebar:
                 else:
                     st.write(f"❌ {label} — error: {status.error}")
 
+# --- Left Panel: Timeline ---
 with left_panel:
     st.markdown('<div class="section-title" style="margin-top: 0;">Welcome to Nexus</div>', unsafe_allow_html=True)
     
@@ -924,6 +956,7 @@ with left_panel:
         unsafe_allow_html=True,
     )
 
+# --- Right Panel: Deadlines ---
 with right_panel:
     st.markdown(
         '<div class="section-title" style="margin-top: 0;">Upcoming Events</div>',

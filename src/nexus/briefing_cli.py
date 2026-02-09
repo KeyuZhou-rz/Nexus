@@ -12,6 +12,7 @@ from .storage import load_tasks, save_tasks
 
 
 def main() -> None:
+    """CLI entry point for generating daily briefings."""
     parser = argparse.ArgumentParser(description="Generate Nexus daily briefing JSON.")
     parser.add_argument("--window-days", type=int, default=7, help="Rolling window size.")
     parser.add_argument(
@@ -33,6 +34,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.aggregate:
+        # Run data fetching if requested.
         result = run_aggregation(include_google=True)
         if result.errors:
             for err in result.errors:
@@ -46,6 +48,7 @@ def main() -> None:
     window_start = now_local
     window_end = now_local + timedelta(days=args.window_days)
 
+    # Generate the briefing content.
     briefing = build_briefing(
         tasks,
         window_days=args.window_days,
@@ -55,6 +58,7 @@ def main() -> None:
     )
     payload = briefing_payload(briefing, window_start, window_end, generated_at=now_local)
 
+    # Save output.
     output_path = (
         Path(args.output)
         if args.output

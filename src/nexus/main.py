@@ -4,6 +4,7 @@ from .storage import load_projects
 
 
 def main() -> None:
+    """Simple boot script to list projects."""
     projects = load_projects()
     print("Nexus boot")
     print(f"Projects: {len(projects)}")
