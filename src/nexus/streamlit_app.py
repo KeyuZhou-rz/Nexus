@@ -10,6 +10,7 @@ import importlib
 import sys
 from itertools import groupby
 
+import subprocess
 import streamlit as st
 
 SRC_ROOT = Path(__file__).resolve().parents[1]
@@ -898,6 +899,47 @@ with st.sidebar:
                     st.write(f"✅ {label} — items: {status.item_count}")
                 else:
                     st.write(f"❌ {label} — error: {status.error}")
+
+        st.divider()
+        st.subheader("Archive Sync")
+        st.caption("使用浏览器登录 Brightspace，抓取作业/日历/成绩并同步到任务列表")
+        if st.button("▶ Run Archive Sync"):
+            with st.spinner("打开浏览器...请在弹出窗口完成 Duo 验证"):
+                _src_dir = str(SRC_ROOT)
+                _env = {**os.environ, "PYTHONPATH": _src_dir}
+                try:
+                    proc = subprocess.run(
+                        [sys.executable, "-m", "nexus.archive_sync"],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                        env=_env,
+                    )
+                except subprocess.TimeoutExpired:
+                    st.error("Archive Sync timed out (300 s). Browser may still be open.")
+                    proc = None
+
+            if proc is not None:
+                stdout = proc.stdout.strip()
+                if proc.stderr:
+                    with st.expander("Debug log"):
+                        st.code(proc.stderr, language="text")
+                if proc.returncode != 0 and not stdout:
+                    st.error(f"Archive Sync failed (exit {proc.returncode}).")
+                elif stdout:
+                    import json as _json
+                    try:
+                        result = _json.loads(stdout)
+                        if result.get("status") == "success":
+                            new_count = result.get("tasks_new", len(result.get("tasks", [])))
+                            merged = result.get("tasks_merged", "?")
+                            st.success(
+                                f"同步完成：新增 {new_count} 条，tasks.json 共 {merged} 条。"
+                            )
+                        else:
+                            st.error(f"Archive Sync error: {result.get('message', stdout)}")
+                    except _json.JSONDecodeError:
+                        st.error(f"Unexpected output: {stdout[:300]}")
 
 # --- Left Panel: Timeline ---
 with left_panel:
