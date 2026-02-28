@@ -46,6 +46,8 @@
 - Streamlit 增加 P2 查询调试面板（course/doc_type 过滤）。
 - 新增测试：`test_knowledge_query.py`。
 - Briefing 已接入 state + knowledge 注入（弱项与知识片段）。
+- 注入策略已覆盖 `review_queue` 与低掌握度 `mastery` 主题。
+- Streamlit 增加 Briefing Preview，并分区展示 Task/Knowledge 提醒。
 - 新增测试：`test_briefing_context.py`。
 - 新增测试：
   - `test_knowledge_chunking.py`
