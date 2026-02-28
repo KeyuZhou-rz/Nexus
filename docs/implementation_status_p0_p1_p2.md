@@ -33,12 +33,27 @@
 - 增加失败重试队列（跨进程/跨运行恢复）。
 
 ## P2（解析与记忆层）
-### 尚未开始（本轮仅做准备）
-- 文档摄入与解析管线（Marker/Chunk/Embedding）
-- Chroma 持久化与 metadata filtering
-- `state.json` 学习状态模型 + briefing 联动
+### 已完成（最小链路）
+- 新增知识摄入子包 `nexus.knowledge`：
+  - `chunking.py`：文本切块
+  - `embedding.py`：本地确定性 hash embedding
+  - `store.py`：Chroma 持久化封装
+  - `ingest.py`：批量摄入与 metadata 写入
+- 新增 `ingest_cli.py`，可从目录/文件摄入 `.md/.txt`。
+- 新增 `state_store.py`（`LearnerState` + 原子写读）。
+- 新增测试：
+  - `test_knowledge_chunking.py`
+  - `test_knowledge_embedding.py`
+  - `test_knowledge_ingest.py`
+  - `test_state_store.py`
+
+### 待完成
+- 对接 Marker/PDF 解析进入 ingest。
+- 接入真实语义 embedding（可切换本地/云模型）。
+- 在 Streamlit 中增加知识检索与学习状态调试面板。
+- 将 state 与 briefing 做联动生成。
 
 ## 下一迭代建议
-1. 完成 Brightspace 真实页面联调并固化选择器样本。
-2. 开启 P2 最小链路：本地文档 -> chunk -> embedding -> Chroma 查询。
-3. 在 UI 增加“知识检索/学习状态”调试面板。
+1. 打通“PDF -> markdown -> ingest”链路。
+2. 加入 query CLI 和 metadata filtering 验证用例。
+3. Streamlit 增加 P2 面板并展示 state/chroma 检索结果。
