@@ -19,7 +19,9 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from nexus.archive_sync.scraper import run_scraper
+from nexus.archive_sync.reporting import save_failure_report
 from nexus.models import Task
+from nexus.schemas import ARCHIVE_RESULT_SCHEMA_VERSION
 from nexus.storage import load_tasks, save_tasks
 
 
@@ -36,11 +38,20 @@ def main() -> None:
     base_url = os.environ.get("NEXUS_BRIGHTSPACE_URL", "").rstrip("/")
     username = os.environ.get("NEXUS_BRIGHTSPACE_USERNAME", "")
     password = os.environ.get("NEXUS_BRIGHTSPACE_PASSWORD", "")
+    archive_root = Path(
+        os.environ.get(
+            "NEXUS_ARCHIVE_DIR",
+            str(Path(__file__).resolve().parents[3] / "data" / "archives"),
+        )
+    )
+    failure_report_path = Path(__file__).resolve().parents[3] / "data" / "archive_failures.json"
 
     if not base_url or not username or not password:
         result = {
             "status": "error",
+            "schema_version": ARCHIVE_RESULT_SCHEMA_VERSION,
             "tasks": [],
+            "data": [],
             "message": (
                 "Missing required environment variables: "
                 "NEXUS_BRIGHTSPACE_URL, NEXUS_BRIGHTSPACE_USERNAME, NEXUS_BRIGHTSPACE_PASSWORD"
@@ -49,7 +60,12 @@ def main() -> None:
         print(json.dumps(result))
         sys.exit(1)
 
-    result = asyncio.run(run_scraper(base_url, username, password))
+    result = asyncio.run(run_scraper(base_url, username, password, archive_root=archive_root))
+    result["schema_version"] = ARCHIVE_RESULT_SCHEMA_VERSION
+    result["data"] = result.get("archives", [])
+    result["archive_failures"] = result.get("archive_failures", [])
+    if result["archive_failures"]:
+        save_failure_report(failure_report_path, result["archive_failures"])
 
     if result["status"] == "success" and result["tasks"]:
         # Convert raw dicts to Task objects
