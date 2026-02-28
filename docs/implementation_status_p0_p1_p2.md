@@ -33,7 +33,7 @@
 - 增加失败重试队列（跨进程/跨运行恢复）。
 
 ## P2（解析与记忆层）
-### 已完成（最小链路）
+### 已完成（最小链路 + 查询调试）
 - 新增知识摄入子包 `nexus.knowledge`：
   - `chunking.py`：文本切块
   - `embedding.py`：本地确定性 hash embedding
@@ -41,6 +41,10 @@
   - `ingest.py`：批量摄入与 metadata 写入
 - 新增 `ingest_cli.py`，可从目录/文件摄入 `.md/.txt`。
 - 新增 `state_store.py`（`LearnerState` + 原子写读）。
+
+- 新增查询能力：`knowledge/query.py` + `query_cli.py`。
+- Streamlit 增加 P2 查询调试面板（course/doc_type 过滤）。
+- 新增测试：`test_knowledge_query.py`。
 - 新增测试：
   - `test_knowledge_chunking.py`
   - `test_knowledge_embedding.py`

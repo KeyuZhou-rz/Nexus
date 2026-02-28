@@ -98,6 +98,11 @@ python -m nexus.briefing_cli --aggregate --window-days 7
 python -m nexus.ingest_cli --input ./notes --course-id EE201 --doc-type lecture_slide --db-dir data/chroma
 ```
 
+**Query local knowledge (P2):**
+```bash
+python -m nexus.query_cli --query "op-amp feedback" --db-dir data/chroma --course-id EE201 --doc-type lecture_slide
+```
+
 **Refresh Google Token:**
 ```bash
 python -m nexus.google_auth
