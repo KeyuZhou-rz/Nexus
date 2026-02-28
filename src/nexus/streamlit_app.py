@@ -960,6 +960,43 @@ with st.sidebar:
                     except _json.JSONDecodeError:
                         st.error(f"Unexpected output: {stdout[:300]}")
 
+        st.divider()
+        st.subheader("Knowledge Query")
+        with st.expander("P2 Debug Panel", expanded=False):
+            query_text = st.text_input("Query", value="", key="knowledge_query_text")
+            query_course = st.text_input("Course Filter (optional)", value="", key="knowledge_query_course")
+            query_doc_type = st.text_input("Doc Type Filter (optional)", value="", key="knowledge_query_doc_type")
+            query_top_k = st.slider("Top K", min_value=1, max_value=10, value=5, step=1)
+            if st.button("Run Knowledge Query"):
+                if not query_text.strip():
+                    st.warning("Please enter a query first.")
+                else:
+                    try:
+                        from nexus.knowledge.query import query_knowledge
+
+                        summary = query_knowledge(
+                            Path("data/chroma"),
+                            query_text=query_text.strip(),
+                            n_results=query_top_k,
+                            course_id=query_course.strip() or None,
+                            doc_type=query_doc_type.strip() or None,
+                        )
+                        if not summary.items:
+                            st.info("No results found.")
+                        else:
+                            st.success(f"Found {len(summary.items)} result(s).")
+                            for idx, item in enumerate(summary.items, start=1):
+                                distance = "n/a" if item.distance is None else f"{item.distance:.4f}"
+                                st.markdown(f"**#{idx}** distance={distance}")
+                                st.caption(
+                                    f"file={item.metadata.get('file_name', 'unknown')} | "
+                                    f"course={item.metadata.get('course_id', 'unknown')} | "
+                                    f"type={item.metadata.get('doc_type', 'unknown')}"
+                                )
+                                st.write(item.text[:500])
+                    except Exception as exc:
+                        st.error(f"Knowledge query failed: {exc}")
+
 # --- Left Panel: Timeline ---
 with left_panel:
     st.markdown('<div class="section-title" style="margin-top: 0;">Welcome to Nexus</div>', unsafe_allow_html=True)
