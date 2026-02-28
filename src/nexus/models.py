@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
+from .schemas import TASK_SCHEMA_VERSION
+
 ProjectIDE = Literal["vscode", "unity", "pycharm", "other"]
 TaskStatus = Literal["open", "in_progress", "done", "blocked"]
 FeedKind = Literal["brightspace_ical", "brightspace_rss", "ical_file"]
@@ -68,6 +70,7 @@ class Task:
     def to_dict(self) -> dict[str, Any]:
         """Serializes task to dictionary."""
         return {
+            "schema_version": TASK_SCHEMA_VERSION,
             "id": self.id,
             "title": self.title,
             "snippet": self.snippet,
