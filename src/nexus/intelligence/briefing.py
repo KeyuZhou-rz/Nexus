@@ -535,13 +535,33 @@ def _inject_learning_context(
     """Augment briefing.todo with learner-state and knowledge retrieval hints."""
     state_path = config.data_dir / "state.json"
     weak_points: list[str] = []
+    review_queue: list[str] = []
+    low_mastery_topics: list[str] = []
     try:
         state = load_state(state_path)
         weak_points = [item.strip() for item in state.weak_points if str(item).strip()]
+        review_queue = [item.strip() for item in state.review_queue if str(item).strip()]
+        mastery = state.mastery if isinstance(state.mastery, dict) else {}
+        low_mastery_topics = [
+            str(topic).strip()
+            for topic, score in mastery.items()
+            if str(topic).strip() and isinstance(score, (int, float)) and float(score) <= 0.5
+        ]
     except Exception as exc:  # pragma: no cover - runtime data guard
         briefing.warnings.append(f"State load failed: {exc}")
 
-    for weak_point in weak_points[:2]:
+    context_topics: list[str] = []
+    for topic in review_queue[:2]:
+        if topic not in context_topics:
+            context_topics.append(topic)
+    for topic in low_mastery_topics[:2]:
+        if topic not in context_topics:
+            context_topics.append(topic)
+    for topic in weak_points[:2]:
+        if topic not in context_topics:
+            context_topics.append(topic)
+
+    for weak_point in context_topics[:3]:
         briefing.todo.append(
             BriefingItem(
                 text_en=f"Review weak point: {weak_point}",
@@ -552,7 +572,7 @@ def _inject_learning_context(
             )
         )
 
-    query_seed = weak_points[0] if weak_points else None
+    query_seed = context_topics[0] if context_topics else None
     if not query_seed and briefing.focus:
         query_seed = briefing.focus[0].text_en
     if not query_seed:

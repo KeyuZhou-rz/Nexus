@@ -313,6 +313,13 @@ def _event_icon(event_type: str) -> str:
     }.get(event_type, "📌")
 
 
+def _is_knowledge_briefing_item(item) -> bool:
+    text = (getattr(item, "text_en", "") or "").lower()
+    if not getattr(item, "source_ids", None):
+        return text.startswith("review ")
+    return False
+
+
 def _urgency_class(event_type: str, due_at: datetime | None, now_local: datetime) -> str:
     """Determines the CSS class for urgency (red for overdue/soon, green for future)."""
     if event_type in {"holiday", "course"}:
@@ -694,7 +701,19 @@ if config.google_calendar_sync_minutes > 0:
         if result.errors:
             calendar_sync_error = result.errors[0]
 tasks = load_tasks()
-_, select_window_tasks, briefing_error = _load_briefing()
+build_briefing_fn, select_window_tasks, briefing_error = _load_briefing()
+briefing_preview = None
+if build_briefing_fn is not None:
+    try:
+        briefing_preview = build_briefing_fn(
+            tasks,
+            window_days=7,
+            now=now_local,
+            config=config,
+            use_llm=False,
+        )
+    except Exception as exc:
+        briefing_error = f"Briefing build failed: {exc}"
 
 # Prepare header info
 display_name = _display_name()
@@ -808,6 +827,30 @@ with st.sidebar:
             st.warning(f"Briefing module not available: {briefing_error}")
         if calendar_sync_error:
             st.warning(f"Calendar sync issue: {calendar_sync_error}")
+
+        if briefing_preview is not None:
+            st.subheader("Briefing Preview")
+            knowledge_items = [item for item in briefing_preview.todo if _is_knowledge_briefing_item(item)]
+            task_items = [item for item in briefing_preview.todo if not _is_knowledge_briefing_item(item)]
+
+            st.markdown("**Task Reminders**")
+            if task_items:
+                for item in task_items[:5]:
+                    st.write(f"- {item.text_en}")
+            else:
+                st.caption("No task reminders.")
+
+            st.markdown("**Knowledge Reviews**")
+            if knowledge_items:
+                for item in knowledge_items[:5]:
+                    st.write(f"- {item.text_en}")
+            else:
+                st.caption("No knowledge review items.")
+
+            if briefing_preview.warnings:
+                with st.expander("Briefing Warnings"):
+                    for warn in briefing_preview.warnings:
+                        st.write(f"- {warn}")
 
         st.subheader("Aggregation")
         if st.button("Run Aggregation (Google + Brightspace)"):
