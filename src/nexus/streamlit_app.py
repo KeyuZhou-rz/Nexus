@@ -933,9 +933,28 @@ with st.sidebar:
                         if result.get("status") == "success":
                             new_count = result.get("tasks_new", len(result.get("tasks", [])))
                             merged = result.get("tasks_merged", "?")
+                            archives = result.get("data", [])
+                            failures = result.get("archive_failures", [])
                             st.success(
                                 f"同步完成：新增 {new_count} 条，tasks.json 共 {merged} 条。"
                             )
+                            st.caption(
+                                f"归档文件：{len(archives)}，失败：{len(failures)}"
+                            )
+                            if archives:
+                                with st.expander("Archived Files"):
+                                    for item in archives:
+                                        course = item.get("course") or "Unknown Course"
+                                        name = item.get("original_name") or "Unnamed"
+                                        due = item.get("due_date") or "N/A"
+                                        st.write(f"- [{course}] {name} (due: {due})")
+                            if failures:
+                                with st.expander("Archive Failures"):
+                                    for item in failures:
+                                        course = item.get("course") or "Unknown Course"
+                                        title = item.get("assignment_title") or "Unknown Assignment"
+                                        err = item.get("error") or "Unknown error"
+                                        st.write(f"- [{course}] {title}: {err}")
                         else:
                             st.error(f"Archive Sync error: {result.get('message', stdout)}")
                     except _json.JSONDecodeError:
