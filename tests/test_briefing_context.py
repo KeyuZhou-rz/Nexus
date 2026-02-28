@@ -9,6 +9,8 @@ from nexus.intelligence.briefing import Briefing, BriefingItem, _inject_learning
 
 class _StateStub:
     weak_points = ["op-amp feedback", "kirchhoff"]
+    review_queue = ["bode plot"]
+    mastery = {"transient response": 0.4, "phasor": 0.8}
 
 
 class _SummaryStub:
@@ -48,6 +50,8 @@ def test_inject_learning_context_appends_items(monkeypatch):
     _inject_learning_context(base, now_local=datetime.now().astimezone(), config=_ConfigStub())
 
     assert any("Review weak point" in item.text_en for item in base.todo)
+    assert any("bode plot" in item.text_en.lower() for item in base.todo)
+    assert any("transient response" in item.text_en.lower() for item in base.todo)
     assert any("Review note from" in item.text_en for item in base.todo)
 
 
