@@ -45,6 +45,8 @@
 - 新增查询能力：`knowledge/query.py` + `query_cli.py`。
 - Streamlit 增加 P2 查询调试面板（course/doc_type 过滤）。
 - 新增测试：`test_knowledge_query.py`。
+- Briefing 已接入 state + knowledge 注入（弱项与知识片段）。
+- 新增测试：`test_briefing_context.py`。
 - 新增测试：
   - `test_knowledge_chunking.py`
   - `test_knowledge_embedding.py`
