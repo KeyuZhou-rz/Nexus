@@ -3,10 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import json
+from pathlib import Path
 from typing import Iterable
 
 from ..config import AppConfig, default_config
 from ..models import Task
+from ..state_store import load_state
+from ..knowledge.query import query_knowledge
 from .llm import LLMClient, LLMError, extract_json
 
 BRIEFING_SCHEMA_VERSION = "1.0"
@@ -126,6 +129,7 @@ def build_briefing(
     briefing.warnings.extend(warnings)
     briefing.warm_message = _build_warm_message(briefing, now_local)
     briefing.focus = _select_focus_items(briefing, now_local, max_items=3)
+    _inject_learning_context(briefing, now_local, config)
     return briefing
 
 
@@ -521,3 +525,74 @@ def _select_focus_items(
     if briefing.todo:
         return briefing.todo[:max_items]
     return []
+
+
+def _inject_learning_context(
+    briefing: Briefing,
+    now_local: datetime,
+    config: AppConfig,
+) -> None:
+    """Augment briefing.todo with learner-state and knowledge retrieval hints."""
+    state_path = config.data_dir / "state.json"
+    weak_points: list[str] = []
+    try:
+        state = load_state(state_path)
+        weak_points = [item.strip() for item in state.weak_points if str(item).strip()]
+    except Exception as exc:  # pragma: no cover - runtime data guard
+        briefing.warnings.append(f"State load failed: {exc}")
+
+    for weak_point in weak_points[:2]:
+        briefing.todo.append(
+            BriefingItem(
+                text_en=f"Review weak point: {weak_point}",
+                text_zh=f"复习薄弱点：{weak_point}",
+                due_at=None,
+                source_ids=[],
+                action_url=None,
+            )
+        )
+
+    query_seed = weak_points[0] if weak_points else None
+    if not query_seed and briefing.focus:
+        query_seed = briefing.focus[0].text_en
+    if not query_seed:
+        return
+
+    course_filter = None
+    if briefing.focus and briefing.focus[0].source_ids:
+        first_id = briefing.focus[0].source_ids[0]
+        task = briefing.task_index.get(first_id)
+        if task and task.course:
+            course_filter = task.course
+
+    try:
+        summary = query_knowledge(
+            Path(config.data_dir) / "chroma",
+            query_text=query_seed,
+            n_results=2,
+            course_id=course_filter,
+            doc_type=None,
+        )
+    except Exception as exc:  # pragma: no cover - optional module/runtime dependency
+        briefing.warnings.append(f"Knowledge query unavailable: {exc}")
+        return
+
+    for item in summary.items[:2]:
+        file_name = str(item.metadata.get("file_name", "knowledge"))
+        snippet = _short_text(item.text, limit=100)
+        briefing.todo.append(
+            BriefingItem(
+                text_en=f"Review note from {file_name}: {snippet}",
+                text_zh=f"复习资料（{file_name}）：{snippet}",
+                due_at=None,
+                source_ids=[],
+                action_url=None,
+            )
+        )
+
+
+def _short_text(text: str, limit: int = 120) -> str:
+    compact = " ".join((text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 3)] + "..."
