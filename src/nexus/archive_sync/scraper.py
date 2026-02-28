@@ -5,9 +5,16 @@ import asyncio
 import hashlib
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
-from .session import DEFAULT_SESSION_PATH, load_session, save_session
+from .archive_utils import (
+    build_archive_filename,
+    is_supported_attachment,
+    sanitize_segment,
+)
+from .session import load_session, save_session
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +44,16 @@ def _parse_due(text: str | None) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def _archive_root_default() -> Path:
+    return Path(__file__).resolve().parents[3] / "data" / "archives"
+
+
+def _due_date_iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.date().isoformat()
 
 
 # ── Brightspace helpers ───────────────────────────────────────────────────────
@@ -138,7 +155,9 @@ async def _scrape_courses(page, base_url: str) -> list[dict]:
     return courses
 
 
-async def _scrape_assignments(page, base_url: str, ou: str, course_name: str) -> list[dict]:
+async def _scrape_assignments(
+    page, base_url: str, ou: str, course_name: str
+) -> tuple[list[dict], list[dict[str, Any]]]:
     """Scrape assignments (dropbox) for one course."""
     url = f"{base_url}/d2l/lms/dropbox/dropbox.d2l?ou={ou}"
     _log(f"Scraping assignments for {course_name!r} at {url}")
@@ -147,9 +166,10 @@ async def _scrape_assignments(page, base_url: str, ou: str, course_name: str) ->
         await page.wait_for_load_state("networkidle", timeout=15_000)
     except Exception as exc:
         _log(f"  Failed to load assignments page: {exc}")
-        return []
+        return [], []
 
     tasks: list[dict] = []
+    assignment_refs: list[dict[str, Any]] = []
     rows = await page.query_selector_all("tr[class*='d_gd'], table.d2l-table tr")
     for row in rows:
         # Title cell
@@ -185,9 +205,18 @@ async def _scrape_assignments(page, base_url: str, ou: str, course_name: str) ->
             "status": "open",
             "priority": 0,
         })
+        if link:
+            assignment_refs.append(
+                {
+                    "course": course_name,
+                    "title": title,
+                    "url": link,
+                    "due_at": _parse_due(due_text),
+                }
+            )
         _log(f"  Assignment: {title!r} due {due_text}")
     _log(f"  {len(tasks)} assignments scraped.")
-    return tasks
+    return tasks, assignment_refs
 
 
 async def _scrape_calendar(page, base_url: str, ou: str, course_name: str) -> list[dict]:
@@ -284,9 +313,75 @@ async def _scrape_grades(page, base_url: str, ou: str, course_name: str) -> list
     return tasks
 
 
+async def _collect_assignment_attachments(page, base_url: str, assignment_url: str) -> list[dict[str, str]]:
+    """Collect downloadable attachment links from an assignment detail page."""
+    try:
+        await page.goto(assignment_url, timeout=30_000)
+        await page.wait_for_load_state("networkidle", timeout=15_000)
+    except Exception as exc:
+        _log(f"  Failed to open assignment detail page: {exc}")
+        return []
+
+    found: list[dict[str, str]] = []
+    seen: set[str] = set()
+    candidate_selectors = [
+        "a[download][href]",
+        "a[href*='download'][href]",
+        "a[href*='attachment'][href]",
+        "[class*='attachment'] a[href]",
+        "a[href]",
+    ]
+    for selector in candidate_selectors:
+        anchors = await page.query_selector_all(selector)
+        if not anchors:
+            continue
+        for anchor in anchors:
+            href = await anchor.get_attribute("href")
+            if not href:
+                continue
+            full_url = urljoin(base_url + "/", href)
+            if not full_url.startswith(("http://", "https://")):
+                continue
+            text = (await anchor.inner_text()).strip()
+            download_name = await anchor.get_attribute("download")
+            fallback_name = Path(urlparse(full_url).path).name or "attachment"
+            filename = (download_name or text or fallback_name).strip()
+            if not is_supported_attachment(full_url, filename):
+                continue
+            if full_url in seen:
+                continue
+            seen.add(full_url)
+            found.append({"url": full_url, "name": filename})
+    return found
+
+
+async def _download_attachment(context, url: str, dest: Path, retries: int = 2) -> None:
+    """Download a single file with authenticated browser context."""
+    last_error: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            resp = await context.request.get(url, timeout=60_000)
+            if not resp.ok:
+                raise RuntimeError(f"HTTP {resp.status} for {url}")
+            body = await resp.body()
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(body)
+            return
+        except Exception as exc:  # pragma: no cover - network instability path
+            last_error = exc
+            if attempt < retries:
+                await asyncio.sleep(1.0 + attempt)
+    raise RuntimeError(f"Download failed for {url}: {last_error}")
+
+
 # ── Top-level entry point ─────────────────────────────────────────────────────
 
-async def run_scraper(base_url: str, username: str, password: str) -> dict[str, Any]:
+async def run_scraper(
+    base_url: str,
+    username: str,
+    password: str,
+    archive_root: Path | None = None,
+) -> dict[str, Any]:
     """
     Full scrape pipeline.
 
@@ -304,10 +399,14 @@ async def run_scraper(base_url: str, username: str, password: str) -> dict[str, 
         return {
             "status": "error",
             "tasks": [],
+            "archives": [],
             "message": "playwright is not installed. Run: pip install playwright && playwright install chromium",
         }
 
     all_task_dicts: list[dict] = []
+    archives: list[dict[str, str | None]] = []
+    archive_failures: list[dict[str, str | None]] = []
+    archive_root = archive_root or _archive_root_default()
 
     async with async_playwright() as pw:
         # headed (non-headless) so the user can see and complete Duo
@@ -328,8 +427,51 @@ async def run_scraper(base_url: str, username: str, password: str) -> dict[str, 
                 ou = course["ou"]
                 name = course["name"]
                 page = await context.new_page()
-                all_task_dicts.extend(await _scrape_assignments(page, base_url, ou, name))
+                assignment_tasks, assignment_refs = await _scrape_assignments(page, base_url, ou, name)
+                all_task_dicts.extend(assignment_tasks)
                 await page.close()
+
+                # Download attachments for each assignment and archive them locally.
+                for assignment in assignment_refs:
+                    details_page = await context.new_page()
+                    attachments = await _collect_assignment_attachments(
+                        details_page,
+                        base_url=base_url,
+                        assignment_url=assignment["url"],
+                    )
+                    await details_page.close()
+                    for attachment in attachments:
+                        try:
+                            archive_name = build_archive_filename(
+                                course=assignment["course"],
+                                title=assignment["title"],
+                                due_at=assignment.get("due_at"),
+                                source_url=attachment["url"],
+                            )
+                            course_dir = archive_root / sanitize_segment(assignment["course"])
+                            archived_path = course_dir / archive_name
+                            if not archived_path.exists():
+                                await _download_attachment(context, attachment["url"], archived_path)
+                            archives.append(
+                                {
+                                    "course": assignment["course"],
+                                    "original_name": attachment["name"],
+                                    "archived_path": str(archived_path.resolve()),
+                                    "due_date": _due_date_iso(assignment.get("due_at")),
+                                }
+                            )
+                        except Exception as exc:
+                            archive_failures.append(
+                                {
+                                    "course": assignment["course"],
+                                    "assignment_title": assignment["title"],
+                                    "attachment_url": attachment["url"],
+                                    "error": str(exc),
+                                }
+                            )
+                            _log(
+                                f"  Attachment download failed for {attachment['url']}: {exc}"
+                            )
 
                 page = await context.new_page()
                 all_task_dicts.extend(await _scrape_calendar(page, base_url, ou, name))
@@ -342,7 +484,13 @@ async def run_scraper(base_url: str, username: str, password: str) -> dict[str, 
         except Exception as exc:
             _log(f"Scraper error: {exc}")
             await browser.close()
-            return {"status": "error", "tasks": [], "message": str(exc)}
+            return {
+                "status": "error",
+                "tasks": [],
+                "archives": [],
+                "archive_failures": archive_failures,
+                "message": str(exc),
+            }
 
         await browser.close()
 
@@ -350,5 +498,10 @@ async def run_scraper(base_url: str, username: str, password: str) -> dict[str, 
     return {
         "status": "success",
         "tasks": all_task_dicts,
-        "message": f"Scraped {len(all_task_dicts)} items from {len(courses)} courses.",
+        "archives": archives,
+        "archive_failures": archive_failures,
+        "message": (
+            f"Scraped {len(all_task_dicts)} items from {len(courses)} courses; "
+            f"archived {len(archives)} files; {len(archive_failures)} failures."
+        ),
     }
