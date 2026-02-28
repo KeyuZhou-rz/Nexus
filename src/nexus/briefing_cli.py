@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from .aggregation import run_aggregation
 from .config import default_config
+from .io_utils import atomic_write_json
 from .intelligence.briefing import briefing_payload, build_briefing
 from .storage import load_tasks, save_tasks
 
@@ -65,7 +65,7 @@ def main() -> None:
         else (config.data_dir / "briefing.json")
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(output_path, payload, ensure_ascii=False)
 
     print(f"Briefing written to: {output_path}")
 
