@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from .io_utils import atomic_write_json
 from .models import FeedSource, Project, Task
+from .schemas import validate_task_dict
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 PROJECTS_FILE = DATA_DIR / "projects.json"
@@ -25,7 +27,7 @@ def save_projects(projects: Iterable[Project], path: Path = PROJECTS_FILE) -> No
     """Saves projects to JSON file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = [project.to_dict() for project in projects]
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    atomic_write_json(path, payload)
 
 
 def load_tasks(path: Path = TASKS_FILE) -> list[Task]:
@@ -40,7 +42,11 @@ def save_tasks(tasks: Iterable[Task], path: Path = TASKS_FILE) -> None:
     """Saves tasks to JSON file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = [task.to_dict() for task in tasks]
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    for item in payload:
+        errors = validate_task_dict(item)
+        if errors:
+            raise ValueError(f"Invalid task payload for id={item.get('id')!r}: {', '.join(errors)}")
+    atomic_write_json(path, payload)
 
 
 def tasks_last_updated(path: Path = TASKS_FILE) -> datetime | None:
@@ -62,4 +68,4 @@ def save_feeds(feeds: Iterable[FeedSource], path: Path = FEEDS_FILE) -> None:
     """Saves feed configurations to JSON file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = [feed.to_dict() for feed in feeds]
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    atomic_write_json(path, payload)
