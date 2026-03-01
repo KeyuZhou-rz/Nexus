@@ -63,7 +63,6 @@ def _candidate_course_urls(base_url: str) -> list[str]:
     return [
         f"{base}/d2l/home",
         f"{base}/d2l/home?isCourseNav=1",
-        f"{base}/d2l/le/manageCourses/main.d2l",
     ]
 
 
@@ -156,8 +155,69 @@ async def _capture_debug_artifacts(page, debug_dir: Path, stage: str) -> list[st
 # ── Brightspace helpers ───────────────────────────────────────────────────────
 
 def _is_sso_redirect(url: str) -> bool:
-    sso_markers = ("shibboleth", "login.nyu.edu", "shib.nyu.edu", "idp.nyu.edu", "duo")
+    sso_markers = (
+        "shibboleth",
+        "login.nyu.edu",
+        "shib.nyu.edu",
+        "idp.nyu.edu",
+        "duo",
+        "login.microsoftonline.com",
+        "login.live.com",
+    )
     return any(m in url.lower() for m in sso_markers)
+
+
+def _normalize_login_username(username: str) -> str:
+    value = (username or "").strip()
+    if not value:
+        return value
+    if "@" in value:
+        return value
+    return f"{value}@nyu.edu"
+
+
+async def _submit_sso_credentials(page, username: str, password: str) -> None:
+    """Submit credentials across common NYU SSO screens."""
+    normalized_username = _normalize_login_username(username)
+
+    # Azure/NYU modern sign-in page.
+    if "microsoftonline.com" in page.url.lower():
+        email_selectors = "input[name='loginfmt'], input#i0116, input[type='email']"
+        email_input = await page.query_selector(email_selectors)
+        if email_input:
+            await page.fill(email_selectors, normalized_username)
+            await page.click("button[type='submit'], input[type='submit'], #idSIButton9")
+            await page.wait_for_load_state("domcontentloaded", timeout=15_000)
+
+        password_selectors = "input[name='passwd'], input#i0118, input[type='password']"
+        password_input = await page.query_selector(password_selectors)
+        if password_input:
+            await page.fill(password_selectors, password)
+            await page.click("button[type='submit'], input[type='submit'], #idSIButton9")
+            await page.wait_for_load_state("domcontentloaded", timeout=15_000)
+
+        # Optional "Stay signed in?" step.
+        stay_prompt = await page.query_selector("#idSIButton9, #idBtn_Back")
+        if stay_prompt:
+            # Choose "No" if present to avoid sticky cross-session surprises.
+            if await page.query_selector("#idBtn_Back"):
+                await page.click("#idBtn_Back")
+            else:
+                await page.click("#idSIButton9")
+            await page.wait_for_load_state("domcontentloaded", timeout=15_000)
+        return
+
+    # Legacy Shibboleth page fallback.
+    await page.fill(
+        'input[name="j_username"], input[id="username"], input[name="username"]',
+        normalized_username,
+    )
+    await page.fill(
+        'input[name="j_password"], input[id="password"], input[name="password"]',
+        password,
+    )
+    await page.click('button[type="submit"], input[type="submit"]')
+    await page.wait_for_load_state("networkidle", timeout=15_000)
 
 
 async def _wait_for_brightspace(page, base_url: str, timeout_s: int = 180) -> bool:
@@ -192,12 +252,8 @@ async def _login_or_restore_session(context, base_url: str, username: str, passw
 
     if _is_sso_redirect(page.url):
         _log("Session expired or missing — starting NYU SSO login.")
-        # Fill NetID / password on the NYU login page
         try:
-            await page.fill('input[name="j_username"], input[id="username"], input[name="username"]', username)
-            await page.fill('input[name="j_password"], input[id="password"], input[name="password"]', password)
-            await page.click('button[type="submit"], input[type="submit"]')
-            await page.wait_for_load_state("networkidle", timeout=15_000)
+            await _submit_sso_credentials(page, username=username, password=password)
             _log("Credentials submitted. Waiting for Duo MFA — complete it in the browser window.")
         except Exception as exc:
             _log(f"Login form interaction failed: {exc}")
