@@ -104,6 +104,22 @@ python -m nexus.doctor_cli
 python -m nexus.ingest_cli --input ./notes --course-id EE201 --doc-type lecture_slide --db-dir data/chroma
 ```
 
+
+**Extract memory from conversation logs (MVP):**
+```bash
+python -m nexus.memory_extract_cli --session-id demo_session --conversations-dir data/conversations --state-path data/state.json --db-dir data/chroma
+```
+
+**Apply human feedback to a weak point:**
+```bash
+python -m nexus.memory_feedback_cli --topic "op-amp feedback" --action accept --state-path data/state.json
+```
+
+**Query memory evidence:**
+```bash
+python -m nexus.memory_query_cli --query "op-amp" --db-dir data/chroma --collection nexus_memory_evidence
+```
+
 **Query local knowledge (P2):**
 ```bash
 python -m nexus.query_cli --query "op-amp feedback" --db-dir data/chroma --course-id EE201 --doc-type lecture_slide

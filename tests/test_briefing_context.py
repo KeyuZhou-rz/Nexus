@@ -11,6 +11,8 @@ class _StateStub:
     weak_points = ["op-amp feedback", "kirchhoff"]
     review_queue = ["bode plot"]
     mastery = {"transient response": 0.4, "phasor": 0.8}
+    weak_point_confidence = {"bode plot": 0.8, "transient response": 0.7, "op-amp feedback": 0.6}
+    weak_point_status = {"bode plot": "active", "transient response": "active", "op-amp feedback": "active"}
 
 
 class _SummaryStub:
