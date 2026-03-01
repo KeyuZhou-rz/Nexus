@@ -26,9 +26,11 @@ def query_knowledge(
     n_results: int = 5,
     course_id: str | None = None,
     doc_type: str | None = None,
+    collection_name: str = "nexus_chunks",
+    session_id: str | None = None,
 ) -> QuerySummary:
     """Query knowledge chunks with optional metadata filtering."""
-    store = ChromaKnowledgeStore(db_dir)
+    store = ChromaKnowledgeStore(db_dir, collection_name=collection_name)
 
     where: dict[str, Any] | None = None
     filters: list[dict[str, str]] = []
@@ -36,6 +38,8 @@ def query_knowledge(
         filters.append({"course_id": course_id})
     if doc_type:
         filters.append({"doc_type": doc_type})
+    if session_id:
+        filters.append({"session_id": session_id})
 
     if len(filters) == 1:
         where = filters[0]
