@@ -66,6 +66,13 @@ def _candidate_course_urls(base_url: str) -> list[str]:
     ]
 
 
+def _normalize_login_mode(mode: str) -> str:
+    value = (mode or "").strip().lower()
+    if value in {"manual", "auto", "hybrid"}:
+        return value
+    return "manual"
+
+
 def _extract_ou_from_href(href: str) -> str | None:
     if not href:
         return None
@@ -234,7 +241,14 @@ async def _wait_for_brightspace(page, base_url: str, timeout_s: int = 180) -> bo
     return False
 
 
-async def _login_or_restore_session(context, base_url: str, username: str, password: str) -> None:
+async def _login_or_restore_session(
+    context,
+    base_url: str,
+    username: str,
+    password: str,
+    *,
+    login_mode: str = "manual",
+) -> None:
     """
     1. Try loading saved session cookies.
     2. Navigate to Brightspace home; if redirected to SSO, do login.
@@ -252,11 +266,19 @@ async def _login_or_restore_session(context, base_url: str, username: str, passw
 
     if _is_sso_redirect(page.url):
         _log("Session expired or missing — starting NYU SSO login.")
-        try:
+        mode = _normalize_login_mode(login_mode)
+        if mode == "manual":
+            _log("Manual login mode: please complete SSO + Duo in browser window.")
+        elif mode == "auto":
             await _submit_sso_credentials(page, username=username, password=password)
             _log("Credentials submitted. Waiting for Duo MFA — complete it in the browser window.")
-        except Exception as exc:
-            _log(f"Login form interaction failed: {exc}")
+        else:
+            try:
+                await _submit_sso_credentials(page, username=username, password=password)
+                _log("Credentials submitted. Waiting for Duo MFA — complete it in the browser window.")
+            except Exception as exc:
+                _log(f"Auto-login step failed, continue manual SSO: {exc}")
+                _log("Hybrid login mode: please complete SSO + Duo in browser window.")
 
         success = await _wait_for_brightspace(page, base_url, timeout_s=180)
         if not success:
@@ -583,6 +605,7 @@ async def run_scraper(
     debug_enabled: bool = True,
     debug_dir: Path | None = None,
     discovery_timeout_ms: int = 25_000,
+    login_mode: str = "manual",
 ) -> dict[str, Any]:
     """
     Full scrape pipeline.
@@ -623,7 +646,13 @@ async def run_scraper(
         context = await browser.new_context()
 
         try:
-            await _login_or_restore_session(context, base_url, username, password)
+            await _login_or_restore_session(
+                context,
+                base_url,
+                username,
+                password,
+                login_mode=login_mode,
+            )
 
             page = await context.new_page()
             courses, discovery_meta, discovery_artifacts = await _scrape_courses(

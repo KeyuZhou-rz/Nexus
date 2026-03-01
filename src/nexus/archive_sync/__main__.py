@@ -19,6 +19,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from nexus.archive_sync.scraper import run_scraper
+from nexus.archive_sync.post_ingest import run_archive_post_ingest
 from nexus.archive_sync.reporting import update_failure_queue
 from nexus.models import Task
 from nexus.schemas import ARCHIVE_RESULT_SCHEMA_VERSION
@@ -52,21 +53,39 @@ def main() -> None:
         )
     )
     timeout_raw = os.environ.get("NEXUS_ARCHIVE_COURSE_DISCOVERY_TIMEOUT", "25000")
+    login_mode = os.environ.get("NEXUS_BRIGHTSPACE_LOGIN_MODE", "manual").strip().lower()
+    post_ingest_enabled = os.environ.get("NEXUS_ARCHIVE_POST_INGEST", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
+    post_ingest_db_dir = Path(
+        os.environ.get(
+            "NEXUS_ARCHIVE_POST_INGEST_DB_DIR",
+            str(Path(__file__).resolve().parents[3] / "data" / "chroma"),
+        )
+    )
     try:
         discovery_timeout_ms = max(1_000, int(timeout_raw))
     except ValueError:
         discovery_timeout_ms = 25_000
     failure_report_path = Path(__file__).resolve().parents[3] / "data" / "archive_failures.json"
 
-    if not base_url or not username or not password:
+    needs_creds = login_mode in {"auto", "hybrid"}
+    if not base_url or (needs_creds and (not username or not password)):
         result = {
             "status": "error",
             "schema_version": ARCHIVE_RESULT_SCHEMA_VERSION,
             "tasks": [],
             "data": [],
             "message": (
-                "Missing required environment variables: "
-                "NEXUS_BRIGHTSPACE_URL, NEXUS_BRIGHTSPACE_USERNAME, NEXUS_BRIGHTSPACE_PASSWORD"
+                "Missing required environment variables: NEXUS_BRIGHTSPACE_URL"
+                + (
+                    ", NEXUS_BRIGHTSPACE_USERNAME, NEXUS_BRIGHTSPACE_PASSWORD "
+                    "when NEXUS_BRIGHTSPACE_LOGIN_MODE is auto/hybrid"
+                    if needs_creds
+                    else ""
+                )
             ),
         }
         print(json.dumps(result))
@@ -81,6 +100,7 @@ def main() -> None:
             debug_enabled=debug_enabled,
             debug_dir=debug_dir,
             discovery_timeout_ms=discovery_timeout_ms,
+            login_mode=login_mode,
         )
     )
     result["schema_version"] = ARCHIVE_RESULT_SCHEMA_VERSION
@@ -120,6 +140,17 @@ def main() -> None:
         )
         result["tasks_merged"] = len(merged)
         result["tasks_new"] = len(new_tasks)
+
+    if result["status"] == "success" and post_ingest_enabled:
+        try:
+            post_summary = run_archive_post_ingest(
+                archives=result.get("archives", []),
+                data_dir=Path(__file__).resolve().parents[3] / "data",
+                db_dir=post_ingest_db_dir,
+            )
+            result["post_ingest"] = post_summary
+        except Exception as exc:
+            result["post_ingest"] = {"status": "error", "message": str(exc)}
 
     # Only JSON goes to stdout
     print(json.dumps(result, default=str))
