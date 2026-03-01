@@ -48,6 +48,8 @@
 - Briefing 已接入 state + knowledge 注入（弱项与知识片段）。
 - 注入策略已覆盖 `review_queue` 与低掌握度 `mastery` 主题。
 - Streamlit 增加 Briefing Preview，并分区展示 Task/Knowledge 提醒。
+- 对话记忆主链已打通：conversation -> extract -> state/chroma -> feedback。
+- 新增 memory CLI（extract/feedback/query）并完成测试覆盖。
 - 新增测试：`test_briefing_context.py`。
 - 新增测试：
   - `test_knowledge_chunking.py`

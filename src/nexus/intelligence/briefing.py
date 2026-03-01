@@ -537,13 +537,24 @@ def _inject_learning_context(
     weak_points: list[str] = []
     review_queue: list[str] = []
     low_mastery_topics: list[str] = []
+    active_topics_from_state: list[str] = []
+    threshold = 0.45
     try:
         state = load_state(state_path)
-        weak_points = [item.strip() for item in state.weak_points if str(item).strip()]
-        review_queue = [item.strip() for item in state.review_queue if str(item).strip()]
+        weak_points = [item.strip().lower() for item in state.weak_points if str(item).strip()]
+        review_queue = [item.strip().lower() for item in state.review_queue if str(item).strip()]
         mastery = state.mastery if isinstance(state.mastery, dict) else {}
+        confidence = state.weak_point_confidence if isinstance(state.weak_point_confidence, dict) else {}
+        status = state.weak_point_status if isinstance(state.weak_point_status, dict) else {}
+        active_topics_from_state = [
+            str(topic).strip().lower()
+            for topic, score in confidence.items()
+            if str(topic).strip()
+            and float(score) >= threshold
+            and status.get(str(topic).strip().lower(), "active") == "active"
+        ]
         low_mastery_topics = [
-            str(topic).strip()
+            str(topic).strip().lower()
             for topic, score in mastery.items()
             if str(topic).strip() and isinstance(score, (int, float)) and float(score) <= 0.5
         ]
@@ -552,11 +563,18 @@ def _inject_learning_context(
 
     context_topics: list[str] = []
     for topic in review_queue[:2]:
+        if topic not in context_topics and topic in active_topics_from_state:
+            context_topics.append(topic)
+    for topic in active_topics_from_state[:3]:
         if topic not in context_topics:
             context_topics.append(topic)
     for topic in low_mastery_topics[:2]:
         if topic not in context_topics:
             context_topics.append(topic)
+    if not context_topics:
+        for topic in weak_points[:3]:
+            if topic not in context_topics:
+                context_topics.append(topic)
     for topic in weak_points[:2]:
         if topic not in context_topics:
             context_topics.append(topic)
