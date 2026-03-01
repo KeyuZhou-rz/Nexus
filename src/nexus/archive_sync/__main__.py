@@ -44,6 +44,18 @@ def main() -> None:
             str(Path(__file__).resolve().parents[3] / "data" / "archives"),
         )
     )
+    debug_enabled = os.environ.get("NEXUS_ARCHIVE_DEBUG", "1").strip().lower() not in {"0", "false", "no"}
+    debug_dir = Path(
+        os.environ.get(
+            "NEXUS_ARCHIVE_DEBUG_DIR",
+            str(Path(__file__).resolve().parents[3] / "tmp" / "debug" / "archive_sync"),
+        )
+    )
+    timeout_raw = os.environ.get("NEXUS_ARCHIVE_COURSE_DISCOVERY_TIMEOUT", "25000")
+    try:
+        discovery_timeout_ms = max(1_000, int(timeout_raw))
+    except ValueError:
+        discovery_timeout_ms = 25_000
     failure_report_path = Path(__file__).resolve().parents[3] / "data" / "archive_failures.json"
 
     if not base_url or not username or not password:
@@ -60,7 +72,17 @@ def main() -> None:
         print(json.dumps(result))
         sys.exit(1)
 
-    result = asyncio.run(run_scraper(base_url, username, password, archive_root=archive_root))
+    result = asyncio.run(
+        run_scraper(
+            base_url,
+            username,
+            password,
+            archive_root=archive_root,
+            debug_enabled=debug_enabled,
+            debug_dir=debug_dir,
+            discovery_timeout_ms=discovery_timeout_ms,
+        )
+    )
     result["schema_version"] = ARCHIVE_RESULT_SCHEMA_VERSION
     result["data"] = result.get("archives", [])
     result["archive_failures"] = result.get("archive_failures", [])
