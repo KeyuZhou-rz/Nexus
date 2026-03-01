@@ -19,7 +19,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from nexus.archive_sync.scraper import run_scraper
-from nexus.archive_sync.reporting import save_failure_report
+from nexus.archive_sync.reporting import update_failure_queue
 from nexus.models import Task
 from nexus.schemas import ARCHIVE_RESULT_SCHEMA_VERSION
 from nexus.storage import load_tasks, save_tasks
@@ -64,8 +64,17 @@ def main() -> None:
     result["schema_version"] = ARCHIVE_RESULT_SCHEMA_VERSION
     result["data"] = result.get("archives", [])
     result["archive_failures"] = result.get("archive_failures", [])
-    if result["archive_failures"]:
-        save_failure_report(failure_report_path, result["archive_failures"])
+    resolved_urls = {
+        str(item.get("attachment_url", "")).strip()
+        for item in result.get("data", [])
+        if isinstance(item, dict)
+    }
+    queue_report = update_failure_queue(
+        failure_report_path,
+        result["archive_failures"],
+        resolved_attachment_urls=resolved_urls,
+    )
+    result["archive_failure_queue_count"] = queue_report.get("failure_count", 0)
 
     if result["status"] == "success" and result["tasks"]:
         # Convert raw dicts to Task objects
