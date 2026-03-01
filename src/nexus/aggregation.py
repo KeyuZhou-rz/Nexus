@@ -97,12 +97,16 @@ def run_aggregation(include_google: bool = True) -> AggregationResult:
     """
     tasks: list[Task] = []
     errors: list[str] = []
+    existing_tasks = load_tasks()
 
     feeds = load_feeds()
     ical_feeds, rss_feeds = _split_feeds(feeds)
+    brightspace_enabled = bool(ical_feeds or rss_feeds)
+    if not brightspace_enabled:
+        errors.append("Brightspace feeds not configured or disabled.")
     
     # 1. 处理 Brightspace 数据源
-    if ical_feeds or rss_feeds:
+    if brightspace_enabled:
         try:
             tasks.extend(BrightspaceAggregator(ical_feeds, rss_feeds).fetch_tasks())
         except Exception as exc:
@@ -117,6 +121,19 @@ def run_aggregation(include_google: bool = True) -> AggregationResult:
 
     # 3. 数据清洗与持久化
     tasks = _dedupe(tasks)
+    # Guardrail: if fetching failed and would wipe existing tasks, keep previous snapshot.
+    should_preserve_existing = (
+        not tasks
+        and bool(existing_tasks)
+        and any(err.startswith("Google error:") or err.startswith("Brightspace error:") for err in errors)
+    )
+    if should_preserve_existing:
+        errors.append(
+            "Aggregation produced no new tasks due to source errors; preserving existing tasks.json."
+        )
+        save_tasks(existing_tasks)
+        return AggregationResult(tasks=existing_tasks, errors=errors)
+
     save_tasks(tasks)
     return AggregationResult(tasks=tasks, errors=errors)
 
