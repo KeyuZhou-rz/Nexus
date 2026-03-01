@@ -456,6 +456,7 @@ async def run_scraper(
                                 {
                                     "course": assignment["course"],
                                     "original_name": attachment["name"],
+                                    "attachment_url": attachment["url"],
                                     "archived_path": str(archived_path.resolve()),
                                     "due_date": _due_date_iso(assignment.get("due_at")),
                                 }
