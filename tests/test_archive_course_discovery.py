@@ -5,6 +5,7 @@ from nexus.archive_sync.scraper import (
     _clean_course_title,
     _discover_courses_from_links,
     _extract_ou_from_href,
+    _normalize_login_mode,
     _normalize_login_username,
 )
 
@@ -68,3 +69,10 @@ def test_discover_courses_from_links_dedupes_and_filters_noise():
 def test_normalize_login_username_for_nyu_domain():
     assert _normalize_login_username("abc123") == "abc123@nyu.edu"
     assert _normalize_login_username("abc123@nyu.edu") == "abc123@nyu.edu"
+
+
+def test_normalize_login_mode_defaults_to_manual():
+    assert _normalize_login_mode("manual") == "manual"
+    assert _normalize_login_mode("auto") == "auto"
+    assert _normalize_login_mode("hybrid") == "hybrid"
+    assert _normalize_login_mode("unknown") == "manual"

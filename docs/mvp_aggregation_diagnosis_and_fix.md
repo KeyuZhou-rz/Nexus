@@ -25,7 +25,15 @@
     - `NEXUS_ARCHIVE_DEBUG`（默认开启）
     - `NEXUS_ARCHIVE_DEBUG_DIR`（默认 `tmp/debug/archive_sync`）
     - `NEXUS_ARCHIVE_COURSE_DISCOVERY_TIMEOUT`（默认 `25000ms`）
+    - `NEXUS_BRIGHTSPACE_LOGIN_MODE`（`manual/auto/hybrid`，默认 `manual`）
+    - `NEXUS_ARCHIVE_POST_INGEST`（默认开启）
+    - `NEXUS_ARCHIVE_POST_INGEST_DB_DIR`（默认 `data/chroma`）
   - 将上述参数透传给抓取器，便于线上快速诊断。
+- `src/nexus/archive_sync/post_ingest.py`
+  - 新增归档后处理流水线：
+    - 归档文件解析（txt/md/docx/pdf）
+    - 文档切分并写入 Chroma（`doc_type=archive_attachment`）
+    - 从文档中的“常见错误/易错点”等提示提取薄弱点并写入 `data/state.json`
 
 ## 测试覆盖
 - `tests/test_aggregation_resilience.py`
