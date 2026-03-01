@@ -79,6 +79,21 @@ export NEXUS_LLM_BASE_URL="https://api.deepseek.com" # or https://api.openai.com
 
 ## Usage
 
+### Run Integrated MVP Pipeline (Recommended)
+Single command to run archive sync + post-ingest + aggregation + briefing:
+
+```bash
+PYTHONPATH=src python -m nexus.pipeline_cli
+```
+
+Output files:
+- `data/briefing.json`
+- `data/pipeline_report.json`
+
+Reference docs:
+- `docs/integrated_mvp_pipeline.md`
+- `docs/module_usage_reference.md`
+
 ### Running the Dashboard
 Start the Streamlit interface:
 
@@ -91,6 +106,11 @@ streamlit run src/nexus/streamlit_app.py
 **Generate a Briefing manually:**
 ```bash
 python -m nexus.briefing_cli --aggregate --window-days 7
+```
+
+**Run integrated pipeline with options:**
+```bash
+python -m nexus.pipeline_cli --skip-archive-sync --no-llm --window-days 7
 ```
 
 
