@@ -93,6 +93,12 @@ streamlit run src/nexus/streamlit_app.py
 python -m nexus.briefing_cli --aggregate --window-days 7
 ```
 
+
+**Run environment doctor before aggregation (MVP):**
+```bash
+python -m nexus.doctor_cli
+```
+
 **Ingest local notes into Chroma (P2 minimal pipeline):**
 ```bash
 python -m nexus.ingest_cli --input ./notes --course-id EE201 --doc-type lecture_slide --db-dir data/chroma
