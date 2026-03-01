@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,6 +56,101 @@ def _due_date_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     return value.date().isoformat()
+
+
+def _candidate_course_urls(base_url: str) -> list[str]:
+    base = base_url.rstrip("/")
+    return [
+        f"{base}/d2l/home",
+        f"{base}/d2l/home?isCourseNav=1",
+        f"{base}/d2l/le/manageCourses/main.d2l",
+    ]
+
+
+def _extract_ou_from_href(href: str) -> str | None:
+    if not href:
+        return None
+    if "?ou=" in href:
+        return href.split("?ou=")[-1].split("&")[0].strip() or None
+    m = re.search(r"/d2l/home/(?P<ou>\d+)(?:/|$)", href)
+    if m:
+        return m.group("ou")
+    m = re.search(r"[?&]ou=(?P<ou>\d+)", href)
+    if m:
+        return m.group("ou")
+    return None
+
+
+def _clean_course_title(value: str) -> str:
+    text = " ".join((value or "").split()).strip()
+    text = re.sub(r"\s*\|\s*Brightspace.*$", "", text, flags=re.IGNORECASE)
+    return text
+
+
+def _discover_courses_from_links(
+    links: list[dict[str, str]],
+    base_url: str,
+) -> list[dict[str, str]]:
+    seen: set[str] = set()
+    courses: list[dict[str, str]] = []
+    for link in links:
+        href = str(link.get("href", "")).strip()
+        if not href:
+            continue
+        full_href = urljoin(base_url + "/", href)
+        ou = _extract_ou_from_href(full_href)
+        if not ou or ou in seen:
+            continue
+
+        title_candidates = [
+            str(link.get("text", "")).strip(),
+            str(link.get("aria_label", "")).strip(),
+            str(link.get("title", "")).strip(),
+        ]
+        title = _clean_course_title(next((t for t in title_candidates if t), ""))
+        if not title or len(title) < 2:
+            continue
+        if title.lower() in {"home", "calendar", "grades", "content"}:
+            continue
+
+        seen.add(ou)
+        courses.append({"name": title, "ou": ou})
+    return courses
+
+
+async def _capture_debug_artifacts(page, debug_dir: Path, stage: str) -> list[str]:
+    artifacts: list[str] = []
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+    stem = f"{stage}_{ts}"
+
+    html_path = debug_dir / f"{stem}.html"
+    png_path = debug_dir / f"{stem}.png"
+    meta_path = debug_dir / f"{stem}.json"
+
+    try:
+        html = await page.content()
+        html_path.write_text(html, encoding="utf-8")
+        artifacts.append(str(html_path.resolve()))
+    except Exception as exc:
+        _log(f"Failed to save debug html: {exc}")
+    try:
+        await page.screenshot(path=str(png_path), full_page=True)
+        artifacts.append(str(png_path.resolve()))
+    except Exception as exc:
+        _log(f"Failed to save debug screenshot: {exc}")
+    try:
+        meta = {
+            "url": page.url,
+            "title": await page.title(),
+            "stage": stage,
+            "saved_at": datetime.now().astimezone().isoformat(),
+        }
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        artifacts.append(str(meta_path.resolve()))
+    except Exception as exc:
+        _log(f"Failed to save debug meta: {exc}")
+    return artifacts
 
 
 # ── Brightspace helpers ───────────────────────────────────────────────────────
@@ -123,36 +220,81 @@ async def _login_or_restore_session(context, base_url: str, username: str, passw
 
 # ── Scrapers ──────────────────────────────────────────────────────────────────
 
-async def _scrape_courses(page, base_url: str) -> list[dict]:
-    """Return list of {name, ou} dicts from the Brightspace homepage widget."""
-    _log("Scraping course list from /d2l/home …")
-    await page.goto(f"{base_url}/d2l/home", timeout=30_000)
-    await page.wait_for_load_state("networkidle", timeout=15_000)
+async def _scrape_courses(
+    page,
+    base_url: str,
+    *,
+    debug_enabled: bool = True,
+    debug_dir: Path | None = None,
+    discovery_timeout_ms: int = 25_000,
+) -> tuple[list[dict[str, str]], dict[str, Any], list[str]]:
+    """Return discovered courses and diagnostics."""
+    attempted_urls: list[str] = []
+    selectors_used: list[str] = []
+    debug_artifacts: list[str] = []
 
-    courses: list[dict] = []
-    # D2L renders course cards under the My Courses widget; links contain ?ou=NNNN
-    links = await page.query_selector_all("a[href*='?ou='], a[href*='/d2l/home/']")
-    seen: set[str] = set()
-    for link in links:
-        href = await link.get_attribute("href") or ""
-        text = (await link.inner_text()).strip()
-        if not text or len(text) < 3:
+    selector_profiles = [
+        "a[href*='?ou='][aria-label], a[href*='?ou='][title]",
+        "main a[href*='?ou='], [role='main'] a[href*='?ou=']",
+        "a[href*='?ou=']",
+        "a[href*='/d2l/home/']",
+        "a[href*='ou=']",
+    ]
+
+    all_courses: list[dict[str, str]] = []
+    for target_url in _candidate_course_urls(base_url):
+        attempted_urls.append(target_url)
+        _log(f"Scraping course list from {target_url} …")
+        try:
+            await page.goto(target_url, timeout=30_000)
+            await page.wait_for_load_state("domcontentloaded", timeout=discovery_timeout_ms)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=discovery_timeout_ms)
+            except Exception:
+                pass
+        except Exception as exc:
+            _log(f"  Failed to load course discovery page {target_url}: {exc}")
             continue
-        # Extract ou parameter
-        ou = None
-        if "?ou=" in href:
-            ou = href.split("?ou=")[-1].split("&")[0]
-        elif "/d2l/home/" in href:
-            parts = href.split("/d2l/home/")[-1].split("/")
-            if parts and parts[0].isdigit():
-                ou = parts[0]
-        if ou and ou not in seen:
-            seen.add(ou)
-            courses.append({"name": text, "ou": ou})
-            _log(f"  Found course: {text!r} (ou={ou})")
 
-    _log(f"Total courses found: {len(courses)}")
-    return courses
+        links_payload: list[dict[str, str]] = []
+        for selector in selector_profiles:
+            selectors_used.append(selector)
+            anchors = await page.query_selector_all(selector)
+            if not anchors:
+                continue
+            for anchor in anchors:
+                href = await anchor.get_attribute("href") or ""
+                text = (await anchor.inner_text()).strip()
+                title = (await anchor.get_attribute("title") or "").strip()
+                aria_label = (await anchor.get_attribute("aria-label") or "").strip()
+                links_payload.append(
+                    {
+                        "href": href,
+                        "text": text,
+                        "title": title,
+                        "aria_label": aria_label,
+                    }
+                )
+
+        courses = _discover_courses_from_links(links_payload, base_url)
+        if courses:
+            all_courses = courses
+            for course in courses:
+                _log(f"  Found course: {course['name']!r} (ou={course['ou']})")
+            break
+
+        if debug_enabled and debug_dir is not None:
+            debug_artifacts.extend(
+                await _capture_debug_artifacts(page, debug_dir, stage="course_discovery_no_match")
+            )
+
+    discovery_meta = {
+        "attempted_urls": attempted_urls,
+        "selectors_used": selectors_used,
+        "matched_links": len(all_courses),
+    }
+    _log(f"Total courses found: {len(all_courses)}")
+    return all_courses, discovery_meta, debug_artifacts
 
 
 async def _scrape_assignments(
@@ -381,6 +523,10 @@ async def run_scraper(
     username: str,
     password: str,
     archive_root: Path | None = None,
+    *,
+    debug_enabled: bool = True,
+    debug_dir: Path | None = None,
+    discovery_timeout_ms: int = 25_000,
 ) -> dict[str, Any]:
     """
     Full scrape pipeline.
@@ -407,6 +553,13 @@ async def run_scraper(
     archives: list[dict[str, str | None]] = []
     archive_failures: list[dict[str, str | None]] = []
     archive_root = archive_root or _archive_root_default()
+    debug_dir = debug_dir or (Path(__file__).resolve().parents[3] / "tmp" / "debug" / "archive_sync")
+    discovery_meta: dict[str, Any] = {
+        "attempted_urls": [],
+        "selectors_used": [],
+        "matched_links": 0,
+    }
+    debug_artifacts: list[str] = []
 
     async with async_playwright() as pw:
         # headed (non-headless) so the user can see and complete Duo
@@ -417,7 +570,14 @@ async def run_scraper(
             await _login_or_restore_session(context, base_url, username, password)
 
             page = await context.new_page()
-            courses = await _scrape_courses(page, base_url)
+            courses, discovery_meta, discovery_artifacts = await _scrape_courses(
+                page,
+                base_url,
+                debug_enabled=debug_enabled,
+                debug_dir=debug_dir,
+                discovery_timeout_ms=discovery_timeout_ms,
+            )
+            debug_artifacts.extend(discovery_artifacts)
             await page.close()
 
             if not courses:
@@ -490,6 +650,8 @@ async def run_scraper(
                 "tasks": [],
                 "archives": [],
                 "archive_failures": archive_failures,
+                "course_discovery": discovery_meta,
+                "debug_artifacts": debug_artifacts,
                 "message": str(exc),
             }
 
@@ -501,6 +663,8 @@ async def run_scraper(
         "tasks": all_task_dicts,
         "archives": archives,
         "archive_failures": archive_failures,
+        "course_discovery": discovery_meta,
+        "debug_artifacts": debug_artifacts,
         "message": (
             f"Scraped {len(all_task_dicts)} items from {len(courses)} courses; "
             f"archived {len(archives)} files; {len(archive_failures)} failures."
