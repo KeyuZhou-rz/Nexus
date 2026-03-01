@@ -5,6 +5,7 @@ from nexus.archive_sync.scraper import (
     _clean_course_title,
     _discover_courses_from_links,
     _extract_ou_from_href,
+    _normalize_login_username,
 )
 
 
@@ -13,7 +14,6 @@ def test_candidate_course_urls_contains_fallbacks():
     assert urls == [
         "https://example.brightspace.com/d2l/home",
         "https://example.brightspace.com/d2l/home?isCourseNav=1",
-        "https://example.brightspace.com/d2l/le/manageCourses/main.d2l",
     ]
 
 
@@ -63,3 +63,8 @@ def test_discover_courses_from_links_dedupes_and_filters_noise():
         {"name": "General Physics II", "ou": "1001"},
         {"name": "Multivariable Calculus", "ou": "1002"},
     ]
+
+
+def test_normalize_login_username_for_nyu_domain():
+    assert _normalize_login_username("abc123") == "abc123@nyu.edu"
+    assert _normalize_login_username("abc123@nyu.edu") == "abc123@nyu.edu"

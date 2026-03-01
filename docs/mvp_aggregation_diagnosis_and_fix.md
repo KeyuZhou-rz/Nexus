@@ -16,6 +16,10 @@
   - 新增课程发现诊断输出：`course_discovery`（尝试 URL、使用 selector、命中数量）。
   - 新增调试工件落盘：当课程发现失败时自动保存页面 HTML/截图/元数据到 `tmp/debug/archive_sync/`。
   - 修复 OU 提取正则与标题清洗正则，确保 `/d2l/home/{ou}` 与 `| Brightspace` 后缀可正确解析。
+  - 登录流程兼容 NYU 当前 Microsoft 登录页（`login.microsoftonline.com`）：
+    - 自动填写 `NetID@nyu.edu`（若仅提供 NetID 自动补域名）
+    - 自动点击 Next / Sign in / Stay signed in 页面
+  - 移除高风险兜底 URL `/d2l/le/manageCourses/main.d2l`，避免租户无权限时直接触发 `Page Not Found` 干扰诊断。
 - `src/nexus/archive_sync/__main__.py`
   - 新增环境变量：
     - `NEXUS_ARCHIVE_DEBUG`（默认开启）
@@ -32,6 +36,7 @@
   - `ou` 参数解析（query/path 两种形式）
   - 课程标题清洗
   - 课程链接去重与噪声过滤
+  - 登录用户名标准化（NetID -> NetID@nyu.edu）
 
 ## MVP意义
 这次修复优先保证“数据不丢失 + 可诊断性”，避免操作失败导致任务数据被覆盖为空，并在 Brightspace 页面结构变化时快速定位问题，满足 MVP 对稳定性的基本要求。
