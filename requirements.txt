@@ -9,6 +9,9 @@ playwright>=1.40
 
 # Phase 3: Knowledge Ingest Pipeline
 chromadb>=0.5                          # 向量数据库（含默认 all-MiniLM-L6-v2 embedding）
-google-generativeai>=0.7.0             # Gemini Flash Vision 解析课件
+google-generativeai>=0.7.0             # Gemini Flash Vision 解析课件 + Query Expansion
 pypdf>=4.0.0                           # PDF 页数检测 + 分段解析时拆分页面
 pymupdf4llm>=0.0.17                    # PDF 文本提取 fallback（可选，优先 Gemini）
+
+# Phase 3: Retrieval + Generation
+litellm>=1.40.0                        # 模型无关 LLM 网关（OpenAI/Gemini/Anthropic 统一接口）
