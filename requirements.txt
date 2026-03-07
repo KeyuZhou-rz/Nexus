@@ -6,4 +6,9 @@ requests>=2.31
 feedparser>=6.0
 icalendar>=5.0
 playwright>=1.40
-chromadb>=0.5
+
+# Phase 3: Knowledge Ingest Pipeline
+chromadb>=0.5                          # 向量数据库（含默认 all-MiniLM-L6-v2 embedding）
+google-generativeai>=0.7.0             # Gemini Flash Vision 解析课件
+pypdf>=4.0.0                           # PDF 页数检测 + 分段解析时拆分页面
+pymupdf4llm>=0.0.17                    # PDF 文本提取 fallback（可选，优先 Gemini）
