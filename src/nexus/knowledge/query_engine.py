@@ -65,9 +65,9 @@ def _expand_query_with_gemini(
     用 Gemini Flash 将用户问题改写为 2-3 个检索短语。
     使用 JSON mode 确保输出格式正确。
     """
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    from google import genai
+    from google.genai import types
+    client = genai.Client(api_key=api_key)
 
     prompt = QUERY_EXPAND_PROMPT.format(
         user_query=user_query,
@@ -75,13 +75,14 @@ def _expand_query_with_gemini(
         profile_summary=profile_summary or "无画像信息",
     )
 
-    response = model.generate_content(
-        prompt,
-        generation_config={
-            "temperature": 0.3,                     # 改写任务允许轻微创意
-            "response_mime_type": "application/json",
-            "max_output_tokens": 256,
-        },
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.3,
+            response_mime_type="application/json",
+            max_output_tokens=256,
+        ),
     )
     raw = response.text.strip()
     # 去掉可能的 markdown 代码块包装
