@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import hashlib
-import html
 import re
-import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from nexus.knowledge.chunking import chunk_text
+from nexus.knowledge.document_text import extract_text
+from nexus.knowledge.ingestion_service import TextDocument, ingest_text_documents
 from nexus.knowledge.store import ChromaKnowledgeStore
 from nexus.memory_extractor import WeakPointCandidate
 from nexus.memory_update import merge_candidates_into_state
@@ -24,37 +22,6 @@ _TOPIC_CLEAN = re.compile(r"[^\u4e00-\u9fffA-Za-z0-9\-\s]")
 def _normalize_topic(raw: str) -> str:
     text = _TOPIC_CLEAN.sub(" ", raw or "").strip().lower()
     return re.sub(r"\s+", " ", text)
-
-
-def _extract_text_from_docx(path: Path) -> str:
-    with zipfile.ZipFile(path) as zf:
-        xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
-    parts = re.findall(r"<w:t[^>]*>(.*?)</w:t>", xml, flags=re.DOTALL)
-    return html.unescape("\n".join(part.strip() for part in parts if part.strip()))
-
-
-def _extract_text_from_pdf(path: Path) -> str:
-    try:
-        from pypdf import PdfReader  # optional
-    except Exception:
-        return ""
-    try:
-        reader = PdfReader(str(path))
-        texts = [(page.extract_text() or "") for page in reader.pages]
-    except Exception:
-        return ""
-    return "\n".join(t.strip() for t in texts if t.strip())
-
-
-def _extract_text(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix in {".txt", ".md", ".markdown"}:
-        return path.read_text(encoding="utf-8", errors="ignore")
-    if suffix == ".docx":
-        return _extract_text_from_docx(path)
-    if suffix == ".pdf":
-        return _extract_text_from_pdf(path)
-    return ""
 
 
 def _weak_candidates_from_text(text: str, evidence_id: str) -> list[WeakPointCandidate]:
@@ -77,11 +44,6 @@ def _weak_candidates_from_text(text: str, evidence_id: str) -> list[WeakPointCan
                 evidence_msg_ids=[evidence_id],
             )
     return list(candidates.values())
-
-
-def _chunk_id(source_path: Path, idx: int, text: str) -> str:
-    digest = hashlib.sha1(f"{source_path}:{idx}:{text}".encode("utf-8")).hexdigest()[:16]
-    return f"archive_chunk:{digest}"
 
 
 def run_archive_post_ingest(
@@ -112,35 +74,32 @@ def run_archive_post_ingest(
             continue
         files_scanned += 1
         try:
-            text = _extract_text(archived_path)
+            text = extract_text(archived_path)
             if not text.strip():
                 continue
 
-            chunks = chunk_text(text, max_chars=max_chars, overlap=overlap)
-            if not chunks:
+            course = str(item.get("course", "brightspace")).strip() or "brightspace"
+            stats = ingest_text_documents(
+                [
+                    TextDocument(
+                        source_path=archived_path,
+                        text=text,
+                        course_id=course,
+                        doc_type="archive_attachment",
+                        timestamp=now_date,
+                        source_path_meta=str(archived_path),
+                    )
+                ],
+                store,
+                max_chars=max_chars,
+                overlap=overlap,
+                id_namespace="archive_chunk",
+            )
+            if stats.files == 0:
                 continue
 
-            course = str(item.get("course", "brightspace")).strip() or "brightspace"
-            ids: list[str] = []
-            docs: list[str] = []
-            metas: list[dict[str, str]] = []
-            for idx, chunk in enumerate(chunks):
-                ids.append(_chunk_id(archived_path, idx, chunk))
-                docs.append(chunk)
-                metas.append(
-                    {
-                        "file_name": archived_path.name,
-                        "doc_type": "archive_attachment",
-                        "timestamp": now_date,
-                        "course_id": course,
-                        "chunk_index": str(idx),
-                        "source_path": str(archived_path),
-                    }
-                )
-
-            store.upsert_chunks(ids, docs, metas)
-            files_ingested += 1
-            total_chunks += len(chunks)
+            files_ingested += stats.files
+            total_chunks += stats.chunks
             candidates.extend(_weak_candidates_from_text(text, evidence_id=archived_path.name))
         except Exception as exc:
             failures.append({"path": str(archived_path), "error": str(exc)})

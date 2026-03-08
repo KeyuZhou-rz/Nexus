@@ -6,7 +6,6 @@ import html
 import re
 import textwrap
 import os
-import importlib
 import sys
 from itertools import groupby
 
@@ -24,21 +23,6 @@ from nexus.aggregation import (  # noqa: E402
 )
 from nexus.config import default_config  # noqa: E402
 from nexus.storage import load_feeds, load_tasks, tasks_last_updated  # noqa: E402
-
-
-def _load_briefing():
-    """Dynamically imports the briefing module to avoid hard crashes if dependencies are missing."""
-    try:
-        module = importlib.import_module("nexus.intelligence.briefing")
-        module = importlib.reload(module)
-        build = getattr(module, "build_briefing", None)
-        select_window = getattr(module, "select_window_tasks", None)
-        if build is None:
-            raise ImportError("build_briefing not found in nexus.intelligence.briefing")
-        return build, select_window, None
-    except Exception as exc:  # pragma: no cover - UI safety net
-        return None, None, str(exc)
-
 
 
 def _missing_ical_courses():
@@ -289,6 +273,8 @@ def _is_meeting_task(task) -> bool:
 def _event_type(task) -> str:
     """Categorizes a task for UI styling (exam, assignment, meeting, etc.)."""
     tags = set(task.tags or [])
+    if _is_grade_task(task):
+        return "grade"
     if _is_course_update(task):
         return "course"
     if _is_holiday_task(task):
@@ -307,17 +293,17 @@ def _event_icon(event_type: str) -> str:
     return {
         "assignment": "📝",
         "exam": "📄",
+        "grade": "📊",
         "holiday": "🎉",
         "meeting": "👥",
         "course": "📬",
     }.get(event_type, "📌")
 
 
-def _is_knowledge_briefing_item(item) -> bool:
-    text = (getattr(item, "text_en", "") or "").lower()
-    if not getattr(item, "source_ids", None):
-        return text.startswith("review ")
-    return False
+def _is_grade_task(task) -> bool:
+    tags = set(task.tags or [])
+    title = (task.title or "").lower()
+    return "grade" in tags or title.startswith("[grade]")
 
 
 def _urgency_class(event_type: str, due_at: datetime | None, now_local: datetime) -> str:
@@ -701,19 +687,6 @@ if config.google_calendar_sync_minutes > 0:
         if result.errors:
             calendar_sync_error = result.errors[0]
 tasks = load_tasks()
-build_briefing_fn, select_window_tasks, briefing_error = _load_briefing()
-briefing_preview = None
-if build_briefing_fn is not None:
-    try:
-        briefing_preview = build_briefing_fn(
-            tasks,
-            window_days=7,
-            now=now_local,
-            config=config,
-            use_llm=False,
-        )
-    except Exception as exc:
-        briefing_error = f"Briefing build failed: {exc}"
 
 # Prepare header info
 display_name = _display_name()
@@ -792,7 +765,7 @@ for task in deadline_items:
 
 # Filter recent course updates
 course_updates: list = []
-course_cutoff = cutoff_time
+course_cutoff = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
 for task in tasks:
     if not _is_course_update(task):
         continue
@@ -801,6 +774,12 @@ for task in tasks:
         continue
     course_updates.append(task)
 course_updates.sort(
+    key=lambda t: _localize_dt(t.received_at or t.due_at, now_local) or now_local,
+    reverse=True,
+)
+
+grade_updates = [task for task in tasks if _is_grade_task(task)]
+grade_updates.sort(
     key=lambda t: _localize_dt(t.received_at or t.due_at, now_local) or now_local,
     reverse=True,
 )
@@ -823,34 +802,13 @@ with st.sidebar:
     )
 
     with st.expander("System Controls", expanded=True):
-        if briefing_error:
-            st.warning(f"Briefing module not available: {briefing_error}")
         if calendar_sync_error:
             st.warning(f"Calendar sync issue: {calendar_sync_error}")
 
-        if briefing_preview is not None:
-            st.subheader("Briefing Preview")
-            knowledge_items = [item for item in briefing_preview.todo if _is_knowledge_briefing_item(item)]
-            task_items = [item for item in briefing_preview.todo if not _is_knowledge_briefing_item(item)]
-
-            st.markdown("**Task Reminders**")
-            if task_items:
-                for item in task_items[:5]:
-                    st.write(f"- {item.text_en}")
-            else:
-                st.caption("No task reminders.")
-
-            st.markdown("**Knowledge Reviews**")
-            if knowledge_items:
-                for item in knowledge_items[:5]:
-                    st.write(f"- {item.text_en}")
-            else:
-                st.caption("No knowledge review items.")
-
-            if briefing_preview.warnings:
-                with st.expander("Briefing Warnings"):
-                    for warn in briefing_preview.warnings:
-                        st.write(f"- {warn}")
+        st.subheader("Today Snapshot")
+        st.write(f"Tasks in board: {len(tasks)}")
+        st.write(f"Today's course updates: {len(course_updates)}")
+        st.write(f"Grade items: {len(grade_updates)}")
 
         st.subheader("Aggregation")
         if st.button("Run Aggregation (Google + Brightspace)"):
@@ -862,12 +820,7 @@ with st.sidebar:
             st.success(f"Aggregated {len(result.tasks)} items.")
 
             window_days = 14
-            if select_window_tasks is not None:
-                display_tasks = select_window_tasks(
-                    result.tasks, window_days=window_days, include_noise=True
-                )
-            else:
-                display_tasks = result.tasks
+            display_tasks = result.tasks
 
             gmail_tasks = [t for t in display_tasks if t.source == "gmail"]
             cal_tasks = [t for t in display_tasks if t.source == "gcal"]
@@ -1168,5 +1121,20 @@ with right_panel:
         else:
             st.markdown(
                 '<div class="section-empty">No course updates today</div>',
+                unsafe_allow_html=True,
+            )
+
+        if grade_updates:
+            st.markdown(
+                '<div class="section-subtitle">Grades</div>', unsafe_allow_html=True
+            )
+            for idx, task in enumerate(grade_updates[:20]):
+                st.markdown(
+                    _render_event_card(task, now_local, delay_ms=idx * 30),
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                '<div class="section-empty">No grade updates</div>',
                 unsafe_allow_html=True,
             )

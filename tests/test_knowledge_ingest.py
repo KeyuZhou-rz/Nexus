@@ -32,3 +32,5 @@ def test_ingest_markdown_files(tmp_path):
     assert len(store.calls) == 1
     _, _, metas = store.calls[0]
     assert metas[0]["course_id"] == "EE201"
+    assert "source_path" in metas[0]
+    assert "session_id" in metas[0]

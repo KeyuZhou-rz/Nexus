@@ -251,16 +251,17 @@ class SessionManager:
 
     def _call_llm_gemini(self, prompt: str) -> dict[str, Any]:
         """Gemini 直连 fallback。"""
-        import google.generativeai as genai
-        genai.configure(api_key=self._api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.1,
-                "response_mime_type": "application/json",
-                "max_output_tokens": 1024,
-            },
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=self._api_key)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type="application/json",
+                max_output_tokens=1024,
+            ),
         )
         return _parse_llm_json(response.text or "")
 

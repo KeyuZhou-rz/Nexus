@@ -70,7 +70,7 @@ Create a file named `data/feeds.json` to configure your course feeds.
 ```
 
 ### 3. LLM Configuration (Optional)
-To enable the AI briefing, set the following environment variables (or configure them in `src/nexus/config.py` if applicable):
+LLM is disabled by default. To enable AI briefing explicitly, set the following environment variables (or configure them in `src/nexus/config.py` if applicable):
 
 ```bash
 export NEXUS_LLM_API_KEY="your-api-key"
@@ -86,13 +86,14 @@ Single command to run archive sync + post-ingest + aggregation + briefing:
 PYTHONPATH=src python -m nexus.pipeline_cli
 ```
 
+For day-to-day use, treat `nexus.pipeline_cli` as the primary entrypoint.
+
 Output files:
 - `data/briefing.json`
 - `data/pipeline_report.json`
 
 Reference docs:
-- `docs/integrated_mvp_pipeline.md`
-- `docs/module_usage_reference.md`
+- `docs/NEXUS_REFERENCE.md`
 
 ### Running the Dashboard
 Start the Streamlit interface:
@@ -110,7 +111,12 @@ python -m nexus.briefing_cli --aggregate --window-days 7
 
 **Run integrated pipeline with options:**
 ```bash
-python -m nexus.pipeline_cli --skip-archive-sync --no-llm --window-days 7
+python -m nexus.pipeline_cli --skip-archive-sync --window-days 7
+```
+
+Enable LLM only when needed:
+```bash
+python -m nexus.pipeline_cli --llm --window-days 7
 ```
 
 
@@ -122,6 +128,12 @@ python -m nexus.doctor_cli
 **Ingest local notes into Chroma (P2 minimal pipeline):**
 ```bash
 python -m nexus.ingest_cli --input ./notes --course-id EE201 --doc-type lecture_slide --db-dir data/chroma
+```
+Supported input suffixes: `.md`, `.txt`, `.docx`, `.pdf`.
+
+For PDF markdown-first extraction, install optional dependency:
+```bash
+pip install updf4llm
 ```
 
 
@@ -145,6 +157,11 @@ python -m nexus.memory_query_cli --query "op-amp" --db-dir data/chroma --collect
 python -m nexus.query_cli --query "op-amp feedback" --db-dir data/chroma --course-id EE201 --doc-type lecture_slide
 ```
 
+**Read stored chunks directly (debug/review):**
+```bash
+python -m nexus.read_cli --db-dir data/chroma --course-id EE201 --limit 10
+```
+
 **Refresh Google Token:**
 ```bash
 python -m nexus.google_auth
@@ -152,7 +169,10 @@ python -m nexus.google_auth
 
 ## Project Structure
 
+- `src/nexus/cli/`: CLI implementations (`pipeline`, `briefing`, `ingest`, `query`, `memory`).
 - `src/nexus/aggregators/`: Modules for fetching data from Google and Brightspace.
+- `src/nexus/archive_sync/`: Brightspace scraping, attachment archiving, and post-ingest trigger.
+- `src/nexus/knowledge/`: Shared chunking/ingestion/query pipeline for Chroma.
 - `src/nexus/intelligence/`: LLM logic for generating briefings.
 - `src/nexus/streamlit_app.py`: The main dashboard UI.
 - `data/`: Local storage for tasks, cache, and configuration (ignored by Git).

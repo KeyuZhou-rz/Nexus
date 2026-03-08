@@ -153,10 +153,10 @@ def _parse_with_gemini(filepath: Path, api_key: str) -> list[dict[str, Any]]:
     将文件作为 blob 上传，让模型直接理解图表、公式、排版。
     返回原始 JSON 解析结果列表（未合并 continues）。
     """
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    client = genai.Client(api_key=api_key)
 
     # 读取文件字节，上传给 Gemini
     file_bytes = filepath.read_bytes()
@@ -172,21 +172,21 @@ def _parse_with_gemini(filepath: Path, api_key: str) -> list[dict[str, Any]]:
     }
     mime_type = mime_map.get(suffix, "application/octet-stream")
 
-    # 将文件字节包装为 Blob，一起发给 Gemini
-    blob = {"mime_type": mime_type, "data": file_bytes}
-
-    response = model.generate_content(
-        [PARSE_PROMPT, blob],
-        generation_config={
-            "temperature": 0.1,             # 解析任务要确定性，低 temperature 减少幻觉
-            "response_mime_type": "application/json",  # 强制 JSON 输出
-            "max_output_tokens": 8192,
-        },
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[
+            types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+            PARSE_PROMPT,
+        ],
+        config=types.GenerateContentConfig(
+            temperature=0.1,
+            response_mime_type="application/json",
+            max_output_tokens=8192,
+        ),
     )
 
     # 解析 JSON 响应
     raw_text = response.text.strip()
-    # 有时模型输出会带 markdown 代码块，去掉
     if raw_text.startswith("```"):
         raw_text = raw_text.split("```")[1]
         if raw_text.startswith("json"):
@@ -227,19 +227,21 @@ def _parse_with_gemini_batched(
         writer.write(buf)
         batch_bytes = buf.getvalue()
 
-        # 使用临时路径（Gemini SDK 需要 bytes，直接传 blob）
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=api_key)
 
-        blob = {"mime_type": "application/pdf", "data": batch_bytes}
-        response = model.generate_content(
-            [PARSE_PROMPT, blob],
-            generation_config={
-                "temperature": 0.1,
-                "response_mime_type": "application/json",
-                "max_output_tokens": 8192,
-            },
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                types.Part.from_bytes(data=batch_bytes, mime_type="application/pdf"),
+                PARSE_PROMPT,
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type="application/json",
+                max_output_tokens=8192,
+            ),
         )
         raw_text = response.text.strip()
         if raw_text.startswith("```"):

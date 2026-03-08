@@ -1,112 +1,238 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-02-08T15:36:10.421570+08:00",
-  "window_start": "2026-02-08T15:36:10.421570+08:00",
-  "window_end": "2026-02-15T15:36:10.421570+08:00",
+  "generated_at": "2026-03-01T23:15:24.725895+08:00",
+  "window_start": "2026-03-01T23:15:24.725895+08:00",
+  "window_end": "2026-03-08T23:15:24.725895+08:00",
   "todo": [
     {
-      "text_en": "Remember: [Multivariable Calculus] Biweekly Reminder: LA Tutoring Hours & Ongoing Support — Yolanda Huang <email@mail.brightspace.nyu.edu>",
-      "text_zh": "记得处理：[Multivariable Calculus] Biweekly Reminder: LA Tutoring Hours & Ongoing Support — Yolanda Huang <email@mail.brightspace.nyu.edu>",
+      "text_en": "Mail to check: Spring 2026 Global Notebook Is Here! 🌎📓 — NYU Global Programs <global.programs@nyu.edu>",
+      "text_zh": "邮件提醒：Spring 2026 Global Notebook Is Here! 🌎📓 — NYU Global Programs <global.programs@nyu.edu>",
       "due_at": null,
-      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c2d288220e8e15",
+      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c9abb9173a162a",
       "source_ids": [
-        "gmail:19c2d288220e8e15"
+        "gmail:19c9abb9173a162a"
       ]
     },
     {
-      "text_en": "Remember: [General Physics II] Biweekly Reminder: LA Tutoring Hours & Ongoing Support — Yolanda Huang <email@mail.brightspace.nyu.edu>",
-      "text_zh": "记得处理：[General Physics II] Biweekly Reminder: LA Tutoring Hours & Ongoing Support — Yolanda Huang <email@mail.brightspace.nyu.edu>",
+      "text_en": "Mail to check: [Important Information] Fall 2026 Study Away Housing - Mandatory Webinar March 5th — Global Programs New York City <gpnyc@nyu.edu>",
+      "text_zh": "邮件提醒：[Important Information] Fall 2026 Study Away Housing - Mandatory Webinar March 5th — Global Programs New York City <gpnyc@nyu.edu>",
       "due_at": null,
-      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c2d31aab18133c",
+      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c9acd04b5057c9",
       "source_ids": [
-        "gmail:19c2d31aab18133c"
+        "gmail:19c9acd04b5057c9"
       ]
     },
     {
-      "text_en": "Remember: Your Personalized Developer News from NVIDIA — NVIDIA Developer Relations <news@nvidia.com>",
-      "text_zh": "记得处理：Your Personalized Developer News from NVIDIA — NVIDIA Developer Relations <news@nvidia.com>",
+      "text_en": "Mail to check: 10 Minutes Today. Stronger First Impressions at the Career Fair! — NYU Shanghai Center for Career Development <handshake@mail.joinhandshake.com>",
+      "text_zh": "邮件提醒：10 Minutes Today. Stronger First Impressions at the Career Fair! — NYU Shanghai Center for Career Development <handshake@mail.joinhandshake.com>",
       "due_at": null,
-      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c2ffb10478becd",
+      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c9c9efd1270fdf",
       "source_ids": [
-        "gmail:19c2ffb10478becd"
+        "gmail:19c9c9efd1270fdf"
       ]
     },
     {
-      "text_en": "Remember: [Elections Board] 2026 Spring Election Voting Begins | Student Government — NYU Shanghai Student Elections Board <shanghai.student.elections@nyu.edu>",
-      "text_zh": "记得处理：[Elections Board] 2026 Spring Election Voting Begins | Student Government — NYU Shanghai Student Elections Board <shanghai.student.elections@nyu.edu>",
+      "text_en": "Mail to check: Next Thursday! Launching Your Career with Hilton Revenue Management Consolidated Center — NYU Shanghai Center for Career Development <handshake@mail.joinhandshake.com>",
+      "text_zh": "邮件提醒：Next Thursday! Launching Your Career with Hilton Revenue Management Consolidated Center — NYU Shanghai Center for Career Development <handshake@mail.joinhandshake.com>",
       "due_at": null,
-      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c303fffd8656cc",
+      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c9c9f16e733b46",
       "source_ids": [
-        "gmail:19c303fffd8656cc"
+        "gmail:19c9c9f16e733b46"
       ]
     },
     {
-      "text_en": "Remember: Submission receipt — System - No Reply <email@mail.brightspace.nyu.edu>",
-      "text_zh": "记得处理：Submission receipt — System - No Reply <email@mail.brightspace.nyu.edu>",
+      "text_en": "Course update: Submission receipt — System - No Reply <email@mail.brightspace.nyu.edu>",
+      "text_zh": "课程提醒：Submission receipt — System - No Reply <email@mail.brightspace.nyu.edu>",
       "due_at": null,
-      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c308c38822c25f",
+      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c9cc59a59c7df9",
       "source_ids": [
-        "gmail:19c308c38822c25f"
+        "gmail:19c9cc59a59c7df9"
       ]
     },
     {
-      "text_en": "Remember: The Students Creating a Digital Time Capsule ⌛ — NYU Shanghai Weekly <shanghai.gazette@nyu.edu>",
-      "text_zh": "记得处理：The Students Creating a Digital Time Capsule ⌛ — NYU Shanghai Weekly <shanghai.gazette@nyu.edu>",
+      "text_en": "Mail to check: Are You Ready to Go IRL? 📵 — NYU Shanghai Weekly <shanghai.gazette@nyu.edu>",
+      "text_zh": "邮件提醒：Are You Ready to Go IRL? 📵 — NYU Shanghai Weekly <shanghai.gazette@nyu.edu>",
       "due_at": null,
-      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c30e332ec23fbd",
+      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c9d3de445c96fd",
       "source_ids": [
-        "gmail:19c30e332ec23fbd"
+        "gmail:19c9d3de445c96fd"
       ]
     },
     {
-      "text_en": "Remember: DSC| 🙋🏻‍♀️🌱👁Beyond the Classroom: Apply Now for DSC Service Trips to Yunnan & Guizhou! — \"Dean's Service Corps\" <shanghai.dsc@nyu.edu>",
-      "text_zh": "记得处理：DSC| 🙋🏻‍♀️🌱👁Beyond the Classroom: Apply Now for DSC Service Trips to Yunnan & Guizhou! — \"Dean's Service Corps\" <shanghai.dsc@nyu.edu>",
+      "text_en": "Mail to check: NYU Shanghai Center for Career Development is hiring *上海聚善慈善超市 - 营造部实习生 and more — Handshake <handshake@g.joinhandshake.com>",
+      "text_zh": "邮件提醒：NYU Shanghai Center for Career Development is hiring *上海聚善慈善超市 - 营造部实习生 and more — Handshake <handshake@g.joinhandshake.com>",
       "due_at": null,
-      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c311ce314227e4",
+      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c9dd1369d9c5f8",
       "source_ids": [
-        "gmail:19c311ce314227e4"
+        "gmail:19c9dd1369d9c5f8"
       ]
     },
     {
-      "text_en": "Remember: [2026 Spring #9] CSB | Life Skills Lab: What Actually Makes You Happy? — Center for Student Belonging <shanghai.belonging@nyu.edu>",
-      "text_zh": "记得处理：[2026 Spring #9] CSB | Life Skills Lab: What Actually Makes You Happy? — Center for Student Belonging <shanghai.belonging@nyu.edu>",
+      "text_en": "Mail to check: Jingyao Hall Newsletter Edition 5 — NYU Shanghai Residential Education and Housing <shanghai.reslife@nyu.edu>",
+      "text_zh": "邮件提醒：Jingyao Hall Newsletter Edition 5 — NYU Shanghai Residential Education and Housing <shanghai.reslife@nyu.edu>",
       "due_at": null,
-      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c318aa66d10bd1",
+      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c9e57f64a18274",
       "source_ids": [
-        "gmail:19c318aa66d10bd1"
+        "gmail:19c9e57f64a18274"
       ]
     },
     {
-      "text_en": "Remember: Input and output impedance made effortless — CircuitLab Academy <support@circuitlab.com>",
-      "text_zh": "记得处理：Input and output impedance made effortless — CircuitLab Academy <support@circuitlab.com>",
+      "text_en": "Mail to check: 2026 I AM LIMITLESS Conference: Event Preview on March 2-3✨ — NYU Shanghai Center for Career Development <handshake@mail.joinhandshake.com>",
+      "text_zh": "邮件提醒：2026 I AM LIMITLESS Conference: Event Preview on March 2-3✨ — NYU Shanghai Center for Career Development <handshake@mail.joinhandshake.com>",
       "due_at": null,
-      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c35cf54cd2a01b",
+      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c9e8c112fdeaf2",
       "source_ids": [
-        "gmail:19c35cf54cd2a01b"
+        "gmail:19c9e8c112fdeaf2"
       ]
     },
     {
-      "text_en": "Remember: Secure link to log in to Claude.ai |  2026-02-07 14:29:59 — Anthropic <no-reply-JugpDGO8F5Ht9dX5jfkWXQ@mail.anthropic.com>",
-      "text_zh": "记得处理：Secure link to log in to Claude.ai |  2026-02-07 14:29:59 — Anthropic <no-reply-JugpDGO8F5Ht9dX5jfkWXQ@mail.anthropic.com>",
+      "text_en": "Mail to check: Global events — \"NYU President Linda G. Mills and Provost Gigi Dopico\" <office.president@nyu.edu>",
+      "text_zh": "邮件提醒：Global events — \"NYU President Linda G. Mills and Provost Gigi Dopico\" <office.president@nyu.edu>",
       "due_at": null,
-      "action_url": "https://mail.google.com/mail/u/0/#inbox/19c36cb066291f0f",
+      "action_url": "https://mail.google.com/mail/u/0/#inbox/19ca5b66759469e9",
       "source_ids": [
-        "gmail:19c36cb066291f0f"
+        "gmail:19ca5b66759469e9"
       ]
     }
   ],
   "schedule": [
     {
-      "text_en": "Assignment 02 - Processes - Due (NYU All Calendars)",
-      "text_zh": "Assignment 02 - Processes - Due (NYU All Calendars)（记得关注）",
-      "due_at": "2026-02-11T23:59:59+08:00",
-      "action_url": null,
+      "text_en": "Top priority: Circuits (kz2862@nyu.edu)",
+      "text_zh": "今天优先：Circuits (kz2862@nyu.edu)",
+      "due_at": "2026-03-02T09:45:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4bzNpYzFuNzRvajJjaG02aDlrZ2MxZzY0bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzAyVDAxNDUwMFoga3oyODYyQG55dS5lZHU",
       "source_ids": [
-        "bspace_ical:aa7c6cd767e93969"
+        "gcal:e229a7180d5ec849"
+      ]
+    },
+    {
+      "text_en": "Top priority: Multivariable Calculus (kz2862@nyu.edu)",
+      "text_zh": "今天优先：Multivariable Calculus (kz2862@nyu.edu)",
+      "due_at": "2026-03-02T11:15:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4bzNpYzltNjhvajJjaG02aDlrZ2MxZzY0bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzAyVDAzMTUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:2ccd65d48b3fa034"
+      ]
+    },
+    {
+      "text_en": "Due soon: Lantern Festival (Holidays in China)",
+      "text_zh": "尽快安排：Lantern Festival (Holidays in China)",
+      "due_at": "2026-03-03T00:00:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=MjAyNjAzMDNfaHN1YTcwNmxva2kxbzc2NjRucWZlcTZpamMgZW4uY2hpbmEjaG9saWRheUB2",
+      "source_ids": [
+        "gcal:007909c78c7c623e"
+      ]
+    },
+    {
+      "text_en": "Due soon: General Physics II (kz2862@nyu.edu)",
+      "text_zh": "尽快安排：General Physics II (kz2862@nyu.edu)",
+      "due_at": "2026-03-03T11:15:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4b2o0ZTlsNmtvajJjaG02aDlrZ2MxZzY0bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzAzVDAzMTUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:e70fe108ac8a0ad7"
+      ]
+    },
+    {
+      "text_en": "Due soon: Operating Systems (kz2862@nyu.edu)",
+      "text_zh": "尽快安排：Operating Systems (kz2862@nyu.edu)",
+      "due_at": "2026-03-03T12:45:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4bzNnZTluNzRvajJjaG02aDlrZ2MxZzY0bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzAzVDA0NDUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:ff629581e8c4aa20"
+      ]
+    },
+    {
+      "text_en": "Due soon: BASE Meeting Spring 2026 (Keyu Zhou) (kz2862@nyu.edu)",
+      "text_zh": "尽快安排：BASE Meeting Spring 2026 (Keyu Zhou) (kz2862@nyu.edu)",
+      "due_at": "2026-03-03T13:15:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=aW91bGJxa2I5bjBsZmNycXI0MDd0ZzNwNm8ga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:ce52fff3489a6a2b"
+      ]
+    },
+    {
+      "text_en": "On the schedule: Circuits (kz2862@nyu.edu)",
+      "text_zh": "日程安排：Circuits (kz2862@nyu.edu)",
+      "due_at": "2026-03-04T09:45:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4bzNpYzFuNzRvajJjaG02aDlrZ2MxZzY0bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzA0VDAxNDUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:e6d7e17333130544"
+      ]
+    },
+    {
+      "text_en": "On the schedule: Multivariable Calculus (kz2862@nyu.edu)",
+      "text_zh": "日程安排：Multivariable Calculus (kz2862@nyu.edu)",
+      "due_at": "2026-03-04T11:15:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4bzNpYzltNjhvajJjaG02aDlrZ2MxZzY0bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzA0VDAzMTUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:659f9aadd5ee696a"
+      ]
+    },
+    {
+      "text_en": "On the schedule: Foundations of Physics Lab II (kz2862@nyu.edu)",
+      "text_zh": "日程安排：Foundations of Physics Lab II (kz2862@nyu.edu)",
+      "due_at": "2026-03-04T12:45:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4b2o2Y2hpNjhvajJjaG02aDlrZ2MxZzY0bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzA0VDA0NDUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:e36e554908041b04"
+      ]
+    },
+    {
+      "text_en": "On the schedule: General Physics II (kz2862@nyu.edu)",
+      "text_zh": "日程安排：General Physics II (kz2862@nyu.edu)",
+      "due_at": "2026-03-05T11:15:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4b2o0ZTlsNmtvajJjaG02aDlrZ2MxZzY0bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzA1VDAzMTUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:767e78a60a2c89a6"
+      ]
+    },
+    {
+      "text_en": "On the schedule: Operating Systems (kz2862@nyu.edu)",
+      "text_zh": "日程安排：Operating Systems (kz2862@nyu.edu)",
+      "due_at": "2026-03-05T12:45:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4bzNnZTluNzRvajJjaG02aDlrZ2MxZzY0bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzA1VDA0NDUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:607438e85d35ec1b"
+      ]
+    },
+    {
+      "text_en": "On the schedule: Circuits (kz2862@nyu.edu)",
+      "text_zh": "日程安排：Circuits (kz2862@nyu.edu)",
+      "due_at": "2026-03-06T08:15:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4bzNpYzFuNzRvajJjaG02aDlrZ2MxZzY4bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzA2VDAwMTUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:6907f580fc3cde5b"
+      ]
+    },
+    {
+      "text_en": "On the schedule: Multivariable Calculus (kz2862@nyu.edu)",
+      "text_zh": "日程安排：Multivariable Calculus (kz2862@nyu.edu)",
+      "due_at": "2026-03-06T11:15:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4bzNpYzltNjhvajJjaG02aDlrZ2MxZzY4bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzA2VDAzMTUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:6a09d3f4ac6de82c"
+      ]
+    },
+    {
+      "text_en": "On the schedule: General Physics II (kz2862@nyu.edu)",
+      "text_zh": "日程安排：General Physics II (kz2862@nyu.edu)",
+      "due_at": "2026-03-06T12:45:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=XzY4b2o0ZTlsNmtvajJjaG02aDlrZ2MxZzY4bWoyZzM5ZHBxNzRvYmpjbGlpc3Nya2VsaTZhcmprYWRpbW9waWpjbHA3Y3FiM2NrXzIwMjYwMzA2VDA0NDUwMFoga3oyODYyQG55dS5lZHU",
+      "source_ids": [
+        "gcal:fb9dc2cf3dd2208c"
+      ]
+    },
+    {
+      "text_en": "On the schedule: International Women's Day (half-day) (Holidays in China)",
+      "text_zh": "日程安排：International Women's Day (half-day) (Holidays in China)",
+      "due_at": "2026-03-08T00:00:00+08:00",
+      "action_url": "https://www.google.com/calendar/event?eid=MjAyNjAzMDhfbTBqZDl0NWtrM2t1Mmsybmk5OGw2MXExYWsgZW4uY2hpbmEjaG9saWRheUB2",
+      "source_ids": [
+        "gcal:df1b6541a09066a3"
       ]
     }
   ],
   "warnings": [
-    "LLM request failed: 402 Client Error: Payment Required for url: https://api.deepseek.com/chat/completions"
+    "Knowledge query unavailable: unable to infer type for attribute \"chroma_server_nofile\""
   ]
 }
