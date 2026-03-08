@@ -784,7 +784,10 @@ grade_updates.sort(
     reverse=True,
 )
 
-left_panel, right_panel = st.columns([1, 1], gap="large")
+tab_dash, tab_study = st.tabs(["📋  Dashboard", "🎓  Study Assistant"])
+
+with tab_dash:
+    left_panel, right_panel = st.columns([1, 1], gap="large")
 
 # --- Sidebar ---
 with st.sidebar:
@@ -1138,3 +1141,264 @@ with right_panel:
                 '<div class="section-empty">No grade updates</div>',
                 unsafe_allow_html=True,
             )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Study Assistant Tab (Phase 3 QAPipeline integration)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@st.cache_resource
+def _get_qa_pipeline():
+    """初始化 QAPipeline，每个 Streamlit 进程只创建一次（cache_resource）。"""
+    import json as _json
+    from nexus.knowledge.qa_pipeline import QAPipeline
+
+    key_file = Path("data/QWEN_API_KEY.json")
+    qwen_key = None
+    if key_file.exists():
+        try:
+            qwen_key = _json.loads(key_file.read_text())["QWEN_API_KEY"]
+        except Exception:
+            pass
+    qwen_key = qwen_key or os.getenv("QWEN_API_KEY") or ""
+
+    pipeline = QAPipeline(
+        chroma_dir=Path("data/chroma"),
+        sqlite_path=Path("data/nexus.db"),
+        tasks_path=Path("data/tasks.json"),
+        qwen_api_key=qwen_key,
+    )
+    return pipeline, qwen_key
+
+
+def _profile_badge(label: str, color: str) -> str:
+    return (
+        f'<span style="display:inline-block;background:{color};color:#fff;'
+        f'border-radius:6px;padding:2px 8px;font-size:12px;margin:2px;">{html.escape(label)}</span>'
+    )
+
+
+with tab_study:
+    st.markdown(
+        """
+        <style>
+        .qa-answer { line-height: 1.7; }
+        .qa-source-row { font-size: 12px; color: rgba(230,237,243,0.6); margin: 2px 0; }
+        .profile-section { background: #111826; border-radius: 10px; padding: 14px;
+                           border: 1px solid rgba(255,255,255,0.08); margin-bottom: 12px; }
+        .profile-label { font-size: 11px; color: rgba(230,237,243,0.5);
+                         text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── 初始化 session state ──
+    if "qa_session_id" not in st.session_state:
+        import uuid as _uuid
+        st.session_state.qa_session_id = _uuid.uuid4().hex[:8]
+    if "qa_messages" not in st.session_state:
+        st.session_state.qa_messages = []  # list of {role, content, sources, expanded_queries}
+
+    # ── 加载 pipeline ──
+    try:
+        _pipeline, _qwen_key = _get_qa_pipeline()
+        _pipeline_ok = bool(_qwen_key)
+    except Exception as _e:
+        _pipeline_ok = False
+        _pipeline = None
+        st.error(f"QAPipeline 初始化失败: {_e}")
+
+    # ── Layout: chat(2/3) + profile(1/3) ──
+    chat_col, profile_col = st.columns([2, 1], gap="large")
+
+    with chat_col:
+        st.markdown('<div class="section-title" style="margin-top:0;">Study Assistant</div>',
+                    unsafe_allow_html=True)
+
+        # 课程选择器
+        _known_courses: list[str] = []
+        if _pipeline_ok:
+            try:
+                _known_courses = _pipeline.get_profile().get("courses") or []
+            except Exception:
+                pass
+        _course_options = _known_courses or ["CS202_OS"]
+        _selected_course = st.selectbox(
+            "Course",
+            options=_course_options,
+            index=0,
+            label_visibility="collapsed",
+            key="qa_course_select",
+        )
+
+        # 注册课程到 profile（首次访问）
+        if _pipeline_ok and _selected_course not in _known_courses:
+            try:
+                _pipeline.add_course(_selected_course)
+            except Exception:
+                pass
+
+        # 对话历史渲染
+        for _msg in st.session_state.qa_messages:
+            with st.chat_message(_msg["role"]):
+                st.markdown(_msg["content"], unsafe_allow_html=False)
+                if _msg.get("sources"):
+                    with st.expander(f"Sources ({len(_msg['sources'])})", expanded=False):
+                        for _src in _msg["sources"]:
+                            score_str = f"{_src['score']:.3f}"
+                            st.markdown(
+                                f'<div class="qa-source-row">'
+                                f'[{score_str}] <b>{html.escape(_src["topic"])}</b>'
+                                f' — {html.escape(_src["file"])}</div>',
+                                unsafe_allow_html=True,
+                            )
+                if _msg.get("expanded_queries") and len(_msg["expanded_queries"]) > 1:
+                    with st.expander("Query expansion", expanded=False):
+                        for _q in _msg["expanded_queries"]:
+                            st.caption(_q)
+
+        # 聊天输入
+        if _qa_prompt := st.chat_input(
+            "Ask about your course material...",
+            disabled=not _pipeline_ok,
+        ):
+            # 追加用户消息
+            st.session_state.qa_messages.append({"role": "user", "content": _qa_prompt})
+            with st.chat_message("user"):
+                st.markdown(_qa_prompt)
+
+            # 调用 QAPipeline
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    try:
+                        _resp = _pipeline.ask(
+                            _qa_prompt,
+                            session_id=st.session_state.qa_session_id,
+                            course_id=_selected_course,
+                        )
+                        _answer = _resp.answer
+                        _sources = [
+                            {
+                                "topic": str(s.topic),
+                                "file": str(s.source_file),
+                                "score": s.score,
+                            }
+                            for s in _resp.sources
+                        ]
+                        _expanded = _resp.expanded_queries
+                        _warnings = _resp.warnings
+                    except Exception as _exc:
+                        _answer = f"⚠️ Error: {_exc}"
+                        _sources = []
+                        _expanded = []
+                        _warnings = []
+
+                st.markdown(_answer)
+                if _sources:
+                    with st.expander(f"Sources ({len(_sources)})", expanded=False):
+                        for _src in _sources:
+                            st.markdown(
+                                f'<div class="qa-source-row">'
+                                f'[{_src["score"]:.3f}] <b>{html.escape(_src["topic"])}</b>'
+                                f' — {html.escape(_src["file"])}</div>',
+                                unsafe_allow_html=True,
+                            )
+                if _expanded and len(_expanded) > 1:
+                    with st.expander("Query expansion", expanded=False):
+                        for _q in _expanded:
+                            st.caption(_q)
+                for _w in _warnings:
+                    st.caption(f"ℹ️ {_w}")
+
+            # 追加 assistant 消息到历史
+            st.session_state.qa_messages.append({
+                "role": "assistant",
+                "content": _answer,
+                "sources": _sources,
+                "expanded_queries": _expanded,
+            })
+
+        # 检查 idle sessions（每次 rerun 都触发）
+        if _pipeline_ok:
+            try:
+                _ended = _pipeline.check_idle_sessions()
+                if _ended:
+                    st.toast(f"Session ended after idle timeout.", icon="💾")
+            except Exception:
+                pass
+
+    with profile_col:
+        st.markdown('<div class="section-title" style="margin-top:0;">Learning Profile</div>',
+                    unsafe_allow_html=True)
+
+        if not _pipeline_ok:
+            st.info("Set QWEN_API_KEY to enable the Study Assistant.")
+        else:
+            try:
+                _prof = _pipeline.get_profile()
+
+                # 薄弱点
+                st.markdown('<div class="profile-section">'
+                            '<div class="profile-label">Weak Points</div>', unsafe_allow_html=True)
+                _wps = _prof.get("weak_points") or []
+                if _wps:
+                    for _wp in _wps[:6]:
+                        st.markdown(
+                            _profile_badge(_wp["concept"][:40], "#c0392b"),
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.caption("None yet")
+                st.markdown("</div>", unsafe_allow_html=True)
+
+                # 已掌握
+                st.markdown('<div class="profile-section">'
+                            '<div class="profile-label">Mastered</div>', unsafe_allow_html=True)
+                _mastered = _prof.get("mastered") or []
+                if _mastered:
+                    for _m in _mastered[:6]:
+                        st.markdown(
+                            _profile_badge(_m["concept"][:40], "#1a7a3c"),
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.caption("None yet")
+                st.markdown("</div>", unsafe_allow_html=True)
+
+                # 学习风格
+                _style = _prof.get("learning_style", "default")
+                st.markdown(
+                    f'<div class="profile-section">'
+                    f'<div class="profile-label">Learning Style</div>'
+                    f'{html.escape(_style)}</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Session 控制
+                st.markdown("---")
+                st.caption(f"Session: `{st.session_state.qa_session_id}`")
+                st.caption(f"Messages: {len(st.session_state.qa_messages)}")
+                if st.button("End Session & Update Profile", use_container_width=True):
+                    with st.spinner("Analyzing session..."):
+                        try:
+                            _end_result = _pipeline.end_session(st.session_state.qa_session_id)
+                            import uuid as _uuid2
+                            st.session_state.qa_session_id = _uuid2.uuid4().hex[:8]
+                            st.session_state.qa_messages = []
+                            _patch = _end_result.get("patch_result", {})
+                            _applied = _patch.get("applied", "0 changes")
+                            _details = _patch.get("details", [])
+                            st.success(f"Profile updated: {_applied}")
+                            if _details:
+                                for _d in _details:
+                                    st.caption(_d)
+                        except Exception as _exc:
+                            st.error(f"Session end failed: {_exc}")
+                    st.rerun()
+
+                if st.button("Clear Chat", use_container_width=True):
+                    st.session_state.qa_messages = []
+                    st.rerun()
+
+            except Exception as _exc:
+                st.error(f"Profile load failed: {_exc}")
