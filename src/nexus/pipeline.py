@@ -27,7 +27,7 @@ def run_mvp_pipeline(
     run_archive_sync: bool = True,
     archive_timeout: int = 420,
     include_google: bool = True,
-    use_llm: bool = True,
+    use_llm: bool = False,
     window_days: int = 7,
     briefing_output: Path | None = None,
     report_output: Path | None = None,

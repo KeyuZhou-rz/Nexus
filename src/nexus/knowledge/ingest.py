@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from .chunking import chunk_text
+from .document_text import extract_text
+from .ingestion_service import TextDocument, ingest_text_documents
 from .store import ChromaKnowledgeStore
 
 
@@ -15,9 +15,44 @@ class IngestSummary:
     chunks: int
 
 
-def _chunk_id(file_path: Path, idx: int, text: str) -> str:
-    digest = hashlib.sha1(f"{file_path}:{idx}:{text}".encode("utf-8")).hexdigest()[:16]
-    return f"chunk:{digest}"
+def ingest_files(
+    paths: list[Path],
+    store: ChromaKnowledgeStore,
+    *,
+    course_id: str,
+    doc_type: str,
+    timestamp: str | None = None,
+    max_chars: int = 900,
+    overlap: int = 120,
+    id_namespace: str = "chunk",
+) -> IngestSummary:
+    """Ingest supported document files into Chroma with metadata."""
+    now = timestamp or datetime.now().date().isoformat()
+    documents: list[TextDocument] = []
+    for path in paths:
+        if not path.exists() or not path.is_file():
+            continue
+        text = extract_text(path)
+        if not text.strip():
+            continue
+        documents.append(
+            TextDocument(
+                source_path=path,
+                text=text,
+                course_id=course_id,
+                doc_type=doc_type,
+                timestamp=now,
+            )
+        )
+
+    stats = ingest_text_documents(
+        documents,
+        store,
+        max_chars=max_chars,
+        overlap=overlap,
+        id_namespace=id_namespace,
+    )
+    return IngestSummary(files=stats.files, chunks=stats.chunks)
 
 
 def ingest_markdown_files(
@@ -30,37 +65,15 @@ def ingest_markdown_files(
     max_chars: int = 900,
     overlap: int = 120,
 ) -> IngestSummary:
-    """Ingest markdown/text files into Chroma with metadata."""
-    now = timestamp or datetime.now().date().isoformat()
-    total_chunks = 0
-    file_count = 0
-
-    for path in paths:
-        if not path.exists() or not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        chunks = chunk_text(text, max_chars=max_chars, overlap=overlap)
-        if not chunks:
-            continue
-
-        ids: list[str] = []
-        docs: list[str] = []
-        metas: list[dict[str, str]] = []
-        for idx, chunk in enumerate(chunks):
-            ids.append(_chunk_id(path, idx, chunk))
-            docs.append(chunk)
-            metas.append(
-                {
-                    "file_name": path.name,
-                    "doc_type": doc_type,
-                    "timestamp": now,
-                    "course_id": course_id,
-                    "chunk_index": str(idx),
-                }
-            )
-
-        store.upsert_chunks(ids, docs, metas)
-        total_chunks += len(chunks)
-        file_count += 1
-
-    return IngestSummary(files=file_count, chunks=total_chunks)
+    """Backward-compatible ingest for markdown/text paths."""
+    text_paths = [p for p in paths if p.suffix.lower() in {".md", ".txt", ".markdown"}]
+    return ingest_files(
+        text_paths,
+        store,
+        course_id=course_id,
+        doc_type=doc_type,
+        timestamp=timestamp,
+        max_chars=max_chars,
+        overlap=overlap,
+        id_namespace="chunk",
+    )

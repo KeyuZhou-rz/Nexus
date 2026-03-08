@@ -20,6 +20,16 @@ venv/
 data/*.json
 # Keep the data directory structure
 !data/.gitkeep
+!data/feeds.example.json
+
+# Root-level runtime/cache JSON
+tasks.json
+*.local.json
+
+# OAuth / API credentials (root or nested)
+*client_secret*.json
+*credentials*.json
+*token*.json
 
 # Environment variables
 .env
