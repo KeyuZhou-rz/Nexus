@@ -25,8 +25,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 默认模型（litellm 格式：provider/model）
-DEFAULT_MODEL = "gemini/gemini-2.0-flash"
+# 默认模型（QWEN via DashScope OpenAI-compatible endpoint）
+DEFAULT_MODEL = "openai/qwen-plus"
+_QWEN_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
 @dataclass
@@ -73,16 +74,7 @@ class KnowledgeLLMClient:
         """
         effective_model = model or self.model
 
-        # ── 尝试 litellm ──
-        try:
-            return self._chat_litellm(messages, effective_model)
-        except ImportError:
-            logger.info("litellm 未安装，fallback 到 Gemini 直连")
-        except Exception as exc:
-            logger.warning(f"litellm 调用失败，fallback: {exc}")
-
-        # ── Fallback: Gemini 直连 ──
-        return self._chat_gemini_fallback(messages)
+        return self._chat_litellm(messages, effective_model)
 
     def log_interaction(
         self,
@@ -131,11 +123,18 @@ class KnowledgeLLMClient:
         """
         import litellm  # 延迟导入，安装检测
 
+        api_key = os.getenv("QWEN_API_KEY")
+        extra = (
+            {"api_key": api_key, "api_base": _QWEN_API_BASE}
+            if api_key and model.startswith("openai/qwen")
+            else {}
+        )
         response = litellm.completion(
             model=model,
             messages=messages,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            **extra,
         )
 
         content = response.choices[0].message.content or ""
@@ -148,50 +147,3 @@ class KnowledgeLLMClient:
             output_tokens=getattr(usage, "completion_tokens", None) if usage else None,
         )
 
-    def _chat_gemini_fallback(
-        self,
-        messages: list[dict[str, str]],
-    ) -> LLMOutput:
-        """
-        Gemini 直连 fallback（不依赖 litellm）。
-        将 OpenAI 格式 messages 转换为 Gemini 格式后调用。
-        """
-        import google.generativeai as genai
-
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "Gemini fallback 需要 GEMINI_API_KEY 或 GOOGLE_API_KEY 环境变量"
-            )
-
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
-
-        # 将 messages 列表转换为单个 prompt 字符串（Gemini 直连不原生支持 chat 格式）
-        prompt_parts: list[str] = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role == "system":
-                prompt_parts.append(f"[系统指令]\n{content}")
-            elif role == "user":
-                prompt_parts.append(f"[用户]\n{content}")
-            elif role == "assistant":
-                prompt_parts.append(f"[助手]\n{content}")
-
-        full_prompt = "\n\n".join(prompt_parts)
-
-        response = model.generate_content(
-            full_prompt,
-            generation_config={
-                "temperature": self.temperature,
-                "max_output_tokens": self.max_tokens,
-            },
-        )
-
-        return LLMOutput(
-            content=response.text or "",
-            model_used="gemini-2.0-flash (direct)",
-            input_tokens=None,      # Gemini 直连不返回 token 用量
-            output_tokens=None,
-        )

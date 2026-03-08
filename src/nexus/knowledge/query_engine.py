@@ -160,6 +160,7 @@ def _merge_and_rerank(
     semantic_results: list[tuple[str, str, dict, float]],   # (id, content, meta, distance)
     keyword_results: list[tuple[str, str, dict, float]],
     top_k: int = 5,
+    max_distance: float = 0.55,   # 余弦距离截断阈值；> 此值视为不相关，不纳入结果
 ) -> list[RetrievedChunk]:
     """
     合并两路检索结果，去重后重排序，返回 top_k 个 chunks。
@@ -169,6 +170,7 @@ def _merge_and_rerank(
     - 只在语义路径中的 chunk：保持原始距离
     - 只在关键词路径中的 chunk：保持原始距离，+0.05 轻微惩罚（精确匹配但语义可能稍偏）
     - 最终按距离升序排列，取 top_k
+    - 最终结果中过滤掉 score > max_distance 的 chunk（不相关）
     """
     # 用 chunk_id 作为 key 合并
     merged: dict[str, dict] = {}
@@ -197,8 +199,11 @@ def _merge_and_rerank(
                 "paths": {"keyword"},
             }
 
-    # 按 score 升序排列（score 越小越相关）
-    ranked = sorted(merged.values(), key=lambda x: x["score"])[:top_k]
+    # 按 score 升序排列（score 越小越相关），截断 max_distance
+    ranked = [
+        r for r in sorted(merged.values(), key=lambda x: x["score"])
+        if r["score"] <= max_distance
+    ][:top_k]
 
     return [
         RetrievedChunk(

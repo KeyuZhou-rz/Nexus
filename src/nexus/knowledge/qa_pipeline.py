@@ -283,7 +283,7 @@ class QAPipeline:
     - chroma_dir: ChromaDB 持久化目录
     - sqlite_path: SQLite 数据库路径
     - tasks_path: tasks.json 路径（用于 Calendar 课程推断，可选）
-    - gemini_api_key: Gemini API key
+    - qwen_api_key: QWEN API key（不传则从环境变量 QWEN_API_KEY 读取）
     - qa_model: 问答生成模型（litellm 格式）
     - top_k: 最终使用的 chunk 数量
     """
@@ -293,7 +293,7 @@ class QAPipeline:
         chroma_dir: Path,
         sqlite_path: Path,
         tasks_path: Path | None = None,
-        gemini_api_key: str | None = None,
+        qwen_api_key: str | None = None,
         qa_model: str | None = None,
         top_k: int = 5,
     ) -> None:
@@ -305,11 +305,11 @@ class QAPipeline:
         self._session_mgr = SessionManager(
             sqlite_store=self._sqlite,
             profile_manager=self._profile_mgr,
-            gemini_api_key=gemini_api_key,
+            gemini_api_key=qwen_api_key,   # SessionManager 参数名保持向后兼容
         )
         self._query_engine = QueryEngine(
             chroma_dir=chroma_dir,
-            gemini_api_key=gemini_api_key,
+            qwen_api_key=qwen_api_key,
             top_k=top_k,
         )
         self._llm = KnowledgeLLMClient(
