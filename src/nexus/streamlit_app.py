@@ -1146,25 +1146,30 @@ with right_panel:
 # Study Assistant Tab (Phase 3 QAPipeline integration)
 # ─────────────────────────────────────────────────────────────────────────────
 
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+
+
 @st.cache_resource
 def _get_qa_pipeline():
     """初始化 QAPipeline，每个 Streamlit 进程只创建一次（cache_resource）。"""
     import json as _json
     from nexus.knowledge.qa_pipeline import QAPipeline
 
-    key_file = Path("data/QWEN_API_KEY.json")
-    qwen_key = None
-    if key_file.exists():
-        try:
-            qwen_key = _json.loads(key_file.read_text())["QWEN_API_KEY"]
-        except Exception:
-            pass
+    # 优先读 Streamlit secrets，其次读 JSON 文件，最后读环境变量
+    qwen_key = st.secrets.get("QWEN_API_KEY", "") if hasattr(st, "secrets") else ""
+    if not qwen_key:
+        key_file = _DATA_DIR / "QWEN_API_KEY.json"
+        if key_file.exists():
+            try:
+                qwen_key = _json.loads(key_file.read_text())["QWEN_API_KEY"]
+            except Exception:
+                pass
     qwen_key = qwen_key or os.getenv("QWEN_API_KEY") or ""
 
     pipeline = QAPipeline(
-        chroma_dir=Path("data/chroma"),
-        sqlite_path=Path("data/nexus.db"),
-        tasks_path=Path("data/tasks.json"),
+        chroma_dir=_DATA_DIR / "chroma",
+        sqlite_path=_DATA_DIR / "nexus.db",
+        tasks_path=_DATA_DIR / "tasks.json",
         qwen_api_key=qwen_key,
     )
     return pipeline, qwen_key
