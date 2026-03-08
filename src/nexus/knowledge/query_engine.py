@@ -55,19 +55,19 @@ class RetrievalResult:
 # Query Expansion（LLM 改写）
 # ────────────────────────────────────────────────
 
-def _expand_query_with_gemini(
+_QWEN_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
+def _expand_query_with_qwen(
     user_query: str,
     api_key: str,
     course_context: str = "",
     profile_summary: str = "",
 ) -> list[str]:
     """
-    用 Gemini Flash 将用户问题改写为 2-3 个检索短语。
-    使用 JSON mode 确保输出格式正确。
+    用 qwen-plus 将用户问题改写为 2-3 个检索短语（litellm OpenAI-compatible）。
     """
-    from google import genai
-    from google.genai import types
-    client = genai.Client(api_key=api_key)
+    import litellm
 
     prompt = QUERY_EXPAND_PROMPT.format(
         user_query=user_query,
@@ -75,27 +75,29 @@ def _expand_query_with_gemini(
         profile_summary=profile_summary or "无画像信息",
     )
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.3,
-            response_mime_type="application/json",
-            max_output_tokens=256,
-        ),
+    response = litellm.completion(
+        model="openai/qwen-plus",
+        api_key=api_key,
+        api_base=_QWEN_API_BASE,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=256,
+        response_format={"type": "json_object"},
     )
-    raw = response.text.strip()
-    # 去掉可能的 markdown 代码块包装
+    raw = response.choices[0].message.content.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
 
-    result = json.loads(raw)
-    # 确保返回的是字符串列表
+    result = json.loads(raw.strip())
+    # 兼容 {"queries": [...]} 或直接 [...]
     if isinstance(result, list):
         return [str(q).strip() for q in result if str(q).strip()]
-    return [user_query]  # fallback: 直接使用原始问题
+    for key in ("queries", "items", "results"):
+        if key in result and isinstance(result[key], list):
+            return [str(q).strip() for q in result[key] if str(q).strip()]
+    return [user_query]
 
 
 def _expand_query_simple(user_query: str) -> list[str]:
@@ -223,7 +225,7 @@ class QueryEngine:
 
     参数：
     - chroma_dir: ChromaDB 持久化目录
-    - gemini_api_key: 用于 Query Expansion（不传则从环境变量读取）
+    - qwen_api_key: 用于 Query Expansion（不传则从环境变量 QWEN_API_KEY 读取）
     - n_semantic: 语义路径每个 expanded query 返回的候选数（默认 5）
     - n_keyword: 关键词路径每次过滤返回的候选数（默认 5）
     - top_k: 最终 rerank 后保留的 chunk 数（默认 5）
@@ -232,17 +234,13 @@ class QueryEngine:
     def __init__(
         self,
         chroma_dir: Path,
-        gemini_api_key: str | None = None,
+        qwen_api_key: str | None = None,
         n_semantic: int = 5,
         n_keyword: int = 5,
         top_k: int = 5,
     ) -> None:
         self._chroma = ChromaKnowledgeStore(chroma_dir, per_course=True)
-        self._api_key = (
-            gemini_api_key
-            or os.getenv("GEMINI_API_KEY")
-            or os.getenv("GOOGLE_API_KEY")
-        )
+        self._api_key = qwen_api_key or os.getenv("QWEN_API_KEY")
         self.n_semantic = n_semantic
         self.n_keyword = n_keyword
         self.top_k = top_k
@@ -259,13 +257,13 @@ class QueryEngine:
     ) -> list[str]:
         """
         将用户问题扩展为 2-3 个检索短语。
-        有 Gemini API Key 时调用 LLM，否则用轻量规则 fallback。
+        有 QWEN API Key 时调用 LLM，否则用轻量规则 fallback。
         """
         course_context = course_id or "未指定课程"
 
         if self._api_key:
             try:
-                expanded = _expand_query_with_gemini(
+                expanded = _expand_query_with_qwen(
                     user_query,
                     self._api_key,
                     course_context=course_context,

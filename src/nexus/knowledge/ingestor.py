@@ -141,16 +141,16 @@ class CourseIngestor:
     参数：
     - db_dir: ChromaDB 持久化目录（通常 data/chroma）
     - sqlite_path: SQLite 数据库文件路径（通常 data/nexus.db）
-    - gemini_api_key: 不传则从环境变量读取
+    - llm_api_key: 不传则从环境变量 QWEN_API_KEY 读取
     """
 
     def __init__(
         self,
         db_dir: Path,
         sqlite_path: Path,
-        gemini_api_key: str | None = None,
+        llm_api_key: str | None = None,
     ) -> None:
-        self.gemini_api_key = gemini_api_key
+        self.llm_api_key = llm_api_key
 
         # ChromaDB 以 per-course 模式初始化
         self._chroma = ChromaKnowledgeStore(
@@ -219,7 +219,7 @@ class CourseIngestor:
 
         # ── 解析 ──
         try:
-            result = parse_document(filepath, gemini_api_key=self.gemini_api_key)
+            result = parse_document(filepath, llm_api_key=self.llm_api_key)
         except Exception as exc:
             self._sqlite.set_document_status(doc_id, "failed")
             logger.error(f"解析失败 {filepath.name}: {exc}")

@@ -144,115 +144,81 @@ def _merge_continues(chunks: list[ParsedChunk]) -> list[ParsedChunk]:
 
 
 # ────────────────────────────────────────────────
-# LLM 解析（Gemini Flash Vision）
+# LLM 解析（QWEN-Long via DashScope Files API）
 # ────────────────────────────────────────────────
 
-def _parse_with_gemini(filepath: Path, api_key: str) -> list[dict[str, Any]]:
-    """
-    使用 Gemini Flash Vision 解析 PDF/文档。
-    将文件作为 blob 上传，让模型直接理解图表、公式、排版。
-    返回原始 JSON 解析结果列表（未合并 continues）。
-    """
-    from google import genai
-    from google.genai import types
+DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    client = genai.Client(api_key=api_key)
-
-    # 读取文件字节，上传给 Gemini
-    file_bytes = filepath.read_bytes()
-    suffix = filepath.suffix.lower()
-
-    # 确定 MIME 类型
-    mime_map = {
-        ".pdf": "application/pdf",
-        ".ppt": "application/vnd.ms-powerpoint",
-        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ".doc": "application/msword",
-        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    }
-    mime_type = mime_map.get(suffix, "application/octet-stream")
-
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[
-            types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-            PARSE_PROMPT,
-        ],
-        config=types.GenerateContentConfig(
-            temperature=0.1,
-            response_mime_type="application/json",
-            max_output_tokens=8192,
-        ),
-    )
-
-    # 解析 JSON 响应
-    raw_text = response.text.strip()
-    if raw_text.startswith("```"):
-        raw_text = raw_text.split("```")[1]
-        if raw_text.startswith("json"):
-            raw_text = raw_text[4:]
-
-    return json.loads(raw_text)
+_MIME_MAP = {
+    ".pdf":  "application/pdf",
+    ".ppt":  "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".doc":  "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 
 
-def _parse_with_gemini_batched(
-    filepath: Path,
-    api_key: str,
-    batch_size: int = 25,
-) -> list[dict[str, Any]]:
-    """
-    分段解析策略：文档超过 50 页时使用。
-    用 pypdf 将 PDF 按 batch_size 页拆分后逐批送给 Gemini，结果合并。
-    """
-    try:
-        from pypdf import PdfReader, PdfWriter
-    except ImportError:
-        logger.warning("pypdf 未安装，无法分段解析，回退全文解析")
-        return _parse_with_gemini(filepath, api_key)
+def _upload_file_to_qwen(filepath: Path, api_key: str) -> str:
+    """将文件上传到 DashScope Files API，返回 file_id。"""
+    import requests
 
-    reader = PdfReader(str(filepath))
-    total_pages = len(reader.pages)
-    all_chunks: list[dict[str, Any]] = []
-
-    for start in range(0, total_pages, batch_size):
-        end = min(start + batch_size, total_pages)
-        logger.info(f"分段解析第 {start+1}-{end} 页（共 {total_pages} 页）")
-
-        # 将这批页写入临时 PDF 字节流
-        writer = PdfWriter()
-        for i in range(start, end):
-            writer.add_page(reader.pages[i])
-
-        buf = io.BytesIO()
-        writer.write(buf)
-        batch_bytes = buf.getvalue()
-
-        from google import genai
-        from google.genai import types
-        client = genai.Client(api_key=api_key)
-
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                types.Part.from_bytes(data=batch_bytes, mime_type="application/pdf"),
-                PARSE_PROMPT,
-            ],
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                response_mime_type="application/json",
-                max_output_tokens=8192,
-            ),
+    mime_type = _MIME_MAP.get(filepath.suffix.lower(), "application/octet-stream")
+    with open(filepath, "rb") as f:
+        resp = requests.post(
+            f"{DASHSCOPE_BASE}/files",
+            headers={"Authorization": f"Bearer {api_key}"},
+            files={"file": (filepath.name, f, mime_type)},
+            data={"purpose": "file-extract"},
+            timeout=120,
         )
-        raw_text = response.text.strip()
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("```")[1]
-            if raw_text.startswith("json"):
-                raw_text = raw_text[4:]
+    resp.raise_for_status()
+    return resp.json()["id"]
 
-        batch_result = json.loads(raw_text)
-        all_chunks.extend(batch_result)
 
-    return all_chunks
+def _call_qwen_with_file(file_id: str, api_key: str) -> list[dict[str, Any]]:
+    """用已上传的 file_id 调用 qwen-long 解析，返回 chunks 列表。"""
+    import requests
+
+    resp = requests.post(
+        f"{DASHSCOPE_BASE}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": "qwen-long",
+            "messages": [
+                {"role": "system", "content": f"fileid://{file_id}"},
+                {"role": "user",   "content": PARSE_PROMPT},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 8192,
+            "response_format": {"type": "json_object"},
+        },
+        timeout=180,
+    )
+    resp.raise_for_status()
+    raw = resp.json()["choices"][0]["message"]["content"].strip()
+
+    # 去掉可能的 markdown 包装
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+
+    result = json.loads(raw)
+    # prompt 要求 {"chunks": [...]}，兼容模型直接返回列表的情况
+    if isinstance(result, list):
+        return result
+    return result.get("chunks") or result.get("items") or []
+
+
+def _parse_with_qwen(filepath: Path, api_key: str) -> list[dict[str, Any]]:
+    """
+    使用 qwen-long 解析完整 PDF/文档。
+    流程：上传文件 → fileid 注入 → LLM 语义切块。
+    """
+    file_id = _upload_file_to_qwen(filepath, api_key)
+    logger.info(f"文件已上传: {file_id}")
+    return _call_qwen_with_file(file_id, api_key)
 
 
 # ────────────────────────────────────────────────
@@ -296,19 +262,19 @@ def _parse_text_fallback(filepath: Path) -> list[ParsedChunk]:
 def parse_document(
     filepath: Path,
     *,
-    gemini_api_key: str | None = None,
-    large_doc_threshold: int = 50,  # 超过此页数改用分段解析
+    llm_api_key: str | None = None,
+    large_doc_threshold: int = 50,
 ) -> ParseResult:
     """
     解析文档，返回 ParseResult（包含 chunks、解析方法、警告）。
 
     参数：
-    - gemini_api_key: 不传则从环境变量 GEMINI_API_KEY 或 GOOGLE_API_KEY 读取
-    - large_doc_threshold: 超过此页数的 PDF 使用分段解析策略
+    - llm_api_key: 不传则从环境变量 QWEN_API_KEY 读取
+    - large_doc_threshold: 保留参数（qwen-long 支持整文档，无需分段）
     """
-    api_key = gemini_api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = llm_api_key or os.getenv("QWEN_API_KEY")
 
-    # 尝试读取页数（用于质量检查和分段策略决策）
+    # 尝试读取页数（用于质量检查）
     page_count = 0
     try:
         from pypdf import PdfReader
@@ -317,18 +283,12 @@ def parse_document(
     except Exception:
         pass
 
-    # ── 路径 1: Gemini Flash Vision ──
+    # ── 路径 1: QWEN-Long（DashScope Files API）──
     if api_key:
         try:
-            logger.info(f"使用 Gemini Vision 解析 {filepath.name}（{page_count} 页）")
+            logger.info(f"使用 QWEN-Long 解析 {filepath.name}（{page_count} 页）")
+            raw_chunks = _parse_with_qwen(filepath, api_key)
 
-            # 超过阈值时分段解析，避免单次请求过大
-            if page_count > large_doc_threshold:
-                raw_chunks = _parse_with_gemini_batched(filepath, api_key)
-            else:
-                raw_chunks = _parse_with_gemini(filepath, api_key)
-
-            # 将原始字典列表转为 ParsedChunk 对象
             chunks: list[ParsedChunk] = []
             for item in raw_chunks:
                 if not isinstance(item, dict):
@@ -343,26 +303,20 @@ def parse_document(
                     continues=bool(item.get("continues", False)),
                 ))
 
-            # 跨页合并
             chunks = _merge_continues(chunks)
-
-            # 质量检查
             warnings = _check_quality(chunks, page_count)
-            if warnings:
-                for w in warnings:
-                    logger.warning(f"[质量检查] {filepath.name}: {w}")
+            for w in warnings:
+                logger.warning(f"[质量检查] {filepath.name}: {w}")
 
             return ParseResult(
                 chunks=chunks,
-                parse_method="gemini_vision",
+                parse_method="qwen_long",
                 page_count=page_count,
                 warnings=warnings,
             )
 
         except Exception as exc:
-            logger.warning(
-                f"Gemini 解析失败，回退到文本提取: {exc}"
-            )
+            logger.warning(f"QWEN 解析失败，回退到文本提取: {exc}")
 
     # ── 路径 2: 文本提取 fallback ──
     logger.info(f"使用文本提取 fallback 解析 {filepath.name}")

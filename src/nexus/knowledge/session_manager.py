@@ -73,8 +73,7 @@ class SessionManager:
         self._profile = profile_manager
         self._api_key = (
             gemini_api_key
-            or os.getenv("GEMINI_API_KEY")
-            or os.getenv("GOOGLE_API_KEY")
+            or os.getenv("QWEN_API_KEY")
         )
         self._idle_timeout = timedelta(minutes=idle_timeout_minutes)
 
@@ -213,7 +212,7 @@ class SessionManager:
         无 LLM 可用时返回 None（跳过更新）。
         """
         if not self._api_key:
-            logger.info("无 GEMINI_API_KEY，跳过 session LLM 分析")
+            logger.info("无 QWEN_API_KEY，跳过 session LLM 分析")
             return None
 
         current_profile = self._profile.get()
@@ -237,14 +236,16 @@ class SessionManager:
             return None
 
     def _call_llm_litellm(self, prompt: str) -> dict[str, Any]:
-        """使用 litellm 调用 LLM（模型无关）。"""
+        """使用 litellm 调用 QWEN（OpenAI-compatible）。"""
         import litellm
-        model = os.getenv("NEXUS_QA_MODEL") or "gemini/gemini-2.0-flash"
         response = litellm.completion(
-            model=model,
+            model="openai/qwen-plus",
+            api_key=self._api_key,
+            api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,     # 分析任务要确定性
+            temperature=0.1,
             max_tokens=1024,
+            response_format={"type": "json_object"},
         )
         raw = response.choices[0].message.content or ""
         return _parse_llm_json(raw)
