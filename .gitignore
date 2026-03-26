@@ -31,8 +31,13 @@ tasks.json
 *credentials*.json
 *token*.json
 
+# API key files
+*API_KEY*.json
+*api_key*.json
+
 # Environment variables
 .env
+source .env
 
 # Streamlit secrets (contains API keys)
 .streamlit/secrets.toml
