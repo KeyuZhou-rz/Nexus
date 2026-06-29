@@ -16,7 +16,7 @@
   - 验收：`make test` 全绿；`test_knowledge_chunking.py` 两条通过。
   - 文件：`src/nexus/knowledge/chunking.py`（只读参考 `tests/test_knowledge_chunking.py`）
 
-- [ ] **T2 补强 memory_extractor 测试**
+- [x] **T2 补强 memory_extractor 测试**
   - 现状：`tests/test_memory_extractor.py` 仅 2 条（中英模式各一）。
   - 补：空消息、无弱项信号、多条混合、证据 msg_id 透传、置信度边界。
   - 文件：`tests/test_memory_extractor.py`、`src/nexus/memory_extractor.py`
