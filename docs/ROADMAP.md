@@ -24,7 +24,7 @@
   - 补：空消息、无弱项信号、多条混合、证据 msg_id 透传、置信度边界。
   - 文件：`tests/test_memory_extractor.py`、`src/nexus/memory_extractor.py`
 
-- [ ] **T3 补强 memory_update 测试**
+- [x] **T3 补强 memory_update 测试**
   - 现状：`tests/test_memory_update.py` 3 条。
   - 补：合并去重、置信度下限 clamp、reject 后 review_queue 清理、decay 跨日边界。
   - 文件：`tests/test_memory_update.py`、`src/nexus/memory_update.py`
