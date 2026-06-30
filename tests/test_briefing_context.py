@@ -5,14 +5,20 @@ from pathlib import Path
 
 from nexus.intelligence import briefing as briefing_module
 from nexus.intelligence.briefing import Briefing, BriefingItem, _inject_learning_context
+from nexus.knowledge.unified_memory import UnifiedMemoryReader
 
 
-class _StateStub:
-    weak_points = ["op-amp feedback", "kirchhoff"]
-    review_queue = ["bode plot"]
-    mastery = {"transient response": 0.4, "phasor": 0.8}
-    weak_point_confidence = {"bode plot": 0.8, "transient response": 0.7, "op-amp feedback": 0.6}
-    weak_point_status = {"bode plot": "active", "transient response": "active", "op-amp feedback": "active"}
+class _MemoryReaderStub:
+    """Mimics UnifiedMemoryReader interface."""
+
+    def get_weak_points(self) -> list[str]:
+        return ["op-amp feedback", "kirchhoff"]
+
+    def get_review_queue(self, threshold: float = 0.4) -> list[str]:
+        return ["bode plot"]
+
+    def get_low_mastery_topics(self, max_mastery: float = 0.5) -> list[str]:
+        return ["transient response"]
 
 
 class _SummaryStub:
@@ -29,9 +35,15 @@ class _ConfigStub:
     data_dir = Path("data")
 
 
-def test_inject_learning_context_appends_items(monkeypatch):
-    monkeypatch.setattr(briefing_module, "load_state", lambda _path: _StateStub())
+def _mock_unified_reader(store):
+    return _MemoryReaderStub()
+
+
+def test_inject_learning_context_appends_items(monkeypatch, tmp_path):
+    monkeypatch.setattr(briefing_module, "UnifiedMemoryReader", _mock_unified_reader)
     monkeypatch.setattr(briefing_module, "query_knowledge", lambda *args, **kwargs: _SummaryStub())
+
+    config = type("C", (), {"data_dir": tmp_path})()
 
     base = Briefing(
         todo=[],
@@ -49,7 +61,7 @@ def test_inject_learning_context_appends_items(monkeypatch):
         ],
     )
 
-    _inject_learning_context(base, now_local=datetime.now().astimezone(), config=_ConfigStub())
+    _inject_learning_context(base, now_local=datetime.now().astimezone(), config=config)
 
     assert any("Review weak point" in item.text_en for item in base.todo)
     assert any("bode plot" in item.text_en.lower() for item in base.todo)
@@ -57,15 +69,16 @@ def test_inject_learning_context_appends_items(monkeypatch):
     assert any("Review note from" in item.text_en for item in base.todo)
 
 
-def test_inject_learning_context_handles_query_failure(monkeypatch):
-    monkeypatch.setattr(briefing_module, "load_state", lambda _path: _StateStub())
+def test_inject_learning_context_handles_query_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(briefing_module, "UnifiedMemoryReader", _mock_unified_reader)
 
     def _boom(*args, **kwargs):
         raise RuntimeError("chroma unavailable")
 
     monkeypatch.setattr(briefing_module, "query_knowledge", _boom)
 
+    config = type("C", (), {"data_dir": tmp_path})()
     base = Briefing(todo=[], schedule=[], warnings=[], task_index={}, focus=[])
-    _inject_learning_context(base, now_local=datetime.now().astimezone(), config=_ConfigStub())
+    _inject_learning_context(base, now_local=datetime.now().astimezone(), config=config)
 
     assert any("Knowledge query unavailable" in warning for warning in base.warnings)
