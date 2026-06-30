@@ -160,6 +160,15 @@ class SQLiteStore:
         with _connect(self.db_path) as conn:
             conn.execute("DELETE FROM chunks WHERE document_id=?", (document_id,))
 
+    def get_chunks_by_course(self, course_id: str) -> list[dict[str, Any]]:
+        """查询指定课程的所有 chunk 元数据（不含 content）。"""
+        with _connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM chunks WHERE course_id = ? ORDER BY chunk_id",
+                (course_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     # ────────────────────────────────────────────────
     # user_profile 表操作
     # ────────────────────────────────────────────────

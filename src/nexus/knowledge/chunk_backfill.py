@@ -179,6 +179,97 @@ class ChunkBackfill:
         source_file = meta.get("source_file", "unknown")
         return f"{course_id}/{source_file}"
 
+    # ────────────────────────────────────────────────
+    # Phase M1-4: 概念提取 pipeline
+    # ────────────────────────────────────────────────
+
+    def run_extraction(
+        self,
+        course_id: str,
+        llm_api_key: str | None = None,
+    ) -> dict[str, int] | None:
+        """
+        对指定课程运行概念提取管线。
+
+        流程:
+        1. 从 SQLite chunks 表读取元数据 → 重建 ParsedChunk
+        2. Pass 1: 规则提取（零 LLM 成本）
+        3. Pass 2: LLM 精炼（有 key 时）
+        4. 持久化到 concepts / chunk_concepts / concept_relations 表
+
+        Returns:
+            {"concepts": N, "relations": M} 或 None（无 chunks 时）
+        """
+        import json
+
+        from .concept_extractor import ConceptExtractor
+        from .parser import ParsedChunk
+
+        # Step 1: 从 SQLite 读取 chunks
+        rows = self._store.get_chunks_by_course(course_id)
+        if not rows:
+            logger.info("Course %s has 0 SQLite chunks — skipping extraction", course_id)
+            return None
+
+        chunks: list[ParsedChunk] = []
+        chunk_ids: list[str] = []
+
+        for row in rows:
+            # 解析 JSON 存储的 keywords / prerequisites
+            try:
+                keywords = json.loads(row["keywords"]) if isinstance(row["keywords"], str) else (row["keywords"] or [])
+            except (json.JSONDecodeError, TypeError):
+                keywords = []
+
+            try:
+                prerequisites = json.loads(row["prerequisites"]) if isinstance(row["prerequisites"], str) else (row["prerequisites"] or [])
+            except (json.JSONDecodeError, TypeError):
+                prerequisites = []
+
+            pc = ParsedChunk(
+                topic=row["topic"],
+                content="",  # 概念提取不需要全文
+                type=row["type"] or "overview",
+                keywords=keywords,
+                prerequisites=prerequisites,
+                page=row.get("page"),
+            )
+            chunks.append(pc)
+            chunk_ids.append(row["chunk_id"])
+
+        logger.info(
+            "Reconstructed %d ParsedChunks from SQLite for course %s",
+            len(chunks), course_id,
+        )
+
+        # Step 2: 实例化 ConceptExtractor
+        extractor = ConceptExtractor(self._store, llm_api_key=llm_api_key)
+
+        # Step 3: Pass 1 — 规则提取（零 LLM 成本）
+        candidates = extractor.extract_from_chunks(chunks, chunk_ids, course_id)
+        logger.info("Pass 1: %d candidate concepts from %d chunks", len(candidates), len(chunks))
+
+        # Step 4: Pass 2 — LLM 精炼（有 key 时）
+        if llm_api_key:
+            refined, relations = extractor.refine_with_llm(
+                candidates, chunks, chunk_ids, course_id
+            )
+            logger.info(
+                "Pass 2: %d refined concepts, %d relations", len(refined), len(relations)
+            )
+        else:
+            refined = candidates
+            relations = []
+            logger.info("No LLM key — skipping Pass 2/3, using Pass 1 candidates only")
+
+        # Step 5: 持久化
+        stats = extractor.persist(refined, relations)
+        logger.info(
+            "Persisted: %d concepts, %d relations for %s",
+            stats["concepts"], stats["relations"], course_id,
+        )
+        return stats
+
     @staticmethod
     def _safe_int(value: Any) -> int | None:
         if value is None:

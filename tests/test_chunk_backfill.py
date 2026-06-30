@@ -259,3 +259,162 @@ def test_backfill_chunk_without_metadata(test_env: tuple[Path, Path]):
     count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     assert count == 3  # The None-meta chunk skipped
     conn.close()
+
+
+# ──────────────────────────────────────────────────
+# M1-4: Concept extraction tests (stub LLM)
+# ──────────────────────────────────────────────────
+
+
+def test_extraction_pass1_only(test_env: tuple[Path, Path]):
+    """Without LLM key, Pass 1 should produce concepts and chunk_concepts."""
+    chroma_path, sqlite_path = test_env
+    store = SQLiteStore(sqlite_path)
+    backfill = ChunkBackfill(chroma_path, store)
+    backfill.run()  # backfill chunks first
+
+    stats = backfill.run_extraction("TEST_CS101", llm_api_key=None)
+    assert stats is not None
+    assert stats["concepts"] > 0
+    assert stats["relations"] == 0  # No LLM → no relations
+
+    # Verify persistence
+    conn = sqlite3.connect(str(sqlite_path))
+    cc = conn.execute("SELECT COUNT(*) FROM chunk_concepts").fetchone()[0]
+    assert cc > 0
+    conn.close()
+
+
+def test_extraction_with_stub_llm(test_env: tuple[Path, Path], monkeypatch):
+    """With stub LLM, Pass 2 should produce concepts + relations."""
+    from nexus.knowledge import concept_extractor
+
+    # Monkeypatch the LLM call to return synthetic refined data
+    def _stub_refine(self, concepts, chunks, chunk_ids, course_id):
+        from nexus.knowledge.concept_extractor import (
+            ExtractedConcept,
+            ExtractedRelation,
+        )
+        refined = [
+            ExtractedConcept(
+                concept_id="test_cs__stub_concept",
+                name="Stub Concept",
+                course_id=course_id,
+                definition="A stub concept for testing.",
+                concept_type="fundamental",
+                source_chunk_ids=chunk_ids[:2],
+            ),
+        ]
+        # Keep original candidates too
+        for c in concepts:
+            refined.append(c)
+        relations = [
+            ExtractedRelation(
+                source_id="test_cs__stub_concept",
+                target_id=concepts[0].concept_id if concepts else "test_cs__any",
+                relation_type="prerequisite",
+                confidence=0.9,
+                evidence="Stub evidence",
+            ),
+        ]
+        return refined, relations
+
+    monkeypatch.setattr(
+        concept_extractor.ConceptExtractor,
+        "_call_refine_llm",
+        _stub_refine,
+    )
+
+    chroma_path, sqlite_path = test_env
+    store = SQLiteStore(sqlite_path)
+    backfill = ChunkBackfill(chroma_path, store)
+    backfill.run()
+
+    stats = backfill.run_extraction("TEST_CS101", llm_api_key="stub-key")
+    assert stats is not None
+    assert stats["concepts"] > 0
+    assert stats["relations"] > 0  # Stub LLM gives relations
+
+    # Verify persistence
+    conn = sqlite3.connect(str(sqlite_path))
+    conn.row_factory = sqlite3.Row
+    cr = conn.execute("SELECT COUNT(*) FROM concept_relations").fetchone()[0]
+    assert cr > 0
+    conn.close()
+
+
+def test_extraction_empty_course(tmp_path: Path):
+    """Extraction on course with no chunks returns None."""
+    chroma_path = tmp_path / "chroma_empty_ex"
+    sqlite_path = tmp_path / "empty_ex.db"
+
+    client = chromadb.PersistentClient(path=str(chroma_path))
+    client.create_collection("EMPTY_EX")  # empty collection, no chunks
+
+    store = SQLiteStore(sqlite_path)
+    backfill = ChunkBackfill(chroma_path, store)
+    backfill.run()
+
+    stats = backfill.run_extraction("EMPTY_EX")
+    assert stats is None  # No chunks → skipped
+
+
+def test_extraction_graph_retriever_has_content(test_env: tuple[Path, Path], monkeypatch):
+    """After extraction with stub LLM, GraphRetriever should report has_content=True."""
+    from nexus.knowledge import concept_extractor
+    from nexus.knowledge.graph_retriever import GraphRetriever
+
+    def _stub_refine(self, concepts, chunks, chunk_ids, course_id):
+        from nexus.knowledge.concept_extractor import (
+            ExtractedConcept,
+            ExtractedRelation,
+        )
+        if not concepts:
+            return [], []
+        refined = [
+            ExtractedConcept(
+                concept_id="test_cs__prereq_a",
+                name="Prerequisite A",
+                course_id=course_id,
+                definition="A prerequisite concept.",
+                concept_type="fundamental",
+                source_chunk_ids=chunk_ids[:1],
+            ),
+            ExtractedConcept(
+                concept_id="test_cs__main_b",
+                name="Main Concept B",
+                course_id=course_id,
+                definition="The main concept.",
+                concept_type="fundamental",
+                source_chunk_ids=chunk_ids[1:2] if len(chunk_ids) > 1 else chunk_ids[:1],
+            ),
+        ]
+        for c in concepts:
+            refined.append(c)
+        relations = [
+            ExtractedRelation(
+                source_id="test_cs__prereq_a",
+                target_id="test_cs__main_b",
+                relation_type="prerequisite",
+                confidence=0.95,
+                evidence="B requires A",
+            ),
+        ]
+        return refined, relations
+
+    monkeypatch.setattr(
+        concept_extractor.ConceptExtractor,
+        "_call_refine_llm",
+        _stub_refine,
+    )
+
+    chroma_path, sqlite_path = test_env
+    store = SQLiteStore(sqlite_path)
+    backfill = ChunkBackfill(chroma_path, store)
+    backfill.run()
+    backfill.run_extraction("TEST_CS101", llm_api_key="stub-key")
+
+    retriever = GraphRetriever(store)
+    ctx = retriever.retrieve(["TEST_CS101_docA_000"], course_id="TEST_CS101")
+    assert ctx.has_content is True
+    assert len(ctx.prerequisites) >= 1
