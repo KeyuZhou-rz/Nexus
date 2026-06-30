@@ -147,6 +147,7 @@ def main() -> None:
                 archives=result.get("archives", []),
                 data_dir=Path(__file__).resolve().parents[3] / "data",
                 db_dir=post_ingest_db_dir,
+                sqlite_path=Path(__file__).resolve().parents[3] / "data" / "nexus.db",
             )
             result["post_ingest"] = post_summary
         except Exception as exc:

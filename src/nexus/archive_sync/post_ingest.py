@@ -7,16 +7,19 @@ from typing import Any
 
 from nexus.knowledge.document_text import extract_text
 from nexus.knowledge.ingestion_service import TextDocument, ingest_text_documents
+from nexus.knowledge.sqlite_store import SQLiteStore
+from nexus.knowledge.concept_resolver import ConceptResolver
+from nexus.knowledge.user_profile import UserProfileManager
+from nexus.knowledge.temporal_memory import TemporalMemory
 from nexus.knowledge.store import ChromaKnowledgeStore
 from nexus.memory_extractor import WeakPointCandidate
-from nexus.memory_update import merge_candidates_into_state
-from nexus.state_store import load_state, save_state
+from nexus.memory_writer import record_weak_point
 
 _DOC_PATTERNS = [
     re.compile(r"(?:common mistakes?|frequent errors?|pitfalls?|don'?t\s+confuse)\s*[:\-]\s*(?P<topic>[^.\n]{3,80})", re.IGNORECASE),
-    re.compile(r"(?:易错点|常见错误|薄弱点|注意|不要混淆)\s*[:：\-]\s*(?P<topic>[\u4e00-\u9fffA-Za-z0-9\-\s]{2,60})"),
+    re.compile(r"(?:易错点|常见错误|薄弱点|注意|不要混淆)\s*[:：\-]\s*(?P<topic>[一-鿿A-Za-z0-9\-\s]{2,60})"),
 ]
-_TOPIC_CLEAN = re.compile(r"[^\u4e00-\u9fffA-Za-z0-9\-\s]")
+_TOPIC_CLEAN = re.compile(r"[^一-鿿A-Za-z0-9\-\s]")
 
 
 def _normalize_topic(raw: str) -> str:
@@ -51,18 +54,18 @@ def run_archive_post_ingest(
     archives: list[dict[str, Any]],
     data_dir: Path,
     db_dir: Path,
+    sqlite_path: Path | None = None,
     collection_name: str = "nexus_chunks",
     max_chars: int = 900,
     overlap: int = 120,
     store: ChromaKnowledgeStore | None = None,
 ) -> dict[str, Any]:
-    """Ingest archived files into knowledge DB and extract weak points into learner state."""
+    """Ingest archived files into knowledge DB and extract weak points into SQLite profile."""
     files_scanned = 0
     files_ingested = 0
     total_chunks = 0
     failures: list[dict[str, str]] = []
     candidates: list[WeakPointCandidate] = []
-    now_iso = datetime.now().astimezone().isoformat()
     now_date = datetime.now().date().isoformat()
 
     if store is None:
@@ -104,10 +107,29 @@ def run_archive_post_ingest(
         except Exception as exc:
             failures.append({"path": str(archived_path), "error": str(exc)})
 
-    state_path = data_dir / "state.json"
-    state = load_state(state_path)
-    state = merge_candidates_into_state(state, candidates, now_iso=now_iso)
-    save_state(state_path, state)
+    # Unified SQLite write via memory_writer
+    resolved_count = 0
+    if sqlite_path is not None and candidates:
+        sqlite_store = SQLiteStore(sqlite_path)
+        resolver = ConceptResolver(sqlite_store)
+        profile_mgr = UserProfileManager(sqlite_store)
+        temporal = TemporalMemory(sqlite_store)
+
+        for candidate in candidates:
+            # Use the course from the archive item (carried via evidence_id pattern)
+            # Default to "brightspace" — course context may be limited here
+            result = record_weak_point(
+                resolver, profile_mgr, temporal,
+                candidate.topic, course_id="brightspace",
+                context={"source": "post_ingest"},
+            )
+            if result["resolved"]:
+                resolved_count += 1
+
+        profile = profile_mgr.get()
+        active_weak = len(profile.get("weak_points", []))
+    else:
+        active_weak = 0
 
     summary = {
         "status": "success",
@@ -115,8 +137,8 @@ def run_archive_post_ingest(
         "files_ingested": files_ingested,
         "chunks": total_chunks,
         "weak_candidates": len(candidates),
-        "active_weak_points": len(state.weak_points),
-        "state_path": str(state_path.resolve()),
+        "active_weak_points": active_weak,
+        "resolved_to_concepts": resolved_count,
         "db_dir": str(db_dir.resolve()),
         "failures": failures,
     }
