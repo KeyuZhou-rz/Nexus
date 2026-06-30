@@ -34,7 +34,7 @@
   - 补：`select_exam_reminders` 窗口边界、`_is_noise` 过滤、`_rule_briefing` 降级路径、`_normalize_title`/`_contains_cjk`。
   - 文件：`tests/test_briefing_unit.py`（新建）、`src/nexus/intelligence/briefing.py`
 
-- [ ] **T5 dashboard view_model 错误路径**
+- [x] **T5 dashboard view_model 错误路径**
   - 现状：`tests/test_dashboard_view_model.py` 85 行，覆盖正向。
   - 补：空任务、缺失字段、时区边界。
   - 文件：`tests/test_dashboard_view_model.py`、`src/nexus/dashboard/view_model.py`
