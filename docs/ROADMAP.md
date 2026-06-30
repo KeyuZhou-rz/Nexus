@@ -46,7 +46,7 @@
 **决策（已冻结）**：分层不合并 —— `knowledge/`(SQLite, Ebbinghaus, 概念图谱) 为主存储；根级 `memory_*` 降级为别名词典 + 零成本弱项兜底；`state.json` 不再生成（已无数据，迁移风险≈0）。concept ID 对齐走 `concept_resolver` 三级降级（别名表→规范化→模糊匹配≥0.7）。图谱填充从 Chroma 70 chunks 回填 SQLite `chunks` 表 + 跑 `concept_extractor`，不重跑 LLM 解析。
 
 - [ ] **M1-1 设计冻结**（design，无代码）：本决策写入 ROADMAP，标 M1 `[~]`。验收：96 绿。
-- [ ] **M1-2 SQLite chunks 回填**：新建 `knowledge/chunk_backfill.py` + `cli/concepts_backfill.py`，从 Chroma 回填 SQLite `chunks` 表 + 补 `documents`。验收：`SELECT COUNT(*) FROM chunks` ≥ 47。测试 `tests/test_chunk_backfill.py`。
+- [x] **M1-2 SQLite chunks 回填**：新建 `knowledge/chunk_backfill.py` + `cli/concepts_backfill.py`，从 Chroma 回填 SQLite `chunks` 表 + 补 `documents`。验收：`SELECT COUNT(*) FROM chunks` ≥ 47。测试 `tests/test_chunk_backfill.py`。
 - [ ] **M1-3 别名表 + concept_resolver**：`schema.sql` 加 `concept_aliases`(alias/course_id/concept_id/source, UNIQUE(alias,course_id))；新建 `concept_resolver.py` 三级 `resolve`；`sqlite_store` 加 `upsert_alias`/`get_alias`。测试 `tests/test_concept_resolver.py`。
 - [ ] **M1-4 跑通 concept_extractor 填充图谱**（核心）：扩展回填 CLI，回填后调 `ConceptExtractor.extract_from_chunks → refine_with_llm(有 key) → persist`。验收：`concepts`>0、`chunk_concepts`>0、`GraphRetriever.retrieve([chunk_id])` 返 `has_content=True`。测试 `tests/test_concept_backfill.py`（stub LLM）。
 - [ ] **M1-5 统一写口 memory_writer**：新建 `memory_writer.py`，`record_weak_point`(resolve→add_weak_point，命中记 struggled) + `apply_feedback_unified`(reject→remove+forgot，accept→mastered+correct_answer)。测试 `tests/test_memory_writer.py`。
