@@ -1,3 +1,13 @@
+"""
+Deprecated as of Phase M1. Use memory_writer.py + UnifiedMemoryReader instead.
+
+LearnerState (state.json) has been replaced by SQLite-based memory:
+- UserProfileManager for weak_points / mastered (via user_profile table)
+- TemporalMemory for Ebbinghaus decay (via concept_mastery table)
+- ConceptResolver for concept resolution (via concept_aliases table)
+
+File retained for reference only; no callers remain in tree after M1-8.
+"""
 from __future__ import annotations
 
 import json
