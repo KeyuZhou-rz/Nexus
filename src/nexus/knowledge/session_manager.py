@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+from .llm_gateway import gateway
 from .prompts import PROFILE_UPDATE_PROMPT
 from .sqlite_store import SQLiteStore
 from .user_profile import UserProfileManager
@@ -71,10 +72,7 @@ class SessionManager:
     ) -> None:
         self._store = sqlite_store
         self._profile = profile_manager
-        self._api_key = (
-            gemini_api_key
-            or os.getenv("QWEN_API_KEY")
-        )
+        self._api_key = gemini_api_key or gateway.api_key
         self._idle_timeout = timedelta(minutes=idle_timeout_minutes)
 
         # 内存中的活跃 session 表，key=session_id
@@ -236,16 +234,18 @@ class SessionManager:
             return None
 
     def _call_llm_litellm(self, prompt: str) -> dict[str, Any]:
-        """使用 litellm 调用 QWEN（OpenAI-compatible）。"""
+        """使用 litellm 调用 LLM（通过 gateway 配置）。"""
         import litellm
+        extra = gateway.litellm_kwargs.copy()
+        if self._api_key:
+            extra["api_key"] = self._api_key
         response = litellm.completion(
-            model="openai/qwen-plus",
-            api_key=self._api_key,
-            api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            model=gateway.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=1024,
             response_format={"type": "json_object"},
+            **extra,
         )
         raw = response.choices[0].message.content or ""
         return _parse_llm_json(raw)

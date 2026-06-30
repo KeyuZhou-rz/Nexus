@@ -19,30 +19,17 @@ nexus concepts-backfill CLI — Phase M1-2 + M1-4
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import os
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def _load_qwen_key() -> str | None:
-    """从标准位置加载 QWEN API key。"""
-    # 优先 env
-    key = os.environ.get("QWEN_API_KEY")
-    if key:
-        return key
-    # 次选 key file
-    key_file = Path("data/QWEN_API_KEY.json")
-    if key_file.exists():
-        try:
-            data = json.loads(key_file.read_text())
-            return data.get("QWEN_API_KEY") or data.get("api_key") or data.get("key")
-        except (json.JSONDecodeError, KeyError):
-            pass
-    return None
+def _load_llm_key() -> str | None:
+    """从标准位置加载 LLM API key（通过 gateway）。"""
+    from nexus.knowledge.llm_gateway import gateway
+    return gateway.api_key
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -107,7 +94,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # ── M1-4: 概念提取 ──
     if args.extract_concepts:
-        llm_key = args.llm_api_key or _load_qwen_key()
+        llm_key = args.llm_api_key or _load_llm_key()
         if llm_key:
             logger.info("LLM key found — running Pass 2/3 refinement")
         else:

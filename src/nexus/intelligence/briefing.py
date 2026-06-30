@@ -106,7 +106,13 @@ def build_briefing(
     task_index = {task.id: task for task in filtered}
 
     warnings: list[str] = []
-    client = LLMClient(config)
+    # Create SQLite store for interaction logging
+    try:
+        db_path = config.data_dir / "nexus.db"
+        brief_store = SQLiteStore(db_path)
+    except Exception:
+        brief_store = None
+    client = LLMClient(config, sqlite_store=brief_store)
     briefing: Briefing | None = None
     if use_llm and config.llm_enabled and client.is_configured():
         try:
@@ -301,6 +307,15 @@ def _llm_briefing(
         temperature=0.2,
         response_format={"type": "json_object"} if use_json_output else None,
         max_tokens=1200,
+    )
+    # Log the briefing LLM interaction
+    client.log_interaction(
+        session_id=f"briefing_{now_local.strftime('%Y%m%d')}",
+        user_query=json.dumps(payload, ensure_ascii=False)[:500],
+        llm_response=response.content[:500],
+        model_used=client.model,
+        input_tokens=response.raw.get("usage", {}).get("prompt_tokens"),
+        output_tokens=response.raw.get("usage", {}).get("completion_tokens"),
     )
     data = extract_json(response.content)
     _validate_llm_payload(data)
