@@ -29,7 +29,7 @@
   - 补：合并去重、置信度下限 clamp、reject 后 review_queue 清理、decay 跨日边界。
   - 文件：`tests/test_memory_update.py`、`src/nexus/memory_update.py`
 
-- [ ] **T4 briefing 单元覆盖**
+- [x] **T4 briefing 单元覆盖**
   - 现状：仅 `test_briefing_context.py`。
   - 补：`select_exam_reminders` 窗口边界、`_is_noise` 过滤、`_rule_briefing` 降级路径、`_normalize_title`/`_contains_cjk`。
   - 文件：`tests/test_briefing_unit.py`（新建）、`src/nexus/intelligence/briefing.py`
