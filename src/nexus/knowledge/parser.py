@@ -146,8 +146,11 @@ def _merge_continues(chunks: list[ParsedChunk]) -> list[ParsedChunk]:
 # ────────────────────────────────────────────────
 # LLM 解析（QWEN-Long via DashScope Files API）
 # ────────────────────────────────────────────────
+# Note: DashScope Files API (/files upload) is QWEN-specific.
+# The base URL is read from gateway; model is hardcoded "qwen-long"
+# because only DashScope supports this file-upload-based parsing mode.
 
-DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+from .llm_gateway import gateway
 
 _MIME_MAP = {
     ".pdf":  "application/pdf",
@@ -165,7 +168,7 @@ def _upload_file_to_qwen(filepath: Path, api_key: str) -> str:
     mime_type = _MIME_MAP.get(filepath.suffix.lower(), "application/octet-stream")
     with open(filepath, "rb") as f:
         resp = requests.post(
-            f"{DASHSCOPE_BASE}/files",
+            f"{gateway.base_url}/files",
             headers={"Authorization": f"Bearer {api_key}"},
             files={"file": (filepath.name, f, mime_type)},
             data={"purpose": "file-extract"},
@@ -180,7 +183,7 @@ def _call_qwen_with_file(file_id: str, api_key: str) -> list[dict[str, Any]]:
     import requests
 
     resp = requests.post(
-        f"{DASHSCOPE_BASE}/chat/completions",
+        f"{gateway.base_url}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={
             "model": "qwen-long",

@@ -30,9 +30,9 @@ from .parser import ParsedChunk
 from .prompts import CONCEPT_EXTRACT_PROMPT, CROSS_COURSE_RELATION_PROMPT
 from .sqlite_store import SQLiteStore
 
-logger = logging.getLogger(__name__)
+from .llm_gateway import gateway
 
-_QWEN_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+logger = logging.getLogger(__name__)
 
 
 # ────────────────────────────────────────────────
@@ -232,14 +232,17 @@ class ConceptExtractor:
             chunk_summaries=chunk_summaries,
         )
 
+        extra = gateway.litellm_kwargs.copy()
+        if self._api_key:
+            extra["api_key"] = self._api_key
+
         response = litellm.completion(
-            model="openai/qwen-plus",
-            api_key=self._api_key,
-            api_base=_QWEN_API_BASE,
+            model=gateway.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=4096,
             response_format={"type": "json_object"},
+            **extra,
         )
 
         result = _parse_llm_json(response.choices[0].message.content)
@@ -369,14 +372,17 @@ class ConceptExtractor:
             existing_concepts=existing_text,
         )
 
+        extra = gateway.litellm_kwargs.copy()
+        if self._api_key:
+            extra["api_key"] = self._api_key
+
         response = litellm.completion(
-            model="openai/qwen-plus",
-            api_key=self._api_key,
-            api_base=_QWEN_API_BASE,
+            model=gateway.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=1024,
             response_format={"type": "json_object"},
+            **extra,
         )
 
         raw = _parse_llm_json(response.choices[0].message.content)

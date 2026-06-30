@@ -1152,19 +1152,12 @@ _DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 @st.cache_resource
 def _get_qa_pipeline():
     """初始化 QAPipeline，每个 Streamlit 进程只创建一次（cache_resource）。"""
-    import json as _json
+    from nexus.knowledge.llm_gateway import gateway
     from nexus.knowledge.qa_pipeline import QAPipeline
 
-    # 优先读 Streamlit secrets，其次读 JSON 文件，最后读环境变量
+    # 优先读 Streamlit secrets，其余由 gateway 处理
     qwen_key = st.secrets.get("QWEN_API_KEY", "") if hasattr(st, "secrets") else ""
-    if not qwen_key:
-        key_file = _DATA_DIR / "QWEN_API_KEY.json"
-        if key_file.exists():
-            try:
-                qwen_key = _json.loads(key_file.read_text())["QWEN_API_KEY"]
-            except Exception:
-                pass
-    qwen_key = qwen_key or os.getenv("QWEN_API_KEY") or ""
+    qwen_key = qwen_key or gateway.api_key or ""
 
     pipeline = QAPipeline(
         chroma_dir=_DATA_DIR / "chroma",

@@ -55,17 +55,17 @@ class RetrievalResult:
 # Query Expansion（LLM 改写）
 # ────────────────────────────────────────────────
 
-_QWEN_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+from .llm_gateway import gateway
 
 
-def _expand_query_with_qwen(
+def _expand_query_with_llm(
     user_query: str,
-    api_key: str,
+    api_key: str | None = None,
     course_context: str = "",
     profile_summary: str = "",
 ) -> list[str]:
     """
-    用 qwen-plus 将用户问题改写为 2-3 个检索短语（litellm OpenAI-compatible）。
+    用 LLM 将用户问题改写为 2-3 个检索短语（litellm OpenAI-compatible）。
     """
     import litellm
 
@@ -75,10 +75,13 @@ def _expand_query_with_qwen(
         profile_summary=profile_summary or "无画像信息",
     )
 
+    extra = gateway.litellm_kwargs.copy()
+    if api_key:
+        extra["api_key"] = api_key
+
     response = litellm.completion(
-        model="openai/qwen-plus",
-        api_key=api_key,
-        api_base=_QWEN_API_BASE,
+        model=gateway.model,
+        **extra,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
         max_tokens=256,
@@ -268,9 +271,9 @@ class QueryEngine:
 
         if self._api_key:
             try:
-                expanded = _expand_query_with_qwen(
+                expanded = _expand_query_with_llm(
                     user_query,
-                    self._api_key,
+                    api_key=self._api_key,
                     course_context=course_context,
                     profile_summary=profile_summary,
                 )

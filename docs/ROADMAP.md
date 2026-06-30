@@ -76,9 +76,9 @@
 
 ## Phase L — LLM 统一网关（M 后）
 
-- [ ] **L1 抽 `knowledge/llm_gateway.py` 单例**：收敛 7 处硬编码 Qwen（`query_engine`/`session_manager`/`concept_extractor`×2/`parser` + `intelligence/llm.py`），统一读 `NEXUS_LLM_MODEL`/`NEXUS_LLM_API_KEY`/`NEXUS_LLM_BASE_URL`，Qwen 默认可换 OpenAI/Claude。
-- [ ] **L2 key 管理统一**：合并 `QWEN_API_KEY.json` 与 `NEXUS_LLM_API_KEY`。
-- [ ] **L3 交互日志统一**：`log_interaction` 覆盖简报侧。
+- [x] **L1 抽 `knowledge/llm_gateway.py` 单例**：收敛 7 处硬编码 Qwen（`query_engine`/`session_manager`/`concept_extractor`×2/`parser` + `intelligence/llm.py`），统一读 `NEXUS_LLM_MODEL`/`NEXUS_LLM_API_KEY`/`NEXUS_LLM_BASE_URL`，Qwen 默认可换 OpenAI/Claude。
+- [x] **L2 key 管理统一**：合并 `QWEN_API_KEY.json` 与 `NEXUS_LLM_API_KEY`。
+- [x] **L3 交互日志统一**：`log_interaction` 覆盖简报侧。
 
 ## Phase U — 辅导深度（依赖 M+L）
 

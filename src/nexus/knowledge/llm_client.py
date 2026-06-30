@@ -9,11 +9,7 @@ litellm 支持 OpenAI / Gemini / Anthropic / Azure 等，一套接口切换模�
 - 自动记录 interaction_logs（token 用量、使用模型、chunks 引用）
 - 若 litellm 未安装，fallback 到 google-generativeai 直接调用
 
-模型配置（通过环境变量）：
-  NEXUS_QA_MODEL=gpt-4o                # OpenAI（需 OPENAI_API_KEY）
-  NEXUS_QA_MODEL=gemini/gemini-2.0-flash  # Gemini（需 GEMINI_API_KEY）
-  NEXUS_QA_MODEL=claude-opus-4-6         # Anthropic（需 ANTHROPIC_API_KEY）
-  默认: gemini/gemini-2.0-flash（Gemini Flash 成本最低）
+模型配置：通过 LLMGateway 单例读取 (NEXUS_LLM_MODEL / API_KEY / BASE_URL)
 """
 from __future__ import annotations
 
@@ -23,11 +19,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from .llm_gateway import gateway
 
-# 默认模型（QWEN via DashScope OpenAI-compatible endpoint）
-DEFAULT_MODEL = "openai/qwen-plus"
-_QWEN_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -58,7 +52,7 @@ class KnowledgeLLMClient:
         max_tokens: int = 1500,
     ) -> None:
         self._store = sqlite_store
-        self.model = model or os.getenv("NEXUS_QA_MODEL") or DEFAULT_MODEL
+        self.model = model or os.getenv("NEXUS_QA_MODEL") or gateway.model
         self.temperature = temperature
         self.max_tokens = max_tokens
 
@@ -123,12 +117,7 @@ class KnowledgeLLMClient:
         """
         import litellm  # 延迟导入，安装检测
 
-        api_key = os.getenv("QWEN_API_KEY")
-        extra = (
-            {"api_key": api_key, "api_base": _QWEN_API_BASE}
-            if api_key and model.startswith("openai/qwen")
-            else {}
-        )
+        extra = gateway.litellm_kwargs if gateway.is_configured else {}
         response = litellm.completion(
             model=model,
             messages=messages,
