@@ -51,7 +51,7 @@
 - [x] **M1-4 跑通 concept_extractor 填充图谱**（核心）：扩展回填 CLI，回填后调 `ConceptExtractor.extract_from_chunks → refine_with_llm(有 key) → persist`。验收：`concepts`>0、`chunk_concepts`>0、`GraphRetriever.retrieve([chunk_id])` 返 `has_content=True`。测试 `tests/test_concept_backfill.py`（stub LLM）。
 - [x] **M1-5 统一写口 memory_writer**：新建 `memory_writer.py`，`record_weak_point`(resolve→add_weak_point，命中记 struggled) + `apply_feedback_unified`(reject→remove+forgot，accept→mastered+correct_answer)。测试 `tests/test_memory_writer.py`。
 - [x] **M1-6 三个根级入口改走 memory_writer**：改 `cli/memory_extract.py`、`cli/memory_feedback.py`、`archive_sync/post_ingest.py`，移除 state.json 读写。验收：`grep -r "state.json" src/nexus/` 仅剩 state_store.py；`test_archive_post_ingest` 改断言到 SQLite user_profile。
-- [ ] **M1-7 UnifiedMemoryReader + briefing 改造**：新建 `knowledge/unified_memory.py`(`weak_points`/`review_queue`=get_decaying_concepts/`low_mastery_topics`)；`briefing._inject_learning_context` 用 reader 替代 `load_state`。验收：`grep load_state briefing.py` 无残留；`test_briefing_context` 改 monkeypatch reader。B1 前置。
+- [x] **M1-7 UnifiedMemoryReader + briefing 改造**：新建 `knowledge/unified_memory.py`(`weak_points`/`review_queue`=get_decaying_concepts/`low_mastery_topics`)；`briefing._inject_learning_context` 用 reader 替代 `load_state`。验收：`grep load_state briefing.py` 无残留；`test_briefing_context` 改 monkeypatch reader。B1 前置。
 - [ ] **M1-8 弃用标记 + 文档**：`state_store.py`/`memory_update.py` 加 deprecation 注释（保留 `memory_extractor`）；ROADMAP M1 标 `[x]`。验收：96 绿。
 
 **风险**：M1-2/3/4 纯新增不碰现有测试；M1-6/7 高风险（同步改 `test_archive_post_ingest`/`test_briefing_context` 断言，语义保留）；数据改动前 `cp data/nexus.db data/nexus.db.bak`。
