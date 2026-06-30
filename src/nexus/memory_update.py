@@ -1,3 +1,12 @@
+"""
+Deprecated as of Phase M1-6. Use memory_writer.py instead.
+Functions are retained for reference only; no callers remain in tree.
+
+record_weak_point() replaces merge_candidates_into_state().
+apply_feedback_unified() replaces apply_feedback().
+apply_confidence_decay() has no direct replacement (Ebbinghaus decay
+now lives in TemporalMemory at the concept level, not state.json level).
+"""
 from __future__ import annotations
 
 from datetime import datetime
