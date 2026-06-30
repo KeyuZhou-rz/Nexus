@@ -82,3 +82,109 @@ CREATE INDEX IF NOT EXISTS idx_chunks_lecture   ON chunks(course_id, lecture_num
 CREATE INDEX IF NOT EXISTS idx_chunks_type      ON chunks(type);
 CREATE INDEX IF NOT EXISTS idx_logs_session     ON interaction_logs(session_id);
 CREATE INDEX IF NOT EXISTS idx_logs_course      ON interaction_logs(course_id);
+
+-- ════════════════════════════════════════════════
+-- Phase 4: Knowledge Graph — 概念图谱 + 时间记忆
+-- ════════════════════════════════════════════════
+
+-- ────────────────────────────────────────────────
+-- 概念节点
+-- 从 chunk 的 keywords / prerequisites / topic 中提取的知识概念
+-- concept_id 格式: "{course_prefix}__{slug}"，如 "cs202_os__deadlock"
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS concepts (
+    concept_id      TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,           -- 显示名，如 "死锁 / Deadlock"
+    course_id       TEXT NOT NULL,           -- 来源课程
+    definition      TEXT,                    -- LLM 生成的一句话定义
+    concept_type    TEXT,                    -- fundamental | applied | technique | theorem
+    first_seen_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ────────────────────────────────────────────────
+-- 概念间关系（有向边）
+-- 同课程内: prerequisite / extends / applied_in / contradicts
+-- 跨课程:   analogous_to / prerequisite / extends / applied_in
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS concept_relations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id       TEXT NOT NULL,
+    target_id       TEXT NOT NULL,
+    relation_type   TEXT NOT NULL,           -- prerequisite | analogous_to | extends | applied_in | contradicts
+    confidence      REAL DEFAULT 1.0,        -- 0.0-1.0
+    evidence        TEXT,                    -- 简要理由
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (source_id) REFERENCES concepts(concept_id) ON DELETE CASCADE,
+    FOREIGN KEY (target_id) REFERENCES concepts(concept_id) ON DELETE CASCADE,
+    UNIQUE(source_id, target_id, relation_type)
+);
+
+-- ────────────────────────────────────────────────
+-- Chunk ↔ Concept 多对多关联
+-- 一个 chunk 可包含多个概念，一个概念可跨多个 chunk
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS chunk_concepts (
+    chunk_id        TEXT NOT NULL,
+    concept_id      TEXT NOT NULL,
+    relevance       REAL DEFAULT 1.0,        -- 该概念在此 chunk 中的核心程度
+    PRIMARY KEY (chunk_id, concept_id),
+    FOREIGN KEY (chunk_id) REFERENCES chunks(chunk_id) ON DELETE CASCADE,
+    FOREIGN KEY (concept_id) REFERENCES concepts(concept_id) ON DELETE CASCADE
+);
+
+-- ────────────────────────────────────────────────
+-- 学习事件流水
+-- 每次 Q&A 交互记录涉及概念的掌握信号
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS learning_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    concept_id      TEXT NOT NULL,
+    event_type      TEXT NOT NULL,           -- correct_answer | struggled | reviewed | forgot
+    session_id      TEXT,
+    context         TEXT,                    -- JSON: {question, confidence}
+    timestamp       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (concept_id) REFERENCES concepts(concept_id) ON DELETE CASCADE
+);
+
+-- ────────────────────────────────────────────────
+-- 概念掌握度（Ebbinghaus 遗忘曲线参数）
+-- mastery(t) = initial_mastery * e^(-decay_rate * days_since_review)
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS concept_mastery (
+    concept_id      TEXT PRIMARY KEY,
+    initial_mastery REAL DEFAULT 0.0,        -- 上次学习事件后的掌握度
+    decay_rate      REAL DEFAULT 0.3,        -- 个性化衰减速率
+    last_reviewed   TIMESTAMP,
+    review_count    INTEGER DEFAULT 0,
+    streak          INTEGER DEFAULT 0,       -- 连续正确次数
+    FOREIGN KEY (concept_id) REFERENCES concepts(concept_id) ON DELETE CASCADE
+);
+
+-- ────────────────────────────────────────────────
+-- 概念别名表 (Phase M1-3)
+-- 用户可能用不同的名称指代同一个概念，此处记录规范化映射
+-- source: manual | memory | llm_extracted | cross_course
+-- UNIQUE(alias, course_id) 保证同一课程内别名不重复
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS concept_aliases (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    alias           TEXT NOT NULL,
+    course_id       TEXT NOT NULL,           -- 该别名所属课程上下文
+    concept_id      TEXT NOT NULL,           -- 映射到的规范概念 ID
+    source          TEXT DEFAULT 'manual',   -- manual | memory | llm_extracted | cross_course
+    confidence      REAL DEFAULT 1.0,        -- 别名映射置信度
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (concept_id) REFERENCES concepts(concept_id) ON DELETE CASCADE,
+    UNIQUE(alias, course_id)
+);
+
+-- Phase 4 索引
+CREATE INDEX IF NOT EXISTS idx_aliases_course         ON concept_aliases(course_id);
+CREATE INDEX IF NOT EXISTS idx_aliases_concept        ON concept_aliases(concept_id);
+CREATE INDEX IF NOT EXISTS idx_concepts_course          ON concepts(course_id);
+CREATE INDEX IF NOT EXISTS idx_relations_source         ON concept_relations(source_id);
+CREATE INDEX IF NOT EXISTS idx_relations_target         ON concept_relations(target_id);
+CREATE INDEX IF NOT EXISTS idx_chunk_concepts_concept   ON chunk_concepts(concept_id);
+CREATE INDEX IF NOT EXISTS idx_learning_events_concept  ON learning_events(concept_id);
+CREATE INDEX IF NOT EXISTS idx_learning_events_time     ON learning_events(timestamp);
