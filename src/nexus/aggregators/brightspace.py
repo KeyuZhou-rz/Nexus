@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Iterable
-import hashlib
 
 from ..models import Task
+from ..utils import stable_id
 from .base import Aggregator
 
 
@@ -40,11 +40,6 @@ def _normalize_dt(value) -> datetime | None:
         except Exception:
             return None
     return None
-
-
-def _stable_id(seed: str) -> str:
-    """Generates a consistent hash ID from a string seed."""
-    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
 
 def _is_exam_title(title: str) -> bool:
@@ -145,7 +140,7 @@ class BrightspaceAggregator(Aggregator):
                     tags.append("assignment")
                 tasks.append(
                     Task(
-                        id=f"bspace_ical:{_stable_id(seed)}",
+                        id=f"bspace_ical:{stable_id(seed)}",
                         title=summary,
                         due_at=due_at,
                         source="brightspace",
@@ -221,7 +216,7 @@ class BrightspaceAggregator(Aggregator):
                     tags.append("assignment")
                 tasks.append(
                     Task(
-                        id=f"bspace_rss:{_stable_id(seed)}",
+                        id=f"bspace_rss:{stable_id(seed)}",
                         title=title,
                         due_at=due_at,
                         source="brightspace",

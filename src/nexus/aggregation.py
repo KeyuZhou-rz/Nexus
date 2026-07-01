@@ -7,6 +7,7 @@ from .aggregators.brightspace import BrightspaceAggregator, FeedConfig
 from .aggregators.google import GoogleAggregator
 from .models import FeedSource, Task
 from .storage import load_feeds, load_tasks, save_tasks
+from .utils import dedupe_tasks
 
 
 @dataclass
@@ -46,12 +47,7 @@ def _dedupe(tasks: Iterable[Task]) -> list[Task]:
     2. 如果没有 ID，则根据 '来源:标题:截止时间' 生成一个复合键作为指纹。
     3. 保留每个指纹第一次出现的任务，丢弃后续重复项。
     """
-    seen: dict[str, Task] = {}
-    for task in tasks:
-        key = task.id or f"{task.source}:{task.title}:{task.due_at}"
-        if key not in seen:
-            seen[key] = task
-    return list(seen.values())
+    return dedupe_tasks(tasks)
 
 
 def _split_feeds(feeds: list[FeedSource]) -> tuple[list[FeedConfig], list[FeedConfig]]:

@@ -14,17 +14,14 @@ from nexus.knowledge.temporal_memory import TemporalMemory
 from nexus.knowledge.store import ChromaKnowledgeStore
 from nexus.memory_extractor import WeakPointCandidate
 from nexus.memory_writer import record_weak_point
+from nexus.utils import normalize_topic
 
 _DOC_PATTERNS = [
     re.compile(r"(?:common mistakes?|frequent errors?|pitfalls?|don'?t\s+confuse)\s*[:\-]\s*(?P<topic>[^.\n]{3,80})", re.IGNORECASE),
     re.compile(r"(?:易错点|常见错误|薄弱点|注意|不要混淆)\s*[:：\-]\s*(?P<topic>[一-鿿A-Za-z0-9\-\s]{2,60})"),
 ]
-_TOPIC_CLEAN = re.compile(r"[^一-鿿A-Za-z0-9\-\s]")
-
-
 def _normalize_topic(raw: str) -> str:
-    text = _TOPIC_CLEAN.sub(" ", raw or "").strip().lower()
-    return re.sub(r"\s+", " ", text)
+    return normalize_topic(raw)
 
 
 def _weak_candidates_from_text(text: str, evidence_id: str) -> list[WeakPointCandidate]:

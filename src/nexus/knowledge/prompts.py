@@ -1,5 +1,5 @@
 """
-Nexus Phase 3 — 所有 Prompt 模板集中管理
+Nexus Phase 3 + Phase 4 — 所有 Prompt 模板集中管理
 
 原则：
 - 所有 prompt 只在此文件定义，其他模块通过 import 引用，禁止内联
@@ -8,17 +8,10 @@ Nexus Phase 3 — 所有 Prompt 模板集中管理
 """
 
 # ────────────────────────────────────────────────
-# 课件解析 Prompt（由 parser.py 使用）
-# 已在 parseprompt.py 中定义，这里 re-export 保持统一
-# ────────────────────────────────────────────────
-from .parseprompt import PARSE_PROMPT
-
-
-# ────────────────────────────────────────────────
 # Query Expansion Prompt
 # 用途：将用户的口语化问题改写为 2-3 个更适合向量检索的技术短语
 # 调用时机：收到用户问题后，送向量库检索之前
-# 模型：Gemini Flash 或 GPT-4o-mini（轻量即可）
+# 模型：通过 LLMGateway 统一路由（默认 deepseek-chat）
 # 输出格式：JSON 数组字符串，如 ["query1", "query2", "query3"]
 # ────────────────────────────────────────────────
 QUERY_EXPAND_PROMPT = """\
@@ -58,11 +51,40 @@ QA_SYSTEM_PROMPT = """\
 ## 教学风格
 {teaching_style_instruction}
 
+## 苏格拉底引导策略
+{socratic_instruction}
+
 ## 约束
 - 不要编造数据、公式或算法步骤
 - 不确定时说"根据课件..."而不是给出确定性答案
 - 回答长度适中：概念解释 200-400 字，例题分析可以更长
 """
+
+# U1: Socratic guidance levels keyed by lowest mastery band among relevant concepts.
+# The assembler selects the lowest-mastery band to prioritize struggling concepts.
+SOCRATIC_GUIDANCE = {
+    "critical": (
+        "学生对该概念掌握度极低（<30%）。不要直接给出答案。"
+        "先提出一个基础问题引导学生回忆前置概念，确认基础后再逐步深入。"
+        "使用分步追问：① 问最基础的定义/直觉 → ② 引导学生自己推导 → ③ 再给出完整解释。"
+    ),
+    "decaying": (
+        "学生曾学过该概念但正在遗忘（30-50%）。先给一个提示或类比，"
+        "让学生尝试自己回忆。如果学生表现出困惑或错误，再用课件内容详细解释。"
+    ),
+    "stable": (
+        "学生基本掌握该概念（50-80%）。正常回答，适当补充进阶细节"
+        "或与其他概念的关联，帮助巩固理解。"
+    ),
+    "mastered": (
+        "学生已熟练掌握该概念（>80%）。简洁回答核心要点，"
+        "然后提出一个延伸问题或挑战性问题，激发深度思考。"
+    ),
+    "unknown": (
+        "无法判断学生对该概念的掌握程度。按正常教学风格回答。"
+        "如果学生表现出困惑，主动降低难度并给出更多解释。"
+    ),
+}
 
 # 不同学习风格对应的教学风格指令
 TEACHING_STYLE = {
@@ -97,4 +119,252 @@ PROFILE_UPDATE_PROMPT = """\
 }}
 
 只输出有变更的字段，没有变更的字段不要包含。只输出 JSON，不要输出其他内容。
+"""
+
+
+# ════════════════════════════════════════════════
+# Phase 4A: Knowledge Graph — 概念提取与关系发现
+# ════════════════════════════════════════════════
+
+# ────────────────────────────────────────────────
+# Concept Extraction Prompt (课内)
+# 用途：从候选概念列表和 chunk 摘要中精炼出结构化概念 + 课内关系
+# 调用时机：每个文档 ingest 完成后，由 concept_extractor.py Pass 2 调用
+# 输入：候选概念（Pass 1 规则提取）+ chunk 摘要
+# 输出：精炼概念列表 + 课内关系列表
+# ────────────────────────────────────────────────
+CONCEPT_EXTRACT_PROMPT = """\
+你是一个知识图谱构建专家。下面是一门课程的知识点列表和对应的课件内容摘要。
+
+课程: {course_id}
+
+已识别的候选概念:
+{candidate_concepts}
+
+课件内容摘要 (每个 chunk 的 topic + keywords):
+{chunk_summaries}
+
+请完成以下任务:
+1. 合并重复概念（如 "死锁" 和 "deadlock" 应合并为一个概念，名称用 "中文 / English" 格式）
+2. 为每个概念添加一句话定义（基于课件内容，15-30 字）
+3. 标注概念类型: fundamental（基础概念）、applied（应用方法）、technique（具体技术）、theorem（定理/公式）
+4. 识别概念间的课内关系:
+   - prerequisite: A 是理解 B 的前提
+   - extends: B 是 A 的扩展/深化
+   - applied_in: A 被应用在 B 的场景中
+   - contradicts: A 和 B 是对立/互斥的方案
+
+只输出 JSON:
+{{
+  "concepts": [
+    {{
+      "name": "概念名 (中文 / English)",
+      "definition": "一句话定义",
+      "type": "fundamental|applied|technique|theorem",
+      "source_chunk_indices": [0, 2]
+    }}
+  ],
+  "relations": [
+    {{
+      "source": "概念名A",
+      "target": "概念名B",
+      "type": "prerequisite|extends|applied_in|contradicts",
+      "confidence": 0.9,
+      "evidence": "简要理由"
+    }}
+  ]
+}}
+"""
+
+
+# ────────────────────────────────────────────────
+# Cross-Course Relation Discovery Prompt
+# 用途：发现新导入概念与已有课程概念间的跨课程关联
+# 调用时机：每个文档 ingest 后，由 concept_extractor.py Pass 3 调用
+# 输入：新课程的概念列表 + 其他课程的已有概念列表
+# 输出：跨课程关系列表（只报告 confidence >= 0.7 的）
+# ────────────────────────────────────────────────
+CROSS_COURSE_RELATION_PROMPT = """\
+你是一个跨学科知识关联专家。下面是两组概念，分别来自不同课程。
+
+新课程 ({new_course_id}) 的概念:
+{new_concepts}
+
+其他课程的已有概念:
+{existing_concepts}
+
+请识别跨课程的概念关系:
+- analogous_to: 两个概念在不同领域有结构相似的思想（如 OS 的 "mutex" 和 DB 的 "transaction isolation"）
+- prerequisite: 课程 A 的概念是理解课程 B 某概念的前提
+- extends: 课程 B 的概念是课程 A 某概念在新领域的扩展
+- applied_in: 课程 A 的理论概念在课程 B 中有具体应用
+
+注意:
+- 只报告你确信度 >= 0.7 的关系
+- 不要强行关联无关概念
+- evidence 须一句话解释为什么有这个关系
+
+只输出 JSON 数组:
+[
+  {{
+    "source": "新课程概念名",
+    "target": "已有课程概念名",
+    "source_course": "{new_course_id}",
+    "target_course": "已有课程 course_id",
+    "type": "analogous_to|prerequisite|extends|applied_in",
+    "confidence": 0.85,
+    "evidence": "简要理由"
+  }}
+]
+"""
+
+
+# ────────────────────────────────────────────────
+# Mastery Classification Prompt (Phase 4B)
+# 用途：从 Q&A 交互中推断学生对涉及概念的掌握程度
+# 调用时机：每次 Q&A 回答后（可选，启发式规则优先）
+# ────────────────────────────────────────────────
+MASTERY_CLASSIFY_PROMPT = """\
+分析以下学习交互，判断学生对涉及概念的掌握程度。
+
+学生问题: {user_query}
+AI 回答摘要: {response_summary}
+涉及概念: {concepts}
+
+对每个概念输出掌握事件类型:
+- correct_answer: 学生问题表明已理解，只是确认或深入探讨
+- struggled: 学生对基本概念有困惑，需要详细解释
+- reviewed: 学生在复习/浏览，无法判断掌握程度
+- forgot: 学生明确表示忘记了或之前学过但想不起来
+
+只输出 JSON:
+{{"events": [{{"concept": "概念名", "type": "correct_answer|struggled|reviewed|forgot"}}]}}
+"""
+
+
+# ────────────────────────────────────────────────
+# Gap Scan Prompt (Phase N — Memory Layer 1)
+# 用途：每周扫描课程所有 Chunk，提取 Top 20 核心概念 + 自测题
+# 调用时机：GapScanner.scan_course()，周频触发
+# 模型：通过 LLMGateway 统一路由
+# 输出格式：JSON 数组
+# ────────────────────────────────────────────────
+GAP_SCAN_PROMPT = """\
+你是一个课程知识体系分析专家。请根据以下课件内容块摘要，为课程提取最核心的 **Top 20 概念**。
+
+## 课程
+{course_id}
+
+## 当前周
+{week_label}
+
+## 课件内容块摘要
+{chunk_summaries}
+
+## 要求
+对每个概念：
+1. 选择一个最具代表性的名称（建议中英文对照格式，如 "死锁 / Deadlock"）
+2. 评估其在课程中的重要性（1-10，10 为最核心、必考）
+3. 生成 3 个自测判断题，每题考察该概念的不同维度
+   - 题目应该让学生能快速检验自己是否真正理解
+   - 避免纯记忆题，侧重理解和应用
+
+只输出 JSON 数组，不要输出任何其他内容：
+[
+  {{
+    "name": "死锁 / Deadlock",
+    "importance": 10,
+    "self_test_q1": "请描述死锁产生的四个必要条件，并各举一个例子。",
+    "self_test_q2": "假设系统有3个进程和4类资源，请画出一个可能产生死锁的资源分配图。",
+    "self_test_q3": "银行家算法如何避免死锁？它与死锁检测有何本质区别？"
+  }}
+]
+"""
+
+
+# ────────────────────────────────────────────────
+# Sprint Plan Prompt (Phase N — Memory Layer 2)
+# 用途：考前 14 天冲刺计划，结合章节权重 + 掌握度 + 时间预算
+# 调用时机：SprintPlanner.generate()，考前 14 天内触发
+# 风格：激将法，朋友式打赌语气
+# ────────────────────────────────────────────────
+SPRINT_PLAN_PROMPT = """\
+你是一个严厉但关心学生的考前冲刺教练。距离考试只剩 {days_until_exam} 天，你必须帮学生最大化复习效率。
+
+## 课程
+{course_id}
+
+## 考试日期
+{exam_date}（距今 {days_until_exam} 天）
+
+## 章节权重（考试占比）
+{chapter_weights}
+
+## 概念掌握度（0-100%，越低越薄弱）
+{mastery_table}
+
+## 每日可用复习时间
+{daily_hours} 小时
+
+## 要求
+1. 按章节权重分配复习时间：权重高的章节优先且深入
+2. 掌握度最低的概念优先安排
+3. 按前置关系拓扑序：先复习前置概念，再深入依赖概念
+4. 每天设置一个"激将挑战"——针对学生最薄弱但必考的概念，用朋友打赌的挑衅语气写出：
+   格式：“根据你的薄弱点，我赌你今天会在'{concept_name}'上丢分。敢不敢做一道题验证一下？”
+5. 最后一天安排 mock exam + 综合查漏补缺
+6. 每天 rationale 用激将法语气激励学生直面弱项
+
+只输出 JSON，不要输出任何其他内容：
+{{
+  "plan": [
+    {{
+      "day": 1,
+      "focus": ["知识点名称"],
+      "rationale": "激将法理由（简短，有挑衅性）",
+      "challenge": "我赌你今天会在'XXX'上丢分。敢不敢验证一下？",
+      "estimated_minutes": 45
+    }}
+  ]
+}}
+"""
+
+
+# ────────────────────────────────────────────────
+# Retrospective Prompt (Phase N — Memory Layer 3)
+# 用途：考后复盘，对比考前预测 vs 实际表现，生成得失分析
+# 调用时机：ExamRetrospective.generate_retrospective()
+# 输出格式：JSON
+# ────────────────────────────────────────────────
+RETROSPECTIVE_PROMPT = """\
+你是一个学习策略分析师。请根据以下信息生成一份考试复盘报告。
+
+## 课程
+{course_id}
+
+## 考试日期
+{exam_date}
+
+## 考前预测的薄弱概念（按掌握度从低到高排列，这些是系统认为学生最容易丢分的地方）
+{predicted_weak}
+
+## 学生考后反馈（来自学生的回忆和感受）
+{user_input}
+
+## 要求
+1. 从学生反馈中推断实际考试中哪些概念确实出现了且学生感到困难（actual_hits）
+2. 识别盲点（blind_spots）：学生没预料到但考试中遇到困难的概念
+3. 识别过度自信（overestimated）：学生以为掌握了但实际失败的概念
+4. 撰写 analysis_text（200-400 字）：叙事性分析为什么预测准确/不准确，学习策略出了什么问题，给学生的真诚建议
+5. 生成 retention_hook：一个记忆锚点或口诀，帮助长期记住最易忘的概念
+
+只输出 JSON，不要输出任何其他内容：
+{{
+  "predicted_weak": ["概念名"],
+  "actual_hits": ["概念名"],
+  "blind_spots": ["概念名"],
+  "overestimated": ["概念名"],
+  "analysis_text": "叙事性分析（200-400 字）",
+  "retention_hook": "一句话记忆锚点"
+}}
 """

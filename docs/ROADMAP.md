@@ -60,16 +60,19 @@
 
 ## Phase B — 简报系统（M1-7 后扩展）
 
-- [ ] **B1 briefing 注入 temporal 掌握度**
+- [x] **B1 briefing 注入 temporal 掌握度**
   - `_inject_learning_context` 显式接入 `temporal_memory.get_decaying_concepts`（"今日该复习什么"）。M1-7 已切读 UnifiedMemoryReader，B1 在此基础上注入 decaying 概念。
+  - 交付：显式 `TemporalMemory` 实例化 + `get_decaying_concepts()` 调用；按 urgency 排序 + mastery% 注入 review item；弱项兜底保留。
   - 文件：`src/nexus/intelligence/briefing.py`、`src/nexus/knowledge/temporal_memory.py`
 
-- [ ] **B2 LLM 简报失败降级测试**
+- [x] **B2 LLM 简报失败降级测试**
   - `_llm_briefing` 异常/超时 → `_rule_briefing` 兜底，确保不抛。
+  - 交付：6 tests（LLMError/通用异常降级、未配置降级、use_llm=False 跳过、warm_message/focus 保留、空 tasks 不崩）。
   - 文件：`tests/test_briefing_fallback.py`（新建）
 
-- [ ] **B3 考试提醒窗口边界**
+- [x] **B3 考试提醒窗口边界**
   - `select_exam_reminders(window_days=180)` 边界、跨年、无考试。
+  - 交付：8 new tests（窗口边界 inclusive/exclusive、今日考试、空列表、自定义窗口 30d、跨年 365d、TZ 跨年、TZ 边界）。
   - 文件：`tests/test_briefing_unit.py`
 
 ---
@@ -82,21 +85,45 @@
 
 ## Phase U — 辅导深度（依赖 M+L）
 
-- [ ] **U1 苏格拉底引导**：改写 `prompts.QA_SYSTEM_PROMPT`，基于 mastery 低位/weak_point 命中触发分步追问；`context_assembler` 按 mastery 选引导策略。
-- [ ] **U2 学习计划生成**：新建 `knowledge/study_planner.py`，LLM 结合考试日(Calendar) + 掌握度(temporal_memory) + 前置关系(graph_retriever 拓扑序) 生成周计划。
-- [ ] **U3 掌握度可视化**：Streamlit 加遗忘曲线图 + 概念图谱 + 学习计划视图（消费 `get_mastery_overview`/`get_decaying_concepts`）。
+- [x] **U1 苏格拉底引导**：改写 `prompts.QA_SYSTEM_PROMPT`，基于 mastery 低位/weak_point 命中触发分步追问；`context_assembler` 按 mastery 选引导策略。
+  - 交付：`SOCRATIC_GUIDANCE` 5 级策略（critical/decaying/stable/mastered/unknown）；`_pick_socratic_level()` 按最低 mastery 选级；`assemble_messages()` 接受 `mastery_map`；`qa_pipeline.ask()` 在 Step 3.6 查询 mastery 注入。
+  - 文件：`prompts.py`, `context_assembler.py`, `qa_pipeline.py`, `tests/test_context_assembler.py`（22 tests）
+
+- [x] **U2 学习计划生成**：新建 `knowledge/study_planner.py`，LLM 结合考试日(Calendar) + 掌握度(temporal_memory) + 前置关系(graph_retriever 拓扑序) 生成周计划。
+  - 交付：`StudyPlanner` 类（LLM 增强 + 规则兜底）；`_compute_prereq_depths()` BFS 拓扑深度；7 天每日计划（focus/rationale/estimated_minutes）；无 LLM 时 rule-based priority sort。
+  - 文件：`knowledge/study_planner.py`, `tests/test_study_planner.py`（10 tests）
+
+- [x] **U3 掌握度可视化**：Streamlit 加遗忘曲线图 + 概念图谱 + 学习计划视图（消费 `get_mastery_overview`/`get_decaying_concepts`）。
+  - 交付：新 tab "📊 Learning Progress"；Metrics（total/critical/decaying/mastered）；Mastery Distribution bar chart；Concept table；Ebbinghaus 遗忘曲线（30天模拟）；Quick Study Plan（StudyPlanner 集成）。
+  - 文件：`streamlit_app.py`
 
 ## Phase E — 邮件重要信息（依赖 L）
 
-- [ ] **E1 Gmail 全文拉取**：`format="full"` + MIME 解析拿正文。
-- [ ] **E2 LLM 重要性/结构化提取**：考试时间/截止/行动项 → 结构化字段，非 snippet 截断。
-- [ ] **E3 课程归属修复 + 分页**：`course_aliases.json` 缺失问题 + 时间窗口/分页拉取。
+- [x] **E1 Gmail 全文拉取**：`format="full"` + MIME 解析拿正文。
+  - 交付：`_decode_email_body()` 递归 MIME 解码（text/plain, text/html, multipart/alternative, multipart/mixed）；`_strip_html()` 标签剥离+实体解码；`format="full"` 替代 `format="metadata"`。
+  - 文件：`aggregators/google.py`
+
+- [x] **E2 LLM 重要性/结构化提取**：考试时间/截止/行动项 → 结构化字段，非 snippet 截断。
+  - 交付：`_extract_structured_fields()` LLM 提取（exam_date/deadline/action_items/course_hint/priority/summary_zh）；`_enrich_task_from_llm()` 应用提取结果到 Task（不覆盖已有 course）；LLM 不可用时优雅降级。
+  - 文件：`aggregators/google.py`
+
+- [x] **E3 课程归属修复 + 分页**：`course_aliases.json` 缺失问题 + 时间窗口/分页拉取。
+  - 交付：pageToken 分页循环；`gmail_window_days` 时间窗口过滤（默认 30 天）；`gmail_max_results` 可配置上限（默认 20）；`_load_course_aliases` 文件缺失/JSON 非法/非数组均返回空列表。
+  - 文件：`aggregators/google.py`, `tests/test_gmail_enhanced.py`（27 tests）
 
 ## Phase X — LMS 抽象（独立，最后）
 
-- [ ] **X1 抽 `aggregators/lms_base.py` 接口**：courses/assignments/announcements/files。
-- [ ] **X2 Brightspace 适配为实现**：archive_sync + iCal/RSS 路径。
-- [ ] **X3 新建 `aggregators/canvas.py`**：Canvas REST API + OAuth token。
+- [x] **X1 抽 `aggregators/lms_base.py` 接口**：courses/assignments/announcements/files。
+  - 交付：`LMSConnector(ABC)` + 4 抽象方法；`Course`/`Assignment`/`Announcement`/`CourseFile` 数据类；`to_tasks()` 统一转换。
+  - 文件：`aggregators/lms_base.py`
+
+- [x] **X2 Brightspace 适配为实现**：archive_sync + iCal/RSS 路径。
+  - 交付：`BrightspaceLMSConnector(LMSConnector)` — iCal → assignments, RSS → announcements, archive_dir → files。
+  - 文件：`aggregators/brightspace_lms.py`
+
+- [x] **X3 新建 `aggregators/canvas.py`**：Canvas REST API + OAuth token。
+  - 交付：`CanvasLMSConnector(LMSConnector)` — REST API + Link header 分页 + Bearer token 认证。
+  - 文件：`aggregators/canvas.py`
 
 ---
 

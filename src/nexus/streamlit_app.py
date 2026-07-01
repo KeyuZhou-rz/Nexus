@@ -784,7 +784,7 @@ grade_updates.sort(
     reverse=True,
 )
 
-tab_dash, tab_study = st.tabs(["📋  Dashboard", "🎓  Study Assistant"])
+tab_dash, tab_study, tab_progress = st.tabs(["📋  Dashboard", "🎓  Study Assistant", "📊  Learning Progress"])
 
 with tab_dash:
     left_panel, right_panel = st.columns([1, 1], gap="large")
@@ -1155,17 +1155,22 @@ def _get_qa_pipeline():
     from nexus.knowledge.llm_gateway import gateway
     from nexus.knowledge.qa_pipeline import QAPipeline
 
-    # 优先读 Streamlit secrets，其余由 gateway 处理
-    qwen_key = st.secrets.get("QWEN_API_KEY", "") if hasattr(st, "secrets") else ""
-    qwen_key = qwen_key or gateway.api_key or ""
+    # 优先用 gateway（已自动加载 .env），Streamlit secrets 作为补充
+    api_key = gateway.api_key or ""
+    try:
+        secrets_key = st.secrets.get("NEXUS_LLM_API_KEY", "")
+        if secrets_key:
+            api_key = secrets_key
+    except Exception:
+        pass  # no secrets file → use .env
 
     pipeline = QAPipeline(
         chroma_dir=_DATA_DIR / "chroma",
         sqlite_path=_DATA_DIR / "nexus.db",
         tasks_path=_DATA_DIR / "tasks.json",
-        qwen_api_key=qwen_key,
+        use_llm_expansion=bool(api_key),
     )
-    return pipeline, qwen_key
+    return pipeline, api_key
 
 
 def _profile_badge(label: str, color: str) -> str:
@@ -1199,11 +1204,14 @@ with tab_study:
 
     # ── 加载 pipeline ──
     try:
-        _pipeline, _qwen_key = _get_qa_pipeline()
-        _pipeline_ok = bool(_qwen_key)
+        _pipeline, _api_key = _get_qa_pipeline()
+        _pipeline_ok = bool(_api_key)
     except Exception as _e:
         _pipeline_ok = False
         _pipeline = None
+        import traceback
+        print(f"[QAPipeline init failed] {_e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         st.error(f"QAPipeline 初始化失败: {_e}")
 
     # ── Layout: chat(2/3) + profile(1/3) ──
@@ -1321,7 +1329,7 @@ with tab_study:
             try:
                 _ended = _pipeline.check_idle_sessions()
                 if _ended:
-                    st.toast(f"Session ended after idle timeout.", icon="💾")
+                    st.toast("Session ended after idle timeout.", icon="💾")
             except Exception:
                 pass
 
@@ -1330,7 +1338,7 @@ with tab_study:
                     unsafe_allow_html=True)
 
         if not _pipeline_ok:
-            st.info("Set QWEN_API_KEY to enable the Study Assistant.")
+            st.info("Set NEXUS_LLM_API_KEY in .env to enable the Study Assistant.")
         else:
             try:
                 _prof = _pipeline.get_profile()
@@ -1400,3 +1408,371 @@ with tab_study:
 
             except Exception as _exc:
                 st.error(f"Profile load failed: {_exc}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Learning Progress Tab (Phase U3 — Mastery Visualization + Study Plan)
+# ─────────────────────────────────────────────────────────────────────────────
+
+with tab_progress:
+    import math as _math
+
+    st.markdown('<div class="section-title" style="margin-top:0;">📊 Learning Progress</div>',
+                unsafe_allow_html=True)
+
+    # Try to load mastery data from the QA pipeline
+    _progress_data_ok = False
+    _mastery_list: list[dict] = []
+    _decaying_list: list[dict] = []
+    _courses: list[str] = []
+
+    try:
+        if _pipeline_ok and _pipeline:
+            _mastery_list = _pipeline.get_mastery_overview()
+            _decaying_list = _pipeline.get_decaying_concepts(threshold=0.4)
+            _courses = _pipeline.get_profile().get("courses") or ["CS202_OS"]
+            _progress_data_ok = True
+    except Exception:
+        pass
+
+    if not _progress_data_ok:
+        _db_path = _DATA_DIR / "nexus.db"
+        if _db_path.exists():
+            try:
+                from nexus.knowledge.sqlite_store import SQLiteStore
+                from nexus.knowledge.temporal_memory import TemporalMemory
+
+                _store = SQLiteStore(_db_path)
+                _tm = TemporalMemory(_store)
+                _snapshots = _tm.get_all_mastery()
+                _mastery_list = [
+                    {
+                        "concept_id": s.concept_id,
+                        "name": s.concept_name,
+                        "course_id": s.course_id,
+                        "mastery": round(s.current_mastery, 2),
+                        "urgency": s.urgency,
+                        "days_since_review": round(s.days_since_review, 1),
+                        "review_count": s.review_count,
+                    }
+                    for s in _snapshots
+                ]
+                _decaying = _tm.get_decaying_concepts(threshold=0.4)
+                _decaying_list = [
+                    {"name": s.concept_name, "mastery": round(s.current_mastery, 2),
+                     "urgency": s.urgency, "course_id": s.course_id}
+                    for s in _decaying
+                ]
+                _progress_data_ok = True
+            except Exception:
+                st.info("No mastery data yet. Use the Study Assistant to build your learning profile.")
+    else:
+        st.info("No mastery data yet. Use the Study Assistant to build your learning profile.")
+
+    if _mastery_list:
+        # ── Course filter ──
+        _progress_courses = sorted({m.get("course_id", "") for m in _mastery_list if m.get("course_id")})
+        _progress_course = st.selectbox(
+            "Course filter",
+            options=["All"] + _progress_courses,
+            index=0,
+            key="progress_course_filter",
+        )
+
+        _filtered = _mastery_list
+        if _progress_course != "All":
+            _filtered = [m for m in _mastery_list if m.get("course_id") == _progress_course]
+
+        # ── Metrics row ──
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Concepts", len(_filtered))
+        with col2:
+            _critical = sum(1 for m in _filtered if m.get("urgency") == "critical")
+            st.metric("⚠️ Critical", _critical)
+        with col3:
+            _decaying_count = sum(1 for m in _filtered if m.get("urgency") == "decaying")
+            st.metric("📉 Decaying", _decaying_count)
+        with col4:
+            _mastered = sum(1 for m in _filtered if m.get("urgency") == "mastered")
+            st.metric("✅ Mastered", _mastered)
+
+        # ── Mastery Distribution Bar Chart ──
+        st.markdown("### Mastery Distribution")
+        _bands = {"critical (0-30%)": 0, "decaying (30-50%)": 0,
+                   "stable (50-80%)": 0, "mastered (80-100%)": 0}
+        for m in _filtered:
+            _m = m.get("mastery", 0)
+            if _m < 0.3:
+                _bands["critical (0-30%)"] += 1
+            elif _m < 0.5:
+                _bands["decaying (30-50%)"] += 1
+            elif _m < 0.8:
+                _bands["stable (50-80%)"] += 1
+            else:
+                _bands["mastered (80-100%)"] += 1
+        st.bar_chart(_bands, use_container_width=True)
+
+        # ── Concept Mastery Table ──
+        st.markdown("### Concept Mastery Overview")
+        _table_data = sorted(
+            _filtered, key=lambda m: m.get("mastery", 0)
+        )
+        _rows = []
+        for m in _table_data[:20]:
+            _pct = f"{m.get('mastery', 0):.0%}"
+            _days = m.get("days_since_review", "—")
+            _urgency = m.get("urgency", "—")
+            _emoji = {"critical": "🔴", "decaying": "🟠", "stable": "🟡", "mastered": "🟢"}.get(_urgency, "⚪")
+            _rows.append({
+                "Status": _emoji,
+                "Concept": m.get("name", "")[:40],
+                "Mastery": _pct,
+                "Urgency": _urgency,
+                "Reviews": m.get("review_count", 0),
+                "Days Since Review": _days,
+            })
+        st.dataframe(_rows, use_container_width=True, hide_index=True)
+
+        # ── Forgetting Curve (simulated) ──
+        st.markdown("### Forgetting Curve (Ebbinghaus Simulation)")
+        st.caption("Shows predicted decay for the 3 lowest-mastery concepts over 30 days if not reviewed.")
+
+        _decaying_for_curve = sorted(
+            _filtered, key=lambda m: m.get("mastery", 1)
+        )[:3]
+
+        if _decaying_for_curve:
+            _curve_data: dict[str, list] = {"day": list(range(0, 31))}
+            for _dc in _decaying_for_curve:
+                _name = _dc.get("name", "unknown")[:20]
+                _m0 = _dc.get("mastery", 0.3)
+                # Ebbinghaus: mastery(t) = m0 * exp(-0.3 * t)
+                _decay_rate = 0.3
+                _values = [_m0 * _math.exp(-_decay_rate * d) for d in range(0, 31)]
+                _curve_data[_name] = _values
+            st.line_chart(_curve_data, x="day", use_container_width=True)
+
+        # ── Study Plan Quick View ──
+        st.markdown("### Quick Study Plan")
+        if _progress_course != "All":
+            _sel_course = _progress_course
+        elif _progress_courses:
+            _sel_course = _progress_courses[0]
+        else:
+            _sel_course = "CS202_OS"
+
+        if st.button("Generate 7-Day Plan", key="gen_study_plan", use_container_width=True):
+            with st.spinner("Generating study plan..."):
+                try:
+                    from nexus.knowledge.sqlite_store import SQLiteStore
+                    from nexus.knowledge.study_planner import StudyPlanner
+
+                    _plan_store = SQLiteStore(_DATA_DIR / "nexus.db")
+                    _planner = StudyPlanner(_plan_store)
+                    _plan = _planner.generate(course_id=_sel_course, num_days=7)
+
+                    st.caption(
+                        f"Method: {_plan.get('method', 'rule')} · "
+                        f"Days until exam: {_plan.get('days_until_exam', 'N/A')}"
+                    )
+                    for _day in _plan.get("plan", [])[:7]:
+                        _focus = ", ".join(_day.get("focus", [])[:4]) or "Free review"
+                        with st.expander(
+                            f"Day {_day['day']} — {_day['date']} — {_day.get('rationale', '')[:50]}",
+                            expanded=(_day["day"] <= 2),
+                        ):
+                            st.write(f"**Focus:** {_focus}")
+                            st.caption(
+                                f"Estimated: {_day.get('estimated_minutes', 30)} min · "
+                                f"{_day.get('rationale', '')}"
+                            )
+                except Exception as _exc:
+                    st.warning(f"Plan generation skipped: {_exc}")
+        else:
+            st.caption("Select a course and click Generate to create a 7-day study plan.")
+
+    # ────────────────────────────────────────────────
+    # Knowledge Gap Analysis (Memory Layer 1)
+    # ────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🔍 Knowledge Gap Analysis")
+    st.caption("LLM scans course chunks to identify Top 20 core concepts and your weakest areas.")
+
+    _gap_course = st.selectbox(
+        "Course", options=_progress_courses, key="gap_course",
+        help="Select a course to scan for knowledge gaps",
+    )
+
+    if st.button("🔄 Run Gap Scan", key="run_gap_scan", help="Scan this course for knowledge gaps"):
+        with st.spinner("Scanning course for knowledge gaps..."):
+            try:
+                _gap_store = SQLiteStore(_DATA_DIR / "nexus.db")
+                from nexus.knowledge.gap_scanner import GapScanner
+                _scanner = GapScanner(_gap_store)
+                _gap_result = _scanner.run_weekly(_gap_course)
+                _cp = _gap_result.get("checkpoint", {})
+                _ranking = _gap_result.get("weakness_ranking", [])
+
+                st.success(
+                    f"Scan complete — {_cp.get('concepts_extracted', 0)} concepts extracted "
+                    f"({_cp.get('concepts_matched', 0)} matched to existing)"
+                )
+
+                if _ranking:
+                    st.markdown("#### Weakness Ranking")
+                    import pandas as pd
+                    _rank_df = pd.DataFrame([
+                        {
+                            "Concept": r["name"][:40],
+                            "Importance": r["importance"],
+                            "Mastery %": f"{r['mastery']*100:.0f}%",
+                            "Weakness Score": f"{r['weakness_score']:.3f}",
+                            "Queries (2w)": r["total_queries"],
+                            "Hesitations": r["hesitation_count"],
+                        }
+                        for r in _ranking[:15]
+                    ])
+                    st.dataframe(_rank_df, use_container_width=True, hide_index=True)
+
+            except Exception as _exc:
+                st.warning(f"Gap scan skipped: {_exc}")
+
+    # ────────────────────────────────────────────────
+    # Exam Sprint Planner (Memory Layer 2)
+    # ────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### ⚡ Exam Sprint Planner")
+    st.caption("14-day pre-exam intensive plan with chapter weights and motivational challenges.")
+
+    _sprint_course = st.selectbox(
+        "Course", options=_progress_courses, key="sprint_course",
+    )
+    _col1, _col2 = st.columns(2)
+    with _col1:
+        _sprint_exam_date = st.date_input("Exam Date", key="sprint_exam_date")
+    with _col2:
+        _sprint_hours = st.slider(
+            "Daily Study Hours", 0.5, 8.0, 2.0, 0.5, key="sprint_hours",
+        )
+
+    _sprint_weights_raw = st.text_area(
+        "Chapter Weights (JSON, optional)",
+        placeholder='{"ch3": 0.15, "ch7": 0.20, "ch9": 0.30}',
+        key="sprint_weights",
+        help="Enter chapter exam weight proportions as JSON. Leave empty for equal distribution.",
+    )
+
+    if st.button("⚡ Generate Sprint Plan", key="gen_sprint"):
+        with st.spinner("Generating sprint plan..."):
+            try:
+                from nexus.knowledge.sprint_planner import SprintPlanner
+                _sprint_store = SQLiteStore(_DATA_DIR / "nexus.db")
+                _sprint_planner = SprintPlanner(_sprint_store)
+                _ch_weights = None
+                if _sprint_weights_raw.strip():
+                    _ch_weights = json.loads(_sprint_weights_raw)
+                _sprint_result = _sprint_planner.generate(
+                    course_id=_sprint_course,
+                    exam_date=_sprint_exam_date.isoformat(),
+                    chapter_weights=_ch_weights,
+                    daily_hours=_sprint_hours,
+                )
+
+                _mode = _sprint_result.get("mode", "unknown")
+                if _mode == "relaxed":
+                    st.info(_sprint_result.get("message", ""))
+                elif _mode == "error":
+                    st.error(_sprint_result.get("message", ""))
+                else:
+                    st.success(
+                        f"Sprint Plan — {_sprint_result.get('days_until_exam', '?')} days until exam "
+                        f"(method: {_sprint_result.get('method', 'rule')})"
+                    )
+                    for _day in _sprint_result.get("plan", []):
+                        _focus = ", ".join(_day.get("focus", [])[:4]) or "Free review"
+                        with st.expander(
+                            f"Day {_day['day']} — {_day['date']} — {_day.get('rationale', '')[:50]}",
+                            expanded=(_day["day"] <= 2),
+                        ):
+                            st.write(f"**Focus:** {_focus}")
+                            _challenge = _day.get("challenge", "")
+                            if _challenge:
+                                st.info(f"💬 {_challenge}")
+                            st.caption(
+                                f"Estimated: {_day.get('estimated_minutes', 30)} min · "
+                                f"{_day.get('rationale', '')}"
+                            )
+            except Exception as _exc:
+                st.warning(f"Sprint plan generation failed: {_exc}")
+
+    # ────────────────────────────────────────────────
+    # Exam Retrospective (Memory Layer 3)
+    # ────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📝 Exam Retrospective")
+    st.caption("Post-exam analysis: compare predictions with reality.")
+
+    _retro_course = st.selectbox(
+        "Course", options=_progress_courses, key="retro_course",
+    )
+    _retro_exam_date = st.date_input("Exam Date", key="retro_exam_date")
+    _retro_input = st.text_area(
+        "Your Post-Exam Feedback",
+        placeholder="Which questions were hardest? What surprised you? What do you remember about the exam?",
+        key="retro_input",
+        help="Write freely — the LLM will extract structured insights from your description.",
+    )
+
+    if st.button("📊 Generate Retrospective", key="gen_retro"):
+        with st.spinner("Analyzing exam performance..."):
+            try:
+                from nexus.knowledge.retrospective import ExamRetrospective
+                _retro_store = SQLiteStore(_DATA_DIR / "nexus.db")
+                _retro = ExamRetrospective(_retro_store)
+                _user_input = _retro_input.strip() or "学生未提供考后反馈。"
+                _exam_id = _retro.record_exam(
+                    _retro_course,
+                    _retro_exam_date.isoformat(),
+                    user_input=_user_input,
+                )
+                _retro_result = _retro.generate_retrospective(_exam_id, _user_input)
+
+                if "error" in _retro_result:
+                    st.error(_retro_result["error"])
+                else:
+                    st.success(f"Retrospective generated — Hit rate: {_retro_result.get('hit_rate', 'N/A')}")
+
+                    _col_a, _col_b = st.columns(2)
+                    with _col_a:
+                        st.markdown("**✅ Predicted & Appeared**")
+                        for _h in _retro_result.get("actual_hits", []):
+                            st.markdown(f"- {_h}")
+                        if not _retro_result.get("actual_hits"):
+                            st.caption("(none identified)")
+
+                        st.markdown("**👁️ Blind Spots**")
+                        for _b in _retro_result.get("blind_spots", []):
+                            st.markdown(f"- {_b}")
+                        if not _retro_result.get("blind_spots"):
+                            st.caption("(none identified)")
+
+                    with _col_b:
+                        st.markdown("**🤔 Overestimated**")
+                        for _o in _retro_result.get("overestimated", []):
+                            st.markdown(f"- {_o}")
+                        if not _retro_result.get("overestimated"):
+                            st.caption("(none identified)")
+
+                    _analysis = _retro_result.get("analysis_text", "")
+                    if _analysis:
+                        st.markdown("---")
+                        st.markdown("#### 📝 Analysis")
+                        st.write(_analysis)
+
+                    _hook = _retro_result.get("retention_hook", "")
+                    if _hook:
+                        st.info(f"🧠 **Memory Hook:** {_hook}")
+
+            except Exception as _exc:
+                st.warning(f"Retrospective generation failed: {_exc}")

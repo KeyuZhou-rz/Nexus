@@ -29,8 +29,6 @@ QA Pipeline — Nexus Phase 3 端到端问答入口（含 Week 3 扩展）
 from __future__ import annotations
 
 import logging
-import re
-import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -38,10 +36,13 @@ from pathlib import Path
 from typing import Any
 
 from .context_assembler import assemble_messages, estimate_tokens
+from .graph_retriever import GraphRetriever
 from .llm_client import KnowledgeLLMClient, LLMOutput
 from .query_engine import QueryEngine, RetrievedChunk, RetrievalResult
 from .session_manager import SessionManager
-from .sqlite_store import SQLiteStore
+from .sqlite_store import SQLiteStore, connect
+from .hesitation_detector import HesitationDetector
+from .temporal_memory import TemporalMemory
 from .user_profile import UserProfileManager
 
 logger = logging.getLogger(__name__)
@@ -148,19 +149,18 @@ def _infer_course_from_session(
     取本 session 中最频繁使用的非空 course_id。
     """
     try:
-        conn = sqlite3.connect(str(sqlite_path))
-        rows = conn.execute(
-            """
-            SELECT course_id, COUNT(*) as cnt
-            FROM interaction_logs
-            WHERE session_id = ? AND course_id IS NOT NULL AND course_id != ''
-            GROUP BY course_id
-            ORDER BY cnt DESC
-            LIMIT 1
-            """,
-            (session_id,),
-        ).fetchall()
-        conn.close()
+        with connect(sqlite_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT course_id, COUNT(*) as cnt
+                FROM interaction_logs
+                WHERE session_id = ? AND course_id IS NOT NULL AND course_id != ''
+                GROUP BY course_id
+                ORDER BY cnt DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchall()
         if rows:
             return rows[0][0]
     except Exception as exc:
@@ -209,19 +209,18 @@ def _infer_course_from_history(sqlite_path: Path) -> str | None:
     对应 spec 的 "最近活跃" 推断策略。
     """
     try:
-        conn = sqlite3.connect(str(sqlite_path))
-        rows = conn.execute(
-            """
-            SELECT course_id, COUNT(*) as cnt
-            FROM interaction_logs
-            WHERE course_id IS NOT NULL AND course_id != ''
-              AND timestamp >= datetime('now', '-7 days')
-            GROUP BY course_id
-            ORDER BY cnt DESC
-            LIMIT 1
-            """,
-        ).fetchall()
-        conn.close()
+        with connect(sqlite_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT course_id, COUNT(*) as cnt
+                FROM interaction_logs
+                WHERE course_id IS NOT NULL AND course_id != ''
+                  AND timestamp >= datetime('now', '-7 days')
+                GROUP BY course_id
+                ORDER BY cnt DESC
+                LIMIT 1
+                """,
+            ).fetchall()
         if rows:
             return rows[0][0]
     except Exception as exc:
@@ -283,7 +282,7 @@ class QAPipeline:
     - chroma_dir: ChromaDB 持久化目录
     - sqlite_path: SQLite 数据库路径
     - tasks_path: tasks.json 路径（用于 Calendar 课程推断，可选）
-    - qwen_api_key: QWEN API key（不传则从环境变量 QWEN_API_KEY 读取）
+    - use_llm_expansion: 是否启用 LLM 查询扩展（默认 False，零 LLM 成本）
     - qa_model: 问答生成模型（litellm 格式）
     - top_k: 最终使用的 chunk 数量
     """
@@ -293,7 +292,7 @@ class QAPipeline:
         chroma_dir: Path,
         sqlite_path: Path,
         tasks_path: Path | None = None,
-        qwen_api_key: str | None = None,
+        use_llm_expansion: bool = False,
         qa_model: str | None = None,
         top_k: int = 5,
     ) -> None:
@@ -305,17 +304,19 @@ class QAPipeline:
         self._session_mgr = SessionManager(
             sqlite_store=self._sqlite,
             profile_manager=self._profile_mgr,
-            gemini_api_key=qwen_api_key,   # SessionManager 参数名保持向后兼容
         )
         self._query_engine = QueryEngine(
             chroma_dir=chroma_dir,
-            qwen_api_key=qwen_api_key,
+            use_llm_expansion=use_llm_expansion,
             top_k=top_k,
         )
         self._llm = KnowledgeLLMClient(
             sqlite_store=self._sqlite,
             model=qa_model,
         )
+        # Phase 4: Knowledge Graph
+        self._graph_retriever = GraphRetriever(sqlite_store=self._sqlite)
+        self._temporal_memory = TemporalMemory(sqlite_store=self._sqlite)
 
     # ────────────────────────────────────────────────
     # 主问答入口
@@ -346,6 +347,9 @@ class QAPipeline:
         # ── Step 1: 读取 profile ──
         profile = self._profile_mgr.get()
         known_courses = profile.get("courses") or []
+
+        # ── Step 1.5: 犹豫信号检测 (Memory Layer 1) ──
+        _hesitation = HesitationDetector().detect(user_query)
 
         # ── Step 2: 课程推断（仅在未显式指定时） ──
         if course_id is None:
@@ -380,12 +384,63 @@ class QAPipeline:
         if not retrieval.chunks:
             warnings.append("未在知识库中找到相关课件内容，回答基于通用知识")
 
+        # ── Step 3.5: Graph-augmented retrieval (Phase 4A) ──
+        graph_context = None
+        if retrieval.chunks:
+            try:
+                graph_context = self._graph_retriever.retrieve(
+                    chunk_ids=[c.chunk_id for c in retrieval.chunks],
+                    course_id=course_id,
+                )
+            except Exception as exc:
+                logger.debug(f"Graph retrieval skipped: {exc}")
+
+        # ── Step 3.6: Mastery-aware Socratic strategy (U1) ──
+        mastery_map: dict[str, float] = {}
+        if retrieval.chunks:
+            try:
+                chunk_ids = [c.chunk_id for c in retrieval.chunks]
+                concept_rows = self._sqlite.get_concepts_for_chunks(chunk_ids)
+                seen: set[str] = set()
+                for row in concept_rows:
+                    cid = row["concept_id"]
+                    cname = row.get("name", "")
+                    if cid in seen or not cname:
+                        continue
+                    seen.add(cid)
+                    m = self._temporal_memory.get_mastery(cid)
+                    if m > 0:
+                        mastery_map[cname.strip().lower()] = m
+            except Exception as exc:
+                logger.debug(f"Mastery lookup skipped: {exc}")
+
+            # ── Step 3.7: 概念查询日志 (Memory Layer 1) ──
+            try:
+                _log_seen: set[str] = set()
+                for _row in concept_rows:
+                    _cname = _row.get("name", "")
+                    _cid = _row.get("concept_id")
+                    if not _cname or _cname in _log_seen:
+                        continue
+                    _log_seen.add(_cname)
+                    self._sqlite.log_concept_query(
+                        concept_id=_cid,
+                        concept_name=_cname,
+                        session_id=session_id,
+                        query_text=user_query,
+                        had_hesitation=1 if _hesitation else 0,
+                    )
+            except Exception:
+                pass  # Non-critical, never break the main Q&A flow
+
         # ── Step 4: 组装 messages ──
         messages = assemble_messages(
             user_query=user_query,
             chunks=retrieval.chunks,
             profile=profile,
             course_id=course_id,
+            graph_context=graph_context,
+            mastery_map=mastery_map if mastery_map else None,
         )
         estimated_tokens = estimate_tokens(messages)
         logger.info(f"Prompt 估算 tokens: {estimated_tokens}")
@@ -396,7 +451,7 @@ class QAPipeline:
         except Exception as exc:
             logger.error(f"LLM 生成失败: {exc}")
             return QAResponse(
-                answer=f"抱歉，生成回答时出错：{exc}",
+                answer="抱歉，生成回答时出错，请稍后重试。",
                 sources=[],
                 session_id=session_id,
                 course_id=course_id,
@@ -404,7 +459,7 @@ class QAPipeline:
                 model_used="none",
                 expanded_queries=retrieval.expanded_queries,
                 estimated_input_tokens=estimated_tokens,
-                warnings=warnings + [str(exc)],
+                warnings=warnings + ["LLM 生成失败，请稍后重试。"],
             )
 
         # ── Step 6: 记录日志 + 更新 session 活动 ──
@@ -418,6 +473,16 @@ class QAPipeline:
             chunks_used=chunk_ids,
         )
         self._session_mgr.record_activity(session_id, course_id)
+
+        # ── Step 7: 更新概念掌握度 (Phase 4B) ──
+        if chunk_ids:
+            try:
+                self._update_concept_mastery(
+                    chunk_ids=chunk_ids,
+                    session_id=session_id,
+                )
+            except Exception as exc:
+                logger.debug(f"Mastery update skipped: {exc}")
 
         sources = _build_sources(retrieval.chunks)
         logger.info(
@@ -470,6 +535,70 @@ class QAPipeline:
     def get_session_history(self, session_id: str) -> list[dict]:
         """获取 session 的历史问答记录。"""
         return self._sqlite.get_session_logs(session_id)
+
+    # ────────────────────────────────────────────────
+    # Phase 4: Knowledge Graph 接口
+    # ────────────────────────────────────────────────
+
+    def get_concept_graph(self, course_id: str | None = None) -> list[dict]:
+        """获取概念列表（可选按课程筛选）。"""
+        if course_id:
+            return self._sqlite.get_concepts_by_course(course_id)
+        return self._sqlite.get_all_concepts()
+
+    def get_mastery_overview(self, course_id: str | None = None) -> list[dict]:
+        """获取所有概念的掌握度快照。"""
+        snapshots = self._temporal_memory.get_all_mastery(course_id)
+        return [
+            {
+                "concept_id": s.concept_id,
+                "name": s.concept_name,
+                "course_id": s.course_id,
+                "mastery": round(s.current_mastery, 2),
+                "urgency": s.urgency,
+                "days_since_review": round(s.days_since_review, 1),
+                "review_count": s.review_count,
+            }
+            for s in snapshots
+        ]
+
+    def get_decaying_concepts(
+        self, threshold: float = 0.4, course_id: str | None = None
+    ) -> list[dict]:
+        """获取正在遗忘的概念列表。"""
+        snapshots = self._temporal_memory.get_decaying_concepts(threshold, course_id)
+        return [
+            {
+                "concept_id": s.concept_id,
+                "name": s.concept_name,
+                "course_id": s.course_id,
+                "mastery": round(s.current_mastery, 2),
+                "urgency": s.urgency,
+            }
+            for s in snapshots
+        ]
+
+    def _update_concept_mastery(
+        self,
+        chunk_ids: list[str],
+        session_id: str,
+    ) -> None:
+        """
+        Phase 4B: 从本次 Q&A 涉及的 chunks 推断涉及概念，记录 'reviewed' 事件。
+        保守策略：默认记为 "reviewed"，未来可通过 LLM 分类提升精度。
+        """
+        concept_rows = self._sqlite.get_concepts_for_chunks(chunk_ids)
+        seen = set()
+        for row in concept_rows:
+            cid = row["concept_id"]
+            if cid in seen:
+                continue
+            seen.add(cid)
+            self._temporal_memory.record_event(
+                concept_id=cid,
+                event_type="reviewed",
+                session_id=session_id,
+            )
 
 
 # ────────────────────────────────────────────────

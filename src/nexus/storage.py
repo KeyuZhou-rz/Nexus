@@ -6,28 +6,12 @@ from pathlib import Path
 from typing import Iterable
 
 from .io_utils import atomic_write_json
-from .models import FeedSource, Project, Task
+from .models import FeedSource, Task
 from .schemas import validate_task_dict
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-PROJECTS_FILE = DATA_DIR / "projects.json"
 TASKS_FILE = DATA_DIR / "tasks.json"
 FEEDS_FILE = DATA_DIR / "feeds.json"
-
-
-def load_projects(path: Path = PROJECTS_FILE) -> list[Project]:
-    """Loads projects from JSON file."""
-    if not path.exists():
-        return []
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return [Project.from_dict(item) for item in data]
-
-
-def save_projects(projects: Iterable[Project], path: Path = PROJECTS_FILE) -> None:
-    """Saves projects to JSON file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = [project.to_dict() for project in projects]
-    atomic_write_json(path, payload)
 
 
 def load_tasks(path: Path = TASKS_FILE) -> list[Task]:

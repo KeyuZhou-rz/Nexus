@@ -60,7 +60,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--llm-api-key",
         default=None,
-        help="LLM API key（默认读 QWEN_API_KEY env 或 data/QWEN_API_KEY.json）",
+        help="LLM API key（默认通过 LLMGateway 读取 NEXUS_LLM_API_KEY）",
     )
     return parser.parse_args(argv)
 

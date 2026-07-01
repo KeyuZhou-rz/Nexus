@@ -8,7 +8,8 @@ from typing import Iterable
 
 from ..config import AppConfig, default_config
 from ..models import Task
-from ..knowledge.unified_memory import UnifiedMemoryReader
+from ..utils import localize_dt
+from ..knowledge.memory_api import MemoryAPI
 from ..knowledge.sqlite_store import SQLiteStore
 from ..knowledge.query import query_knowledge
 from .llm import LLMClient, LLMError, extract_json
@@ -168,16 +169,6 @@ def _item_payload(item: BriefingItem) -> dict[str, str | None | list[str]]:
     }
 
 
-def select_window_tasks(
-    tasks: Iterable[Task],
-    window_days: int = 7,
-    now: datetime | None = None,
-    include_noise: bool = False,
-) -> list[Task]:
-    now_local = (now or datetime.now().astimezone())
-    return _filter_tasks(list(tasks), now_local, window_days, include_noise=include_noise)
-
-
 def _filter_tasks(
     tasks: list[Task],
     now_local: datetime,
@@ -239,12 +230,7 @@ def _sort_key(task: Task, now_local: datetime) -> datetime:
     return now_local + timedelta(days=3650)
 
 
-def _localize(value: datetime | None, now_local: datetime) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo:
-        return value.astimezone(now_local.tzinfo)
-    return value.replace(tzinfo=now_local.tzinfo)
+_localize = localize_dt
 
 
 def _llm_briefing(
@@ -548,22 +534,44 @@ def _inject_learning_context(
     now_local: datetime,
     config: AppConfig,
 ) -> None:
-    """Augment briefing.todo with learner-state and knowledge retrieval hints."""
+    """Augment briefing.todo with learner-state and knowledge retrieval hints.
+
+    B1: Explicitly calls TemporalMemory.get_decaying_concepts() to inject
+    Ebbinghaus-decayed concepts with mastery scores into the briefing.
+    """
     weak_points: list[str] = []
-    review_queue: list[str] = []
     low_mastery_topics: list[str] = []
+    decaying_snapshots: list = []
     try:
         db_path = config.data_dir / "nexus.db"
         store = SQLiteStore(db_path)
-        reader = UnifiedMemoryReader(store)
-        weak_points = reader.get_weak_points()
-        review_queue = reader.get_review_queue()
-        low_mastery_topics = reader.get_low_mastery_topics()
+        mem = MemoryAPI(store)
+        ctx = mem.get_memory_context()
+        weak_points = ctx.weak_points
+        low_mastery_topics = ctx.low_mastery_topics
+        decaying_snapshots = mem.get_decaying_concepts()
     except Exception as exc:  # pragma: no cover - runtime data guard
         briefing.warnings.append(f"Memory load failed: {exc}")
 
+    # build name→snapshot lookup for mastery-aware injection
+    snapshot_by_name: dict[str, object] = {}
+    for s in decaying_snapshots:
+        name = s.concept_name.strip().lower()
+        if name:
+            snapshot_by_name[name] = s
+
     context_topics: list[str] = []
-    for topic in review_queue[:2]:
+    # prioritize decaying concepts by urgency (critical → decaying → stable),
+    # then by lowest mastery first within each urgency tier
+    decaying_sorted = sorted(
+        decaying_snapshots,
+        key=lambda s: (
+            {"critical": 0, "decaying": 1, "stable": 2, "mastered": 3}.get(s.urgency, 4),
+            s.current_mastery,
+        ),
+    )
+    for s in decaying_sorted[:3]:
+        topic = s.concept_name.strip().lower()
         if topic not in context_topics:
             context_topics.append(topic)
     for topic in low_mastery_topics[:2]:
@@ -574,11 +582,27 @@ def _inject_learning_context(
             if topic not in context_topics:
                 context_topics.append(topic)
 
-    for weak_point in context_topics[:3]:
+    # B1: inject review items with mastery-level awareness
+    for topic in context_topics[:3]:
+        snap = snapshot_by_name.get(topic)
+        if snap is not None:
+            pct = f"{snap.current_mastery:.0%}"
+            if snap.urgency == "critical":
+                text_en = f"Review (critical): {snap.concept_name} — mastery {pct}"
+                text_zh = f"紧急复习：{snap.concept_name}（掌握度 {pct}）"
+            elif snap.urgency == "decaying":
+                text_en = f"Review (fading): {snap.concept_name} — mastery {pct}"
+                text_zh = f"建议复习：{snap.concept_name}（掌握度 {pct}）"
+            else:
+                text_en = f"Review: {snap.concept_name} — mastery {pct}"
+                text_zh = f"复习：{snap.concept_name}（掌握度 {pct}）"
+        else:
+            text_en = f"Review weak point: {topic}"
+            text_zh = f"复习薄弱点：{topic}"
         briefing.todo.append(
             BriefingItem(
-                text_en=f"Review weak point: {weak_point}",
-                text_zh=f"复习薄弱点：{weak_point}",
+                text_en=text_en,
+                text_zh=text_zh,
                 due_at=None,
                 source_ids=[],
                 action_url=None,

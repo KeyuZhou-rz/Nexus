@@ -1,31 +1,26 @@
 """
-LLM 课件解析器 — Nexus Phase 3
+LLM 课件解析器 — Nexus Phase N2
 
 解析策略（优先级从高到低）：
-1. Gemini Flash Vision：整文档上传，LLM 直接理解图表/公式/排版，输出语义 chunks
-2. 分段解析：文档超过 50 页时，每批 25 页分段解析后合并
-3. 文本提取 fallback：Gemini 不可用时，用 pymupdf4llm/pypdf 提取纯文本后按段落切分
+1. DeepSeek 语义解析：提取文本 → SHA-256 哈希 → 查缓存 → gateway.chat() 解析
+2. 文本提取 fallback：LLM 不可用时，用 pymupdf4llm/pypdf 提取纯文本后按段落切分
 
-Gemini 配置：
-- temperature=0.1（解析任务需要确定性，减少幻觉）
-- response_mime_type="application/json"（强制 JSON 输出）
-- 模型：gemini-2.0-flash（成本低，Vision 能力足够）
-
-跨页合并：
-- LLM 输出的 chunk 若 continues=true，与后续 chunk 合并为一个知识点
+缓存：
+- 缓存键 = SHA-256(文件内容) + course_id
+- 相同文件自动命中，文件修改自动失效
 """
 from __future__ import annotations
 
-import io
+import hashlib
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .parseprompt import PARSE_PROMPT
 from .document_text import extract_text
+from .llm_gateway import gateway, LLMGatewayError
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +45,7 @@ class ParsedChunk:
 class ParseResult:
     """文档解析结果。"""
     chunks: list[ParsedChunk]
-    parse_method: str               # "gemini_vision" | "text_fallback"
+    parse_method: str               # "deepseek" | "deepseek_cached" | "text_fallback"
     page_count: int = 0
     warnings: list[str] = field(default_factory=list)
 
@@ -144,61 +139,33 @@ def _merge_continues(chunks: list[ParsedChunk]) -> list[ParsedChunk]:
 
 
 # ────────────────────────────────────────────────
-# LLM 解析（QWEN-Long via DashScope Files API）
+# LLM 解析（DeepSeek via gateway + 文件哈希缓存）
 # ────────────────────────────────────────────────
-# Note: DashScope Files API (/files upload) is QWEN-specific.
-# The base URL is read from gateway; model is hardcoded "qwen-long"
-# because only DashScope supports this file-upload-based parsing mode.
 
-from .llm_gateway import gateway
-
-_MIME_MAP = {
-    ".pdf":  "application/pdf",
-    ".ppt":  "application/vnd.ms-powerpoint",
-    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    ".doc":  "application/msword",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
+_MAX_CHARS_PER_BATCH = 8000  # 单次 LLM 调用的文本上限
 
 
-def _upload_file_to_qwen(filepath: Path, api_key: str) -> str:
-    """将文件上传到 DashScope Files API，返回 file_id。"""
-    import requests
-
-    mime_type = _MIME_MAP.get(filepath.suffix.lower(), "application/octet-stream")
+def _compute_file_hash(filepath: Path) -> str:
+    """计算文件内容的 SHA-256 哈希。"""
+    sha = hashlib.sha256()
     with open(filepath, "rb") as f:
-        resp = requests.post(
-            f"{gateway.base_url}/files",
-            headers={"Authorization": f"Bearer {api_key}"},
-            files={"file": (filepath.name, f, mime_type)},
-            data={"purpose": "file-extract"},
-            timeout=120,
-        )
-    resp.raise_for_status()
-    return resp.json()["id"]
+        while chunk := f.read(8192):
+            sha.update(chunk)
+    return sha.hexdigest()
 
 
-def _call_qwen_with_file(file_id: str, api_key: str) -> list[dict[str, Any]]:
-    """用已上传的 file_id 调用 qwen-long 解析，返回 chunks 列表。"""
-    import requests
-
-    resp = requests.post(
-        f"{gateway.base_url}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": "qwen-long",
-            "messages": [
-                {"role": "system", "content": f"fileid://{file_id}"},
-                {"role": "user",   "content": PARSE_PROMPT},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 8192,
-            "response_format": {"type": "json_object"},
-        },
-        timeout=180,
+def _parse_text_with_llm(text: str) -> list[dict[str, Any]]:
+    """用 gateway.chat() 对一段文本做语义切块，返回原始 dict 列表。"""
+    resp = gateway.chat(
+        messages=[
+            {"role": "system", "content": PARSE_PROMPT},
+            {"role": "user", "content": text},
+        ],
+        temperature=0.1,
+        response_format={"type": "json_object"},
+        max_tokens=8192,
     )
-    resp.raise_for_status()
-    raw = resp.json()["choices"][0]["message"]["content"].strip()
+    raw = resp.content.strip()
 
     # 去掉可能的 markdown 包装
     if raw.startswith("```"):
@@ -208,20 +175,41 @@ def _call_qwen_with_file(file_id: str, api_key: str) -> list[dict[str, Any]]:
     raw = raw.strip()
 
     result = json.loads(raw)
-    # prompt 要求 {"chunks": [...]}，兼容模型直接返回列表的情况
     if isinstance(result, list):
         return result
     return result.get("chunks") or result.get("items") or []
 
 
-def _parse_with_qwen(filepath: Path, api_key: str) -> list[dict[str, Any]]:
+def _parse_with_deepseek(text: str) -> list[dict[str, Any]]:
     """
-    使用 qwen-long 解析完整 PDF/文档。
-    流程：上传文件 → fileid 注入 → LLM 语义切块。
+    用 DeepSeek 解析课件文本。
+    超大文本自动分片，每片 ≤ _MAX_CHARS_PER_BATCH，结果合并。
     """
-    file_id = _upload_file_to_qwen(filepath, api_key)
-    logger.info(f"文件已上传: {file_id}")
-    return _call_qwen_with_file(file_id, api_key)
+    if len(text) <= _MAX_CHARS_PER_BATCH:
+        return _parse_text_with_llm(text)
+
+    # 按段落边界分片，尽量保持语义完整
+    paragraphs = text.split("\n\n")
+    batches: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for para in paragraphs:
+        if current_len + len(para) > _MAX_CHARS_PER_BATCH and current:
+            batches.append("\n\n".join(current))
+            current = []
+            current_len = 0
+        current.append(para)
+        current_len += len(para) + 2
+    if current:
+        batches.append("\n\n".join(current))
+
+    logger.info(f"文本分 {len(batches)} 片解析")
+    all_chunks: list[dict[str, Any]] = []
+    for i, batch in enumerate(batches):
+        batch_chunks = _parse_text_with_llm(batch)
+        all_chunks.extend(batch_chunks)
+        logger.info(f"  第 {i+1}/{len(batches)} 片: {len(batch_chunks)} chunks")
+    return all_chunks
 
 
 # ────────────────────────────────────────────────
@@ -230,9 +218,8 @@ def _parse_with_qwen(filepath: Path, api_key: str) -> list[dict[str, Any]]:
 
 def _parse_text_fallback(filepath: Path) -> list[ParsedChunk]:
     """
-    当 Gemini 不可用时的 fallback 方案。
+    当 LLM 不可用时的 fallback 方案。
     使用 document_text.extract_text 提取纯文本，按段落切分为 chunks。
-    质量比 Gemini 差（无法理解图表/公式），但总比报错要好。
     """
     text = extract_text(filepath)
     if not text.strip():
@@ -265,17 +252,19 @@ def _parse_text_fallback(filepath: Path) -> list[ParsedChunk]:
 def parse_document(
     filepath: Path,
     *,
-    llm_api_key: str | None = None,
-    large_doc_threshold: int = 50,
+    course_id: str = "",
+    use_cache: bool = True,
 ) -> ParseResult:
     """
     解析文档，返回 ParseResult（包含 chunks、解析方法、警告）。
 
+    缓存策略：SHA-256(file) + course_id 作为缓存键，命中直接返回。
     参数：
-    - llm_api_key: 不传则从环境变量 QWEN_API_KEY 读取
-    - large_doc_threshold: 保留参数（qwen-long 支持整文档，无需分段）
+    - course_id: 课程标识，用于缓存隔离
+    - use_cache: 是否查写缓存（默认 True）
     """
-    api_key = llm_api_key or os.getenv("QWEN_API_KEY")
+    file_hash = _compute_file_hash(filepath)
+    file_size = filepath.stat().st_size
 
     # 尝试读取页数（用于质量检查）
     page_count = 0
@@ -286,11 +275,47 @@ def parse_document(
     except Exception:
         pass
 
-    # ── 路径 1: QWEN-Long（DashScope Files API）──
-    if api_key:
+    # ── 路径 0: 缓存命中 ──
+    if use_cache and gateway.is_configured:
         try:
-            logger.info(f"使用 QWEN-Long 解析 {filepath.name}（{page_count} 页）")
-            raw_chunks = _parse_with_qwen(filepath, api_key)
+            from .sqlite_store import SQLiteStore, default_db_path
+            store = SQLiteStore(default_db_path())
+            cached = store.get_parse_cache(file_hash, course_id)
+            if cached:
+                logger.info(f"缓存命中: {filepath.name} ({file_hash[:12]}...)")
+                chunks: list[ParsedChunk] = []
+                for item in cached:
+                    if not isinstance(item, dict):
+                        continue
+                    chunks.append(ParsedChunk(
+                        topic=item.get("topic", ""),
+                        content=item.get("content", ""),
+                        type=item.get("type", "overview"),
+                        keywords=item.get("keywords") or [],
+                        prerequisites=item.get("prerequisites") or [],
+                        page=item.get("page"),
+                        continues=bool(item.get("continues", False)),
+                    ))
+                chunks = _merge_continues(chunks)
+                warnings = _check_quality(chunks, page_count)
+                return ParseResult(
+                    chunks=chunks,
+                    parse_method="deepseek_cached",
+                    page_count=page_count,
+                    warnings=warnings,
+                )
+        except Exception as exc:
+            logger.debug(f"缓存查询跳过: {exc}")
+
+    # ── 路径 1: DeepSeek 语义解析 ──
+    if gateway.is_configured:
+        try:
+            logger.info(f"使用 DeepSeek 解析 {filepath.name}（{page_count} 页）")
+            text = extract_text(filepath)
+            if not text.strip():
+                raise ValueError("文档无可提取文本")
+
+            raw_chunks = _parse_with_deepseek(text)
 
             chunks: list[ParsedChunk] = []
             for item in raw_chunks:
@@ -311,15 +336,25 @@ def parse_document(
             for w in warnings:
                 logger.warning(f"[质量检查] {filepath.name}: {w}")
 
+            # 写入缓存
+            if use_cache and raw_chunks:
+                try:
+                    from .sqlite_store import SQLiteStore, default_db_path
+                    store = SQLiteStore(default_db_path())
+                    store.set_parse_cache(file_hash, course_id, raw_chunks, file_size)
+                    logger.info(f"缓存已写入: {filepath.name} ({file_hash[:12]}...)")
+                except Exception as exc:
+                    logger.debug(f"缓存写入跳过: {exc}")
+
             return ParseResult(
                 chunks=chunks,
-                parse_method="qwen_long",
+                parse_method="deepseek",
                 page_count=page_count,
                 warnings=warnings,
             )
 
-        except Exception as exc:
-            logger.warning(f"QWEN 解析失败，回退到文本提取: {exc}")
+        except (LLMGatewayError, Exception) as exc:
+            logger.warning(f"DeepSeek 解析失败，回退到文本提取: {exc}")
 
     # ── 路径 2: 文本提取 fallback ──
     logger.info(f"使用文本提取 fallback 解析 {filepath.name}")

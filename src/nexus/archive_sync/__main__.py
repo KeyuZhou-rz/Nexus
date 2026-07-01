@@ -24,15 +24,11 @@ from nexus.archive_sync.reporting import update_failure_queue
 from nexus.models import Task
 from nexus.schemas import ARCHIVE_RESULT_SCHEMA_VERSION
 from nexus.storage import load_tasks, save_tasks
+from nexus.utils import dedupe_tasks
 
 
 def _dedupe(tasks: list[Task]) -> list[Task]:
-    seen: dict[str, Task] = {}
-    for task in tasks:
-        key = task.id or f"{task.source}:{task.title}:{task.due_at}"
-        if key not in seen:
-            seen[key] = task
-    return list(seen.values())
+    return dedupe_tasks(tasks)
 
 
 def main() -> None:

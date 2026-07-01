@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .utils import normalize_topic
+
 
 @dataclass
 class WeakPointCandidate:
@@ -19,13 +21,8 @@ _WEAK_PATTERNS = [
     re.compile(r"(不会|不懂|不理解|搞不清|薄弱)\s*(?P<topic>[\u4e00-\u9fffA-Za-z0-9\-\s]{2,40})"),
 ]
 
-_TOPIC_CLEAN = re.compile(r"[^\u4e00-\u9fffA-Za-z0-9\-\s]")
-
-
 def _normalize_topic(raw: str) -> str:
-    text = _TOPIC_CLEAN.sub(" ", raw or "").strip().lower()
-    text = re.sub(r"\s+", " ", text)
-    return text
+    return normalize_topic(raw)
 
 
 def extract_weak_points(messages: list[dict[str, Any]]) -> list[WeakPointCandidate]:

@@ -95,7 +95,7 @@ class ConceptExtractor:
 
     参数:
     - sqlite_store: SQLiteStore 实例
-    - llm_api_key: QWEN API key（可选，无则跳过 Pass 2/3）
+    - llm_api_key: LLM API key（可选，无则跳过 Pass 2/3）
     """
 
     def __init__(

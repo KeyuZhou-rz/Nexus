@@ -18,15 +18,14 @@ Session 生命周期：
 实现细节：
 - 活跃 session 记录在内存（dict），进程重启后不恢复（设计如此）
 - LLM 分析使用 PROFILE_UPDATE_PROMPT（已定义于 prompts.py）
-- 分析模型：轻量的 Gemini Flash（成本低，session 每天通常只有 1-2 次）
+- 分析模型通过 LLMGateway 统一管理
 - 无 LLM 时 fallback：跳过 profile 更新，仅清理 session 状态
 """
 from __future__ import annotations
 
 import json
 import logging
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -59,7 +58,7 @@ class SessionManager:
     参数：
     - sqlite_store: SQLiteStore 实例
     - profile_manager: UserProfileManager 实例
-    - gemini_api_key: Gemini API key（用于 profile 更新分析）
+    - gemini_api_key: API key（用于 profile 更新分析，回退到 gateway）
     - idle_timeout_minutes: idle 超时分钟数（默认 5 分钟）
     """
 
@@ -210,7 +209,7 @@ class SessionManager:
         无 LLM 可用时返回 None（跳过更新）。
         """
         if not self._api_key:
-            logger.info("无 QWEN_API_KEY，跳过 session LLM 分析")
+            logger.info("无 LLM API key，跳过 session LLM 分析")
             return None
 
         current_profile = self._profile.get()

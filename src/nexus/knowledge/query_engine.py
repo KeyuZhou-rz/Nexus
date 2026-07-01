@@ -1,5 +1,5 @@
 """
-Query Engine — Nexus Phase 3
+Query Engine — Nexus Phase N3
 
 实现两条并行检索路径：
   路径 A（语义搜索）：对每个 expanded query 调用 ChromaDB 向量搜索
@@ -7,24 +7,29 @@ Query Engine — Nexus Phase 3
 
 两路结果合并去重后 rerank，输出 top-3 到 top-5 个最相关 chunks。
 
+查询扩展（N3 优化）：
+  默认走规则扩展（关键词提取 + 概念别名展开），零 LLM 成本。
+  use_llm_expansion=True 时附加 LLM 语义改写（Pro 用户）。
+
 依赖：
-  - google-generativeai（Query Expansion）
   - chromadb（向量检索）
   - nexus.knowledge.store（ChromaKnowledgeStore）
-  - nexus.knowledge.sqlite_store（SQLiteStore，读取 user_profile）
+  - nexus.knowledge.sqlite_store（SQLiteStore）
+  - nexus.knowledge.concept_resolver（ConceptResolver，别名展开）
+  - nexus.knowledge.llm_gateway（可选 LLM 查询扩展）
 """
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .prompts import QUERY_EXPAND_PROMPT
 from .store import ChromaKnowledgeStore
+from .llm_gateway import gateway
 
 logger = logging.getLogger(__name__)
 
@@ -52,76 +57,93 @@ class RetrievalResult:
 
 
 # ────────────────────────────────────────────────
-# Query Expansion（LLM 改写）
+# Query Expansion（规则主路径 + LLM 可选增强）
 # ────────────────────────────────────────────────
 
-from .llm_gateway import gateway
+
+def _expand_query_rule(
+    user_query: str,
+    course_id: str | None = None,
+) -> list[str]:
+    """
+    基于规则生成 2-3 个检索短语（主路径，零 LLM 成本）。
+
+    策略：
+    1. 原始问题（保留完整语义）
+    2. 技术关键词提取（去停用词后的核心术语）
+    3. 概念别名展开（利用 concept_resolver 三级匹配）
+
+    返回去重后的查询列表，最多 3 个。
+    """
+    queries: list[str] = [user_query.strip()]
+
+    # ── 技术关键词提取 ──
+    keywords = _extract_keywords(user_query)
+    if keywords:
+        queries.append(" ".join(keywords))
+
+    # ── 概念别名展开 ──
+    if course_id and keywords:
+        try:
+            from .sqlite_store import SQLiteStore, default_db_path
+            from .concept_resolver import ConceptResolver
+            store = SQLiteStore(default_db_path())
+            resolver = ConceptResolver(store)
+            expanded_terms: list[str] = []
+            for kw in keywords[:3]:
+                result = resolver.resolve(kw, course_id)
+                if result and result.level <= 2:
+                    expanded_terms.append(result.name)
+            if expanded_terms:
+                queries.append(" ".join(expanded_terms))
+        except Exception:
+            pass
+
+    # 去重 + 截断
+    seen: set[str] = set()
+    unique: list[str] = []
+    for q in queries:
+        normalized = q.strip().lower()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique.append(q.strip())
+    return unique[:3]
 
 
 def _expand_query_with_llm(
     user_query: str,
-    api_key: str | None = None,
     course_context: str = "",
     profile_summary: str = "",
 ) -> list[str]:
     """
-    用 LLM 将用户问题改写为 2-3 个检索短语（litellm OpenAI-compatible）。
+    可选 LLM 增强：用 gateway.chat() 将用户问题改写为 2-3 个检索短语。
+    仅在 Pro 用户且 gateway.is_configured 时调用。
     """
-    import litellm
-
     prompt = QUERY_EXPAND_PROMPT.format(
         user_query=user_query,
         course_context=course_context or "未指定课程",
         profile_summary=profile_summary or "无画像信息",
     )
 
-    extra = gateway.litellm_kwargs.copy()
-    if api_key:
-        extra["api_key"] = api_key
-
-    response = litellm.completion(
-        model=gateway.model,
-        **extra,
+    resp = gateway.chat(
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
         max_tokens=256,
         response_format={"type": "json_object"},
     )
-    raw = response.choices[0].message.content.strip()
+    raw = resp.content.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
 
     result = json.loads(raw.strip())
-    # 兼容 {"queries": [...]} 或直接 [...]
     if isinstance(result, list):
         return [str(q).strip() for q in result if str(q).strip()]
     for key in ("queries", "items", "results"):
         if key in result and isinstance(result[key], list):
             return [str(q).strip() for q in result[key] if str(q).strip()]
     return [user_query]
-
-
-def _expand_query_simple(user_query: str) -> list[str]:
-    """
-    无 LLM 时的轻量 fallback：提取技术关键词组合成检索短语。
-    策略：原始问题 + 去停用词版本 + 核心实体短语
-    """
-    # 常见中英文停用词
-    stopwords = {
-        "什么", "是", "的", "了", "吗", "呢", "如何", "怎么", "怎样",
-        "为什么", "请", "帮", "我", "explain", "what", "is", "how",
-        "why", "can", "you", "please", "tell", "me", "about", "the", "a", "an",
-    }
-    words = re.findall(r"[a-zA-Z0-9\u4e00-\u9fff]+", user_query)
-    filtered = [w for w in words if w.lower() not in stopwords and len(w) > 1]
-
-    queries = [user_query]
-    if filtered:
-        # 去停用词后的短语作为第二个查询
-        queries.append(" ".join(filtered))
-    return queries[:3]
 
 
 # ────────────────────────────────────────────────
@@ -140,7 +162,7 @@ def _extract_keywords(user_query: str) -> list[str]:
         "explain", "what", "is", "how", "why", "can", "please", "about",
         "tell", "me", "the", "a", "an", "and", "or", "in", "on", "at", "to", "for",
     }
-    words = re.findall(r"[a-zA-Z0-9\u4e00-\u9fff]+", user_query)
+    words = re.findall(r"[a-zA-Z0-9一-鿿]+", user_query)
     keywords = [
         w for w in words
         if w.lower() not in stopwords and len(w) >= 2
@@ -233,7 +255,7 @@ class QueryEngine:
 
     参数：
     - chroma_dir: ChromaDB 持久化目录
-    - qwen_api_key: 用于 Query Expansion（不传则从环境变量 QWEN_API_KEY 读取）
+    - use_llm_expansion: 是否启用 LLM 查询增强（默认 False，走规则路径）
     - n_semantic: 语义路径每个 expanded query 返回的候选数（默认 5）
     - n_keyword: 关键词路径每次过滤返回的候选数（默认 5）
     - top_k: 最终 rerank 后保留的 chunk 数（默认 5）
@@ -242,13 +264,13 @@ class QueryEngine:
     def __init__(
         self,
         chroma_dir: Path,
-        qwen_api_key: str | None = None,
+        use_llm_expansion: bool = False,
         n_semantic: int = 5,
         n_keyword: int = 5,
         top_k: int = 5,
     ) -> None:
         self._chroma = ChromaKnowledgeStore(chroma_dir, per_course=True)
-        self._api_key = qwen_api_key or os.getenv("QWEN_API_KEY")
+        self.use_llm_expansion = use_llm_expansion
         self.n_semantic = n_semantic
         self.n_keyword = n_keyword
         self.top_k = top_k
@@ -265,24 +287,35 @@ class QueryEngine:
     ) -> list[str]:
         """
         将用户问题扩展为 2-3 个检索短语。
-        有 QWEN API Key 时调用 LLM，否则用轻量规则 fallback。
+        默认走规则路径（零 LLM 成本）；use_llm_expansion=True 时附加 LLM 增强。
         """
-        course_context = course_id or "未指定课程"
+        # ── 主路径：规则扩展（始终执行）──
+        expanded = _expand_query_rule(user_query, course_id)
 
-        if self._api_key:
+        # ── 可选增强：LLM 改写 ──
+        if self.use_llm_expansion and gateway.is_configured:
             try:
-                expanded = _expand_query_with_llm(
+                course_context = course_id or "未指定课程"
+                llm_queries = _expand_query_with_llm(
                     user_query,
-                    api_key=self._api_key,
                     course_context=course_context,
                     profile_summary=profile_summary,
                 )
-                logger.debug(f"Query expansion: {user_query!r} → {expanded}")
-                return expanded
+                # 合并规则结果和 LLM 结果（LLM 在前，语义质量更高）
+                combined = llm_queries + expanded
+                seen: set[str] = set()
+                merged: list[str] = []
+                for q in combined:
+                    n = q.strip().lower()
+                    if n and n not in seen:
+                        seen.add(n)
+                        merged.append(q.strip())
+                expanded = merged[:3]
+                logger.debug(f"Query expansion (rule+LLM): {user_query!r} -> {expanded}")
             except Exception as exc:
-                logger.warning(f"Query expansion 失败，使用 fallback: {exc}")
+                logger.warning(f"LLM query expansion failed, using rule-only: {exc}")
 
-        return _expand_query_simple(user_query)
+        return expanded
 
     # ────────────────────────────────────────────────
     # Dual Retrieval

@@ -106,6 +106,72 @@ class TestSelectExamReminders:
         result = select_exam_reminders([task], window_days=180)
         assert result == []
 
+    # B3: window boundary and cross-year edge cases
+
+    def test_select_exam_at_window_boundary_included(self):
+        """Exam exactly at window_days boundary is included (inclusive)."""
+        window = 180
+        due = datetime.now() + timedelta(days=window)
+        task = _make_task(id="b1", title="Boundary Exam", due_at=due, tags=["exam"])
+        result = select_exam_reminders([task], window_days=window)
+        assert result == [task]
+
+    def test_select_exam_just_beyond_window_excluded(self):
+        """Exam 1 second beyond window_days is excluded."""
+        window = 180
+        due = datetime.now() + timedelta(days=window, seconds=1)
+        task = _make_task(id="b2", title="Just Beyond", due_at=due, tags=["exam"])
+        result = select_exam_reminders([task], window_days=window)
+        assert result == []
+
+    def test_select_exam_due_today_included(self):
+        """Exam due later today is selected (avoid sub-second clock race)."""
+        due = datetime.now() + timedelta(hours=1)
+        task = _make_task(id="b3", title="Today Exam", due_at=due, tags=["exam"])
+        result = select_exam_reminders([task], window_days=180)
+        assert result == [task]
+
+    def test_select_exam_empty_list_no_crash(self):
+        """Empty task list returns empty list, no crash."""
+        result = select_exam_reminders([], window_days=180)
+        assert result == []
+
+    def test_select_exam_custom_window_30(self):
+        """Custom window_days=30 selects near-term exams only."""
+        due_near = datetime.now() + timedelta(days=25)
+        due_far = datetime.now() + timedelta(days=60)
+        t1 = _make_task(id="c1", title="Near Exam", due_at=due_near, tags=["exam"])
+        t2 = _make_task(id="c2", title="Far Exam", due_at=due_far, tags=["exam"])
+        result = select_exam_reminders([t1, t2], window_days=30)
+        assert result == [t1]
+
+    def test_select_exam_cross_year_boundary_included(self):
+        """Exam due next year but within window_days=365 is selected."""
+        window = 365
+        due = datetime.now() + timedelta(days=200)  # ~Jan 2027
+        task = _make_task(id="cy1", title="Spring Final", due_at=due, tags=["exam"])
+        result = select_exam_reminders([task], window_days=window)
+        assert result == [task]
+
+    def test_select_exam_cross_year_boundary_tz_aware(self):
+        """TZ-aware exam crossing year boundary within window is selected."""
+        window = 365
+        tz = timezone(timedelta(hours=8))
+        due = datetime.now(tz=tz) + timedelta(days=300)
+        task = _make_task(id="cy2", title="跨年考试", due_at=due, tags=["exam"])
+        result = select_exam_reminders([task], window_days=window)
+        assert result == [task]
+
+    def test_select_exam_tz_boundary_inclusive(self):
+        """TZ-aware exam exactly at window edge is included."""
+        window = 30
+        tz = timezone(timedelta(hours=8))
+        now_tz = datetime.now(tz=tz)
+        due = now_tz + timedelta(days=window)
+        task = _make_task(id="tzb1", title="TZ Boundary", due_at=due, tags=["exam"])
+        result = select_exam_reminders([task], window_days=window)
+        assert result == [task]
+
 
 # ===================================================================
 # _is_noise
