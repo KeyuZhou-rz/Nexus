@@ -179,6 +179,19 @@ CREATE TABLE IF NOT EXISTS concept_aliases (
     UNIQUE(alias, course_id)
 );
 
+-- ────────────────────────────────────────────────
+-- 文档解析缓存 (Phase N2)
+-- 按文件内容哈希 + 课程 ID 缓存 LLM 解析结果，避免重复文档重复调用 LLM
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS parse_cache (
+    file_hash   TEXT NOT NULL,           -- SHA-256 of file content
+    course_id   TEXT NOT NULL DEFAULT '',
+    chunks_json TEXT NOT NULL,           -- JSON-serialized ParsedChunk[]
+    file_size   INTEGER,                 -- 审计用，不参与缓存键
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (file_hash, course_id)
+);
+
 -- Phase 4 索引
 CREATE INDEX IF NOT EXISTS idx_aliases_course         ON concept_aliases(course_id);
 CREATE INDEX IF NOT EXISTS idx_aliases_concept        ON concept_aliases(concept_id);
@@ -188,3 +201,83 @@ CREATE INDEX IF NOT EXISTS idx_relations_target         ON concept_relations(tar
 CREATE INDEX IF NOT EXISTS idx_chunk_concepts_concept   ON chunk_concepts(concept_id);
 CREATE INDEX IF NOT EXISTS idx_learning_events_concept  ON learning_events(concept_id);
 CREATE INDEX IF NOT EXISTS idx_learning_events_time     ON learning_events(timestamp);
+
+-- ════════════════════════════════════════════════
+-- Phase N: Memory-Layer Enhancement
+-- 知识漏洞扫描 + 冲刺计划 + 考后复盘
+-- ════════════════════════════════════════════════
+
+-- ────────────────────────────────────────────────
+-- 周扫描快照：每次 LLM 扫描生成一份 checkpoint
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS concept_checkpoints (
+    checkpoint_id   TEXT PRIMARY KEY,          -- "{course_id}__{year}-W{week_num}"
+    course_id       TEXT NOT NULL,
+    week_start      TEXT NOT NULL,
+    week_end        TEXT NOT NULL,
+    generated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ────────────────────────────────────────────────
+-- checkpoint 中的单个概念（带自测题）
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS checkpoint_concepts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    checkpoint_id   TEXT NOT NULL,
+    concept_id      TEXT,                      -- 可关联到已有 concepts 表
+    name            TEXT NOT NULL,
+    importance      INTEGER DEFAULT 5,         -- 1-10
+    self_test_q1    TEXT NOT NULL,
+    self_test_q2    TEXT NOT NULL,
+    self_test_q3    TEXT NOT NULL,
+    FOREIGN KEY (checkpoint_id) REFERENCES concept_checkpoints(checkpoint_id) ON DELETE CASCADE
+);
+
+-- ────────────────────────────────────────────────
+-- 概念查询追踪：每次 Q&A 记录涉及概念 + 犹豫信号
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS concept_query_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    concept_id      TEXT,
+    concept_name    TEXT NOT NULL,
+    session_id      TEXT,
+    query_text      TEXT,
+    had_hesitation  INTEGER DEFAULT 0,          -- 0/1
+    timestamp       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ────────────────────────────────────────────────
+-- 考试记录：用户录入的考试元数据
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS exam_records (
+    exam_id         TEXT PRIMARY KEY,           -- "{course_id}__{exam_date}"
+    course_id       TEXT NOT NULL,
+    exam_date       TEXT NOT NULL,
+    chapter_weights TEXT,                       -- JSON: {"ch3": 0.15, ...}
+    user_input      TEXT,                       -- 用户考后反馈
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ────────────────────────────────────────────────
+-- 考后复盘报告：LLM 生成的得失分析
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS exam_retrospectives (
+    retrospective_id TEXT PRIMARY KEY,          -- "retro__{exam_id}"
+    exam_id         TEXT NOT NULL,
+    predicted_weak   TEXT,                      -- JSON: 考前预测的薄弱概念
+    actual_hits      TEXT,                      -- JSON: 实际考到的薄弱概念
+    blind_spots      TEXT,                      -- JSON: 未预料的丢分概念
+    overestimated   TEXT,                      -- JSON: 以为掌握但丢分的概念
+    analysis_text   TEXT,                      -- LLM 生成的完整分析文本
+    retention_hook   TEXT,                      -- 记忆锚点/口诀
+    generated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (exam_id) REFERENCES exam_records(exam_id)
+);
+
+-- Phase N 索引
+CREATE INDEX IF NOT EXISTS idx_checkpoints_course     ON concept_checkpoints(course_id);
+CREATE INDEX IF NOT EXISTS idx_checkpoint_concepts_ck ON checkpoint_concepts(checkpoint_id);
+CREATE INDEX IF NOT EXISTS idx_query_log_concept      ON concept_query_log(concept_id);
+CREATE INDEX IF NOT EXISTS idx_query_log_session      ON concept_query_log(session_id);
+CREATE INDEX IF NOT EXISTS idx_exam_records_course    ON exam_records(course_id);
+CREATE INDEX IF NOT EXISTS idx_retrospectives_exam    ON exam_retrospectives(exam_id);

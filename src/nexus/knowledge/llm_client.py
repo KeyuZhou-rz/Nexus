@@ -7,7 +7,10 @@ litellm 支持 OpenAI / Gemini / Anthropic / Azure 等，一套接口切换模�
 主要功能：
 - chat(): 发送消息列表，返回回答文本
 - 自动记录 interaction_logs（token 用量、使用模型、chunks 引用）
-- 若 litellm 未安装，fallback 到 google-generativeai 直接调用
+
+依赖：litellm 必须已安装（requirements.txt 中的 litellm>=1.40）。
+未安装时 chat() 抛 ModuleNotFoundError，由 QAPipeline.ask() 捕获并降级为
+用户友好的错误消息——没有静默 fallback。
 
 模型配置：通过 LLMGateway 单例读取 (NEXUS_LLM_MODEL / API_KEY / BASE_URL)
 """
@@ -16,7 +19,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from .llm_gateway import gateway
@@ -35,7 +37,7 @@ class LLMOutput:
 
 class KnowledgeLLMClient:
     """
-    模型无关的 LLM 客户端，优先使用 litellm，fallback 到 Gemini 直连。
+    模型无关的 LLM 客户端，使用 litellm 统一调用。
 
     参数：
     - sqlite_store: SQLiteStore 实例，用于记录 interaction_logs
@@ -64,7 +66,7 @@ class KnowledgeLLMClient:
     ) -> LLMOutput:
         """
         发送 messages 列表，返回 LLMOutput。
-        优先使用 litellm，litellm 不可用时 fallback 到 Gemini 直连。
+        使用 litellm.completion 调用 LLM；litellm 未安装时抛 ModuleNotFoundError。
         """
         effective_model = model or self.model
 
@@ -113,7 +115,7 @@ class KnowledgeLLMClient:
         """
         使用 litellm.completion 调用 LLM。
         litellm 自动处理不同 provider 的 API 格式差异。
-        需要预先设置对应 provider 的 API Key 环境变量（如 GEMINI_API_KEY）。
+        API key 通过 LLMGateway 统一读取。
         """
         import litellm  # 延迟导入，安装检测
 

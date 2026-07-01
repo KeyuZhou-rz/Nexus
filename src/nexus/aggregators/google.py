@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Iterable
@@ -10,6 +12,8 @@ from typing import Iterable
 from ..config import default_config
 from ..models import Task
 from .base import Aggregator
+
+logger = logging.getLogger(__name__)
 
 # Permissions we request from the user: Read-only access to Gmail and Calendar.
 SCOPES = [
@@ -26,10 +30,11 @@ def _ensure_google_deps() -> None:
         import google_auth_httplib2  # noqa: F401
     except Exception as exc:  # pragma: no cover - runtime dependency guard
         raise RuntimeError(
-            "Google API dependencies missing in the current Python environment. "
+            "Google API dependencies missing in the current Python environment."
             "Install with: python -m pip install google-api-python-client "
             "google-auth-httplib2 google-auth-oauthlib"
         ) from exc
+
 
 
 def _load_credentials(token_path: Path, client_secret_path: Path):
@@ -73,6 +78,8 @@ class GoogleAggregator(Aggregator):
         credentials_path: str | None = None,
         include_gmail: bool = True,
         include_calendar: bool = True,
+        gmail_max_results: int = 20,
+        gmail_window_days: int = 30,
     ) -> None:
         config = default_config()
         self.credentials_path = (
@@ -82,6 +89,8 @@ class GoogleAggregator(Aggregator):
         self.course_aliases = self._load_course_aliases(config.data_dir)
         self.include_gmail = include_gmail
         self.include_calendar = include_calendar
+        self.gmail_max_results = gmail_max_results
+        self.gmail_window_days = gmail_window_days
 
         if not self.credentials_path or not self.token_path:
             raise RuntimeError("Google credentials or token path not configured.")
@@ -100,62 +109,161 @@ class GoogleAggregator(Aggregator):
         return tasks
 
     def _fetch_gmail(self, gmail) -> Iterable[Task]:
-        """Gets the last 10 unread emails."""
-        response = (
-            gmail.users()
-            .messages()
-            .list(userId="me", labelIds=["UNREAD"], maxResults=10)
-            .execute()
-        )
-        messages = response.get("messages", [])
-        for msg in messages:
-            # Fetch email details (Subject, Sender, Date) without body content for speed.
-            msg_detail = (
-                gmail.users()
-                .messages()
-                .get(userId="me", id=msg["id"], format="metadata", metadataHeaders=["Subject", "From", "Date"])
-                .execute()
-            )
-            headers = {h["name"]: h["value"] for h in msg_detail.get("payload", {}).get("headers", [])}
-            subject = headers.get("Subject", "(no subject)")
-            from_line = headers.get("From", "")
-            title = f"{subject} — {from_line}".strip()
-            snippet = msg_detail.get("snippet")
-            
-            # Try to guess which course this email belongs to.
-            course_from_subject = self._extract_course_from_subject(subject)
-            course = course_from_subject or self._infer_course(subject, from_line)
-            is_course_notice = self._is_course_notification(subject, from_line, course)
-            is_announcement = self._is_brightspace_announcement(subject, from_line)
-            received_at = None
-            internal_date = msg_detail.get("internalDate")
-            if internal_date:
-                try:
-                    received_at = datetime.fromtimestamp(int(internal_date) / 1000, tz=timezone.utc)
-                except Exception:
-                    received_at = None
-            
-            # Add tags for filtering in the UI.
-            tags = ["email", "unread"]
-            if is_course_notice:
-                tags.append("course_notification")
-            else:
-                tags.append("general")
-            if is_announcement:
-                tags.append("announcement")
-            yield Task(
-                id=f"gmail:{msg['id']}",
-                title=title,
-                due_at=None,
-                source="gmail",
-                url=f"https://mail.google.com/mail/u/0/#inbox/{msg['id']}",
-                course=course,
-                status="open",
-                priority=0,
-                tags=tags,
-                snippet=snippet,
-                received_at=received_at,
-            )
+        """E1+E3: Fetch emails with full body (format=full), pagination, and time window."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.gmail_window_days)
+        cutoff_epoch_ms = int(cutoff.timestamp() * 1000)
+
+        fetched = 0
+        page_token = None
+        while fetched < self.gmail_max_results:
+            list_params: dict = {
+                "userId": "me",
+                "labelIds": ["UNREAD"],
+                "maxResults": min(50, self.gmail_max_results - fetched),
+                "q": f"after:{cutoff_epoch_ms // 1000}",
+            }
+            if page_token:
+                list_params["pageToken"] = page_token
+
+            response = gmail.users().messages().list(**list_params).execute()
+            messages = response.get("messages", [])
+
+            for msg in messages:
+                if fetched >= self.gmail_max_results:
+                    break
+                fetched += 1
+
+                # E1: format="full" to get complete message body
+                msg_detail = (
+                    gmail.users()
+                    .messages()
+                    .get(userId="me", id=msg["id"], format="full")
+                    .execute()
+                )
+
+                headers = {h["name"]: h["value"] for h in msg_detail.get("payload", {}).get("headers", [])}
+                subject = headers.get("Subject", "(no subject)")
+                from_line = headers.get("From", "")
+                title = f"{subject} — {from_line}".strip()
+
+                # E1: Decode full email body
+                payload = msg_detail.get("payload", {})
+                body_text = self._decode_email_body(payload)
+
+                # Use decoded body as primary text; fall back to snippet
+                snippet = body_text if body_text else msg_detail.get("snippet", "")
+
+                course_from_subject = self._extract_course_from_subject(subject)
+                course = course_from_subject or self._infer_course(subject, from_line)
+                is_course_notice = self._is_course_notification(subject, from_line, course)
+                is_announcement = self._is_brightspace_announcement(subject, from_line)
+                received_at = None
+                internal_date = msg_detail.get("internalDate")
+                if internal_date:
+                    try:
+                        received_at = datetime.fromtimestamp(int(internal_date) / 1000, tz=timezone.utc)
+                    except Exception:
+                        received_at = None
+
+                tags = ["email", "unread"]
+                if is_course_notice:
+                    tags.append("course_notification")
+                else:
+                    tags.append("general")
+                if is_announcement:
+                    tags.append("announcement")
+
+                task = Task(
+                    id=f"gmail:{msg['id']}",
+                    title=title,
+                    due_at=None,
+                    source="gmail",
+                    url=f"https://mail.google.com/mail/u/0/#inbox/{msg['id']}",
+                    course=course,
+                    status="open",
+                    priority=0,
+                    tags=tags,
+                    snippet=snippet,
+                    received_at=received_at,
+                )
+
+                # E2: LLM structured enrichment (graceful fallback if LLM unavailable)
+                if body_text:
+                    task = self._enrich_task_from_llm(task, subject, body_text)
+
+                yield task
+
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+
+    @staticmethod
+    def _decode_email_body(payload: dict) -> str:
+        """
+        E1: Recursively decode Gmail message payload into plain text.
+
+        Handles:
+        - text/plain → decode base64url directly
+        - text/html → strip HTML tags after decoding
+        - multipart/alternative → prefer text/plain, fall back to text/html
+        - multipart/mixed → collect all text parts
+        """
+        mime_type = payload.get("mimeType", "")
+
+        # Recurse into multipart messages
+        if mime_type.startswith("multipart/"):
+            parts = payload.get("parts", [])
+            text_parts: list[str] = []
+            html_parts: list[str] = []
+            for part in parts:
+                decoded = GoogleAggregator._decode_email_body(part)
+                if not decoded:
+                    continue
+                if part.get("mimeType") == "text/html":
+                    html_parts.append(decoded)
+                else:
+                    text_parts.append(decoded)
+            # Prefer text/plain; fall back to text/html
+            if text_parts:
+                return "\n\n".join(text_parts)
+            if html_parts:
+                return "\n\n".join(html_parts)
+            return ""
+
+        # Single-part: decode body data
+        body = payload.get("body", {})
+        data = body.get("data", "")
+        if not data:
+            return ""
+
+        try:
+            decoded_bytes = base64.urlsafe_b64decode(data)
+            text = decoded_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
+        # Strip HTML if needed
+        if mime_type == "text/html":
+            text = GoogleAggregator._strip_html(text)
+
+        return text.strip()
+
+    @staticmethod
+    def _strip_html(html_text: str) -> str:
+        """E1: Minimal HTML tag stripper — removes tags, decodes entities, collapses whitespace."""
+        # Remove style/script blocks entirely
+        text = re.sub(r"<(style|script)[^>]*>.*?</\1>", " ", html_text, flags=re.DOTALL | re.IGNORECASE)
+        # Replace <br>, <p>, <div>, <li>, <tr> with newlines
+        text = re.sub(r"<(br|p|div|li|tr)[^>]*/?>", "\n", text, flags=re.IGNORECASE)
+        # Remove all other tags
+        text = re.sub(r"<[^>]+>", " ", text)
+        # Decode common HTML entities
+        text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+        text = text.replace("&quot;", '"').replace("&#39;", "'").replace("&nbsp;", " ")
+        # Collapse whitespace
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
     def _fetch_calendar(self, calendar) -> Iterable[Task]:
         """Gets calendar events for the next 7 days."""
@@ -281,3 +389,103 @@ class GoogleAggregator(Aggregator):
             course = match.group("course").strip()
             return course or None
         return None
+
+    # ── E2: LLM Structured Extraction ──────────────────────────────────
+
+    _EXTRACT_STRUCTURED_PROMPT = (
+        "Extract structured academic information from this email.\n"
+        "Return JSON only with these optional fields (omit if not found):\n"
+        "{\n"
+        '  "exam_date": "ISO date or null",\n'
+        '  "deadline": "ISO date or null",\n'
+        '  "action_items": ["action 1", "action 2"],\n'
+        '  "course_hint": "course name or null",\n'
+        '  "priority": "high|medium|low",\n'
+        '  "summary_zh": "one-line Chinese summary"\n'
+        "}\n\n"
+        "Subject: {subject}\n\n"
+        "Body:\n{body_text}"
+    )
+
+    def _extract_structured_fields(
+        self, subject: str, body_text: str
+    ) -> dict:
+        """
+        E2: Use LLM to extract exam dates, deadlines, action items from email body.
+        Falls back to empty dict if LLM is unavailable or fails.
+        """
+        if not body_text or len(body_text) < 20:
+            return {}
+
+        try:
+            from ..knowledge.llm_gateway import gateway
+        except Exception:
+            return {}
+
+        if not gateway.is_configured:
+            return {}
+
+        prompt = self._EXTRACT_STRUCTURED_PROMPT.format(
+            subject=subject,
+            body_text=body_text[:3000],  # cap to prevent token overflow
+        )
+        try:
+            response = gateway.chat(
+                messages=[
+                    {"role": "system", "content": "You are an academic email parser. Return JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=400,
+            )
+            data = json.loads(response.content)
+            if not isinstance(data, dict):
+                return {}
+            return {k: v for k, v in data.items() if v is not None and v != []}
+        except Exception as exc:
+            logger.debug(f"LLM structured extraction skipped: {exc}")
+        return {}
+
+    def _enrich_task_from_llm(self, task: Task, subject: str, body_text: str) -> Task:
+        """
+        E2: Enrich a Task with LLM-extracted structured fields.
+        Modifies task in-place and returns it.
+        """
+        extracted = self._extract_structured_fields(subject, body_text)
+        if not extracted:
+            return task
+
+        # Apply course hint if we don't already have one
+        course_hint = extracted.get("course_hint")
+        if course_hint and not task.course:
+            task.course = str(course_hint)[:50]
+
+        # Apply priority
+        priority_map = {"high": 3, "medium": 1, "low": 0}
+        if "priority" in extracted:
+            task.priority = priority_map.get(str(extracted["priority"]).lower(), 0)
+
+        # Parse exam_date or deadline into due_at
+        date_str = extracted.get("exam_date") or extracted.get("deadline")
+        if date_str and not task.due_at:
+            try:
+                task.due_at = datetime.fromisoformat(str(date_str))
+            except (ValueError, TypeError):
+                pass
+
+        # Prepend Chinese summary to snippet if available
+        summary_zh = extracted.get("summary_zh")
+        if summary_zh and task.snippet:
+            task.snippet = f"[{summary_zh}] {task.snippet}"
+
+        # Add action items as tags
+        action_items = extracted.get("action_items", [])
+        for item in action_items[:3]:
+            if "deadline" in item.lower() or "due" in item.lower():
+                if "deadline" not in task.tags:
+                    task.tags.append("deadline")
+            if "exam" in item.lower():
+                if "exam" not in task.tags:
+                    task.tags.append("exam")
+
+        return task

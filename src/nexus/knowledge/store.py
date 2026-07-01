@@ -24,7 +24,7 @@ def _make_collection_name(course_id: str) -> str:
     # 确保长度合法
     name = name[:63]
     if len(name) < 3:
-        name = name.ljust(3, "_")
+        name = name.ljust(3, "x")
     return name
 
 

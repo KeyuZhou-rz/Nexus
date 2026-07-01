@@ -1,0 +1,11 @@
+[
+  {
+    "kind": "brightspace_ical",
+    "name": "Example Course",
+    "course": "CS-101",
+    "url": "https://brightspace.nyu.edu/d2l/le/calendar/feed/user/feed.ics?token=YOUR_TOKEN_HERE",
+    "enabled": true,
+    "audience": "ui",
+    "mode": "default"
+  }
+]

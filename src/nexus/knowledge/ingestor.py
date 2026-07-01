@@ -24,12 +24,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .concept_extractor import ConceptExtractor
 from .parser import parse_document, ParsedChunk
 from .store import ChromaKnowledgeStore
 from .sqlite_store import SQLiteStore
@@ -114,7 +114,7 @@ class IngestResult:
     course_id: str
     status: str                            # "skipped" | "ingested" | "failed"
     chunks: int = 0
-    parse_method: str = ""                 # "gemini_vision" | "text_fallback"
+    parse_method: str = ""                 # "deepseek" | "deepseek_cached" | "text_fallback"
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -141,7 +141,7 @@ class CourseIngestor:
     参数：
     - db_dir: ChromaDB 持久化目录（通常 data/chroma）
     - sqlite_path: SQLite 数据库文件路径（通常 data/nexus.db）
-    - llm_api_key: 不传则从环境变量 QWEN_API_KEY 读取
+    - llm_api_key: 不传则通过 LLMGateway 读取
     """
 
     def __init__(
@@ -159,6 +159,11 @@ class CourseIngestor:
         )
         # SQLite 存储初始化（自动建表）
         self._sqlite = SQLiteStore(sqlite_path)
+        # Phase 4A: 概念提取器
+        self._concept_extractor = ConceptExtractor(
+            sqlite_store=self._sqlite,
+            llm_api_key=self.llm_api_key,
+        )
 
     # ────────────────────────────────────────────────
     # 单文件 ingest
@@ -219,7 +224,7 @@ class CourseIngestor:
 
         # ── 解析 ──
         try:
-            result = parse_document(filepath, llm_api_key=self.llm_api_key)
+            result = parse_document(filepath)
         except Exception as exc:
             self._sqlite.set_document_status(doc_id, "failed")
             logger.error(f"解析失败 {filepath.name}: {exc}")
@@ -244,8 +249,15 @@ class CourseIngestor:
             course_id=course_id,
             filename=filepath.name,
             lecture_number=lecture_number,
-            parse_model="gemini-2.0-flash" if result.parse_method == "gemini_vision" else "text_fallback",
+            parse_model="deepseek-chat" if result.parse_method in ("deepseek", "deepseek_cached") else "text_fallback",
         )
+
+        # ── Phase 4A: 概念提取 ──
+        chunk_ids_list = [
+            _chunk_id(course_id, filepath.name, i)
+            for i in range(len(result.chunks))
+        ]
+        self._extract_concepts(result.chunks, chunk_ids_list, course_id)
 
         # ── 更新文档状态为 done ──
         self._sqlite.set_document_status(
@@ -258,7 +270,7 @@ class CourseIngestor:
             file_hash=file_hash,
             parse_status="done",
             chunk_count=len(result.chunks),
-            parse_model="gemini-2.0-flash" if result.parse_method == "gemini_vision" else None,
+            parse_model="deepseek-chat" if result.parse_method in ("deepseek", "deepseek_cached") else None,
         )
 
         logger.info(
@@ -323,6 +335,41 @@ class CourseIngestor:
     # 内部方法
     # ────────────────────────────────────────────────
 
+    def _extract_concepts(
+        self,
+        chunks: list[ParsedChunk],
+        chunk_ids: list[str],
+        course_id: str,
+    ) -> dict[str, int]:
+        """
+        Phase 4A: 从解析结果中提取概念和关系，写入知识图谱。
+        整体 try/except — 概念提取失败不影响 ingest 成功。
+        """
+        try:
+            # Pass 1: 规则提取
+            candidates = self._concept_extractor.extract_from_chunks(
+                chunks, chunk_ids, course_id
+            )
+            # Pass 2: LLM 精炼
+            refined, relations = self._concept_extractor.refine_with_llm(
+                candidates, chunks, chunk_ids, course_id
+            )
+            # Pass 3: 跨课程关系发现
+            cross_relations = self._concept_extractor.discover_cross_course_relations(
+                refined, course_id
+            )
+            relations.extend(cross_relations)
+            # 持久化
+            stats = self._concept_extractor.persist(refined, relations)
+            logger.info(
+                f"概念图谱: {stats['concepts']} concepts, "
+                f"{stats['relations']} relations ({course_id})"
+            )
+            return stats
+        except Exception as exc:
+            logger.warning(f"概念提取失败（非致命）: {exc}")
+            return {"concepts": 0, "relations": 0}
+
     def _cleanup_old_data(self, doc_id: str, course_id: str, filename: str) -> None:
         """
         清理旧版本数据（文件 hash 不一致时触发）。
@@ -334,15 +381,13 @@ class CourseIngestor:
             return
 
         # 从 SQLite 获取旧 chunk 的 ID 列表（用于 ChromaDB 删除）
-        # 此时利用 SQLiteStore 底层连接查询
-        import sqlite3
-        conn = sqlite3.connect(str(self._sqlite.db_path))
-        conn.execute("PRAGMA foreign_keys=ON")
-        rows = conn.execute(
-            "SELECT chunk_id FROM chunks WHERE document_id=?", (doc_id,)
-        ).fetchall()
+        # 复用 SQLiteStore 的连接工厂以保证 WAL/foreign_keys 一致
+        from .sqlite_store import connect
+        with connect(self._sqlite.db_path) as conn:
+            rows = conn.execute(
+                "SELECT chunk_id FROM chunks WHERE document_id=?", (doc_id,)
+            ).fetchall()
         old_chunk_ids = [r[0] for r in rows]
-        conn.close()
 
         # 先删 ChromaDB 向量（SQLite CASCADE 删除在 delete_document 时触发）
         if old_chunk_ids:

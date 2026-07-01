@@ -1,18 +1,18 @@
 """
-nexus ingest CLI — Phase 3 版本
+nexus ingest CLI
 
-默认使用 CourseIngestor（Gemini Vision + 双写 ChromaDB+SQLite）。
-传入 --legacy 回退到 Phase 2 的纯文本切片路径。
+默认使用 CourseIngestor（DeepSeek 语义解析 + 双写 ChromaDB+SQLite）。
+传入 --legacy 回退到纯文本切片路径。
 
 用法示例：
-  # Phase 3（推荐）：LLM 语义解析，自动读取 GEMINI_API_KEY
-  python -m nexus.ingest_cli --input slides/ --course-id CS202_OS
+  # LLM 语义解析，通过 LLMGateway 读取 API key
+  python -m nexus.cli.ingest --input slides/ --course-id CS202_OS
 
   # 强制重新解析（忽略 hash 缓存）
-  python -m nexus.ingest_cli --input Lecture07.pdf --course-id CS202_OS --force
+  python -m nexus.cli.ingest --input Lecture07.pdf --course-id CS202_OS --force
 
   # Legacy 模式（固定大小文本切片，不走 LLM）
-  python -m nexus.ingest_cli --input notes.md --course-id CS202_OS --legacy
+  python -m nexus.cli.ingest --input notes.md --course-id CS202_OS --legacy
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _collect_files(input_path: Path, extensions: tuple[str, ...]) -> list[Path]:
 
 
 def _run_phase3(args: argparse.Namespace) -> None:
-    """Phase 3 ingest 路径：CourseIngestor（Gemini Vision + 双写）。"""
+    """ingest 路径：CourseIngestor（DeepSeek 语义解析 + 双写）。"""
     from ..knowledge.ingestor import CourseIngestor
 
     files = _collect_files(Path(args.input), PHASE3_EXTENSIONS)

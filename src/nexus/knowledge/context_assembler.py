@@ -1,22 +1,28 @@
 """
-Context Assembler — Nexus Phase 3
+Context Assembler — Nexus Phase 3 + Phase 4A
 
-将 retrieved chunks + user profile + user query 组装成发送给 LLM 的 messages 列表。
+将 retrieved chunks + user profile + graph context + user query
+组装成发送给 LLM 的 messages 列表。
 
 组装结构：
   system: 角色设定 + 教学风格（根据 user_profile.learning_style）
-  user:   [课件内容块] + [用户画像相关提示] + [用户问题]
+  user:   [课件内容块] + [知识图谱关联] + [用户画像提示] + [用户问题]
 
 设计原则：
 - 课件 context 总长度控制在 ~3000 tokens（约 6000 中文字符）以内
 - User Profile 只注入与当前问题相关的字段，不全量注入
-- 每个 chunk 标注来源：(来源：{source_file}, Lecture {N}, 第 {page} 页)
+- Graph Context 只在有跨课程关联或重要前置知识时注入
 - Prompt 完全可测试：输入确定 → 输出确定（无随机性）
 """
 from __future__ import annotations
 
-from .prompts import QA_SYSTEM_PROMPT, TEACHING_STYLE
+from typing import TYPE_CHECKING
+
+from .prompts import QA_SYSTEM_PROMPT, SOCRATIC_GUIDANCE, TEACHING_STYLE
 from .query_engine import RetrievedChunk
+
+if TYPE_CHECKING:
+    from .graph_retriever import GraphContext
 
 
 # 课件 context block 的近似字符上限（控制 prompt token 总量）
@@ -127,11 +133,79 @@ def _build_profile_snippet(
     return "\n".join(snippets) if snippets else None
 
 
+def _build_graph_context_block(graph_context: GraphContext) -> str | None:
+    """
+    将图谱遍历结果渲染为 prompt 块。
+
+    格式示例:
+    [知识图谱关联]
+    前置知识: 进程管理 (CS202_OS) — 理解死锁需要先掌握进程调度
+    跨课程类比: 事务隔离 (CS305_DB) 类似于 互斥锁 (CS202_OS) — 都通过排他性访问防止并发冲突
+
+    只在有实际内容时返回非 None。
+    """
+    if not graph_context or not graph_context.has_content:
+        return None
+
+    lines: list[str] = []
+
+    # 前置知识
+    for p in graph_context.prerequisites:
+        line = f"前置知识: {p.name} ({p.course_id})"
+        if p.definition:
+            line += f" — {p.definition}"
+        lines.append(line)
+
+    # 跨课程关联（最高价值）
+    for c in graph_context.related_cross_course:
+        _type_labels = {
+            "analogous_to": "类似于",
+            "prerequisite": "是前置知识",
+            "extends": "扩展了",
+            "applied_in": "应用于",
+        }
+        label = _type_labels.get(c.relation_type, "关联")
+        line = f"跨课程关联: {c.name} ({c.course_id}) {label} {c.relation_to}"
+        if c.definition:
+            line += f" — {c.definition}"
+        lines.append(line)
+
+    # 同课程相关概念（补充上下文）
+    if graph_context.related_same_course:
+        names = [f"{r.name} ({r.relation_type})" for r in graph_context.related_same_course[:3]]
+        lines.append(f"相关概念: {', '.join(names)}")
+
+    return "\n".join(lines) if lines else None
+
+
+def _pick_socratic_level(mastery_map: dict[str, float] | None) -> str:
+    """
+    U1: Select Socratic guidance level based on the lowest mastery among
+    concepts relevant to the current question.
+
+    Strategy: we care most about the concept the student struggles with most.
+    If no mastery data is available, use 'unknown'.
+    """
+    if not mastery_map:
+        return "unknown"
+
+    lowest = min(mastery_map.values())
+    if lowest < 0.3:
+        return "critical"
+    if lowest < 0.5:
+        return "decaying"
+    if lowest < 0.8:
+        return "stable"
+    return "mastered"
+
+
 def assemble_messages(
     user_query: str,
     chunks: list[RetrievedChunk],
     profile: dict | None = None,
     course_id: str | None = None,
+    graph_context: GraphContext | None = None,
+    mastery_map: dict[str, float] | None = None,
 ) -> list[dict[str, str]]:
     """
     将所有输入组装成 OpenAI 格式的 messages 列表。
@@ -147,18 +221,24 @@ def assemble_messages(
     - chunks: QueryEngine.retrieve() 返回的 RetrievalResult.chunks
     - profile: user_profile 字典（可选，不传则不注入 profile 信息）
     - course_id: 当前课程（用于 system prompt 语境说明）
+    - graph_context: GraphRetriever 返回的图谱上下文（Phase 4A，可选）
+    - mastery_map: {concept_name: mastery} 映射（U1，可选）
     """
     profile = profile or {}
 
-    # ── System Prompt：角色 + 教学风格 ──
+    # ── System Prompt：角色 + 教学风格 + 苏格拉底策略 ──
     learning_style = profile.get("learning_style", "default")
     style_instruction = TEACHING_STYLE.get(learning_style, TEACHING_STYLE["default"])
+    socratic_level = _pick_socratic_level(mastery_map)
+    socratic_instruction = SOCRATIC_GUIDANCE.get(socratic_level, SOCRATIC_GUIDANCE["unknown"])
     system_content = QA_SYSTEM_PROMPT.format(
-        teaching_style_instruction=style_instruction
+        teaching_style_instruction=style_instruction,
+        socratic_instruction=socratic_instruction,
     )
 
-    # ── User Message：课件内容 + Profile 提示 + 用户问题 ──
+    # ── User Message：课件内容 + 图谱关联 + Profile 提示 + 用户问题 ──
     context_block = _build_context_block(chunks)
+    graph_block = _build_graph_context_block(graph_context)
     profile_snippet = _build_profile_snippet(profile, user_query) if profile else None
 
     # 组装 user message 各部分
@@ -167,15 +247,19 @@ def assemble_messages(
     # 1. 课件内容块（最重要）
     user_parts.append(f"[课件内容]\n{context_block}")
 
-    # 2. 用户画像相关提示（可选，只有相关时才注入）
+    # 2. 知识图谱关联（Phase 4A，可选）
+    if graph_block:
+        user_parts.append(f"[知识图谱关联]\n{graph_block}")
+
+    # 3. 用户画像相关提示（可选，只有相关时才注入）
     if profile_snippet:
         user_parts.append(f"[教学提示]\n{profile_snippet}")
 
-    # 3. 课程上下文（如果知道当前课程）
+    # 4. 课程上下文（如果知道当前课程）
     if course_id:
         user_parts.append(f"[当前课程] {course_id}")
 
-    # 4. 用户的实际问题
+    # 5. 用户的实际问题
     user_parts.append(f"[学生提问]\n{user_query}")
 
     user_content = "\n\n".join(user_parts)

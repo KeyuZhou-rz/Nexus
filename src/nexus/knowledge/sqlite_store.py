@@ -33,6 +33,17 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def connect(db_path: Path) -> sqlite3.Connection:
+    """公开的连接工厂，供模块外（qa_pipeline/ingestor 等）复用同一套 PRAGMA 配置。"""
+    return _connect(db_path)
+
+
+def default_db_path() -> Path:
+    """默认 SQLite 路径，基于 config.data_dir 推导绝对路径，避免硬编码相对路径。"""
+    from ..config import default_config
+    return default_config().data_dir / "nexus.db"
+
+
 class SQLiteStore:
     """
     Nexus 结构化元数据存储。
@@ -570,6 +581,58 @@ class SQLiteStore:
             ).fetchone()
             return dict(row) if row else None
 
+    # ════════════════════════════════════════════════
+    # Phase N2: parse_cache 表
+    # ════════════════════════════════════════════════
+
+    def get_parse_cache(
+        self, file_hash: str, course_id: str = ""
+    ) -> list[dict[str, Any]] | None:
+        """查询缓存的解析结果，未命中返回 None。"""
+        with _connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT chunks_json FROM parse_cache WHERE file_hash = ? AND course_id = ?",
+                (file_hash, course_id),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                data = json.loads(row["chunks_json"])
+                if isinstance(data, list):
+                    return data
+            except (json.JSONDecodeError, TypeError):
+                return None
+            return None
+
+    def set_parse_cache(
+        self,
+        file_hash: str,
+        course_id: str,
+        chunks: list[dict[str, Any]],
+        file_size: int = 0,
+    ) -> None:
+        """缓存解析结果（INSERT OR REPLACE，幂等）。"""
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO parse_cache
+                    (file_hash, course_id, chunks_json, file_size)
+                VALUES (?, ?, ?, ?)
+                """,
+                (file_hash, course_id, json.dumps(chunks, ensure_ascii=False), file_size),
+            )
+
+    def clear_parse_cache(self, course_id: str | None = None) -> int:
+        """清除解析缓存。不传 course_id 则全部清除。返回删除行数。"""
+        with _connect(self.db_path) as conn:
+            if course_id:
+                cursor = conn.execute(
+                    "DELETE FROM parse_cache WHERE course_id = ?", (course_id,)
+                )
+            else:
+                cursor = conn.execute("DELETE FROM parse_cache")
+            return cursor.rowcount
+
     def get_all_mastery(
         self, course_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -594,3 +657,192 @@ class SQLiteStore:
                     """
                 ).fetchall()
             return [dict(r) for r in rows]
+
+    # ════════════════════════════════════════════════
+    # Phase N: Memory-Layer Enhancement
+    # ════════════════════════════════════════════════
+
+    # ── Concept Checkpoints ────────────────────────
+
+    def upsert_checkpoint(
+        self, checkpoint_id: str, course_id: str,
+        week_start: str, week_end: str,
+    ) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO concept_checkpoints
+                   (checkpoint_id, course_id, week_start, week_end)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(checkpoint_id) DO UPDATE SET
+                   week_start=excluded.week_start,
+                   week_end=excluded.week_end,
+                   generated_at=CURRENT_TIMESTAMP""",
+                (checkpoint_id, course_id, week_start, week_end),
+            )
+
+    def upsert_checkpoint_concept(
+        self, checkpoint_id: str, concept_id: str | None,
+        name: str, importance: int,
+        q1: str, q2: str, q3: str,
+    ) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO checkpoint_concepts
+                   (checkpoint_id, concept_id, name, importance,
+                    self_test_q1, self_test_q2, self_test_q3)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (checkpoint_id, concept_id, name, importance, q1, q2, q3),
+            )
+
+    def get_latest_checkpoint(
+        self, course_id: str,
+    ) -> dict[str, Any] | None:
+        with _connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT * FROM concept_checkpoints
+                   WHERE course_id = ?
+                   ORDER BY generated_at DESC LIMIT 1""",
+                (course_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_checkpoint_concepts(
+        self, checkpoint_id: str,
+    ) -> list[dict[str, Any]]:
+        with _connect(self.db_path) as conn:
+            rows = conn.execute(
+                """SELECT * FROM checkpoint_concepts
+                   WHERE checkpoint_id = ?
+                   ORDER BY importance DESC""",
+                (checkpoint_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # ── Concept Query Log ──────────────────────────
+
+    def log_concept_query(
+        self, concept_id: str | None, concept_name: str,
+        session_id: str | None, query_text: str,
+        had_hesitation: int = 0,
+    ) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO concept_query_log
+                   (concept_id, concept_name, session_id,
+                    query_text, had_hesitation)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (concept_id, concept_name, session_id,
+                 query_text, had_hesitation),
+            )
+
+    def get_concept_query_stats(
+        self, concept_id: str, since_days: int = 14,
+    ) -> dict[str, int]:
+        with _connect(self.db_path) as conn:
+            total = conn.execute(
+                """SELECT COUNT(*) FROM concept_query_log
+                   WHERE concept_id = ?
+                   AND timestamp >= datetime('now', ?)""",
+                (concept_id, f'-{since_days} days'),
+            ).fetchone()[0]
+            hesitations = conn.execute(
+                """SELECT COUNT(*) FROM concept_query_log
+                   WHERE concept_id = ? AND had_hesitation = 1
+                   AND timestamp >= datetime('now', ?)""",
+                (concept_id, f'-{since_days} days'),
+            ).fetchone()[0]
+            return {"total_queries": total, "hesitation_count": hesitations}
+
+    # ── Exam Records ───────────────────────────────
+
+    def upsert_exam_record(
+        self, exam_id: str, course_id: str, exam_date: str,
+        chapter_weights: str | None = None,
+        user_input: str | None = None,
+    ) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO exam_records
+                   (exam_id, course_id, exam_date,
+                    chapter_weights, user_input)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(exam_id) DO UPDATE SET
+                   chapter_weights=excluded.chapter_weights,
+                   user_input=excluded.user_input""",
+                (exam_id, course_id, exam_date,
+                 chapter_weights, user_input),
+            )
+
+    def get_exam_record(self, exam_id: str) -> dict[str, Any] | None:
+        with _connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT * FROM exam_records WHERE exam_id = ?",
+                (exam_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_exams_for_course(
+        self, course_id: str,
+    ) -> list[dict[str, Any]]:
+        with _connect(self.db_path) as conn:
+            rows = conn.execute(
+                """SELECT * FROM exam_records
+                   WHERE course_id = ?
+                   ORDER BY exam_date DESC""",
+                (course_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # ── Exam Retrospectives ────────────────────────
+
+    def upsert_retrospective(
+        self, retrospective_id: str, exam_id: str,
+        predicted_weak: str | None = None,
+        actual_hits: str | None = None,
+        blind_spots: str | None = None,
+        overestimated: str | None = None,
+        analysis_text: str | None = None,
+        retention_hook: str | None = None,
+    ) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO exam_retrospectives
+                   (retrospective_id, exam_id, predicted_weak,
+                    actual_hits, blind_spots, overestimated,
+                    analysis_text, retention_hook)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(retrospective_id) DO UPDATE SET
+                   predicted_weak=excluded.predicted_weak,
+                   actual_hits=excluded.actual_hits,
+                   blind_spots=excluded.blind_spots,
+                   overestimated=excluded.overestimated,
+                   analysis_text=excluded.analysis_text,
+                   retention_hook=excluded.retention_hook,
+                   generated_at=CURRENT_TIMESTAMP""",
+                (retrospective_id, exam_id, predicted_weak,
+                 actual_hits, blind_spots, overestimated,
+                 analysis_text, retention_hook),
+            )
+
+    def get_retrospective(
+        self, retrospective_id: str,
+    ) -> dict[str, Any] | None:
+        with _connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT * FROM exam_retrospectives
+                   WHERE retrospective_id = ?""",
+                (retrospective_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_retrospective_for_exam(
+        self, exam_id: str,
+    ) -> dict[str, Any] | None:
+        with _connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT * FROM exam_retrospectives
+                   WHERE exam_id = ?
+                   ORDER BY generated_at DESC LIMIT 1""",
+                (exam_id,),
+            ).fetchone()
+            return dict(row) if row else None
