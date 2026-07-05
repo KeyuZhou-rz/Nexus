@@ -16,7 +16,9 @@ Session 生命周期：
   end_session(session_id) → LLM 分析 → UserProfileManager.apply_patch()
 
 实现细节：
-- 活跃 session 记录在内存（dict），进程重启后不恢复（设计如此）
+- 活跃 session 持久化在 SQLite（active_sessions 表），进程重启后可恢复
+  （修复：原先存内存 dict，重启即丢，idle/end_session 触发的 profile 更新
+  可能永远不会发生）
 - LLM 分析使用 PROFILE_UPDATE_PROMPT（已定义于 prompts.py）
 - 分析模型通过 LLMGateway 统一管理
 - 无 LLM 时 fallback：跳过 profile 更新，仅清理 session 状态
@@ -74,8 +76,32 @@ class SessionManager:
         self._api_key = gemini_api_key or gateway.api_key
         self._idle_timeout = timedelta(minutes=idle_timeout_minutes)
 
-        # 内存中的活跃 session 表，key=session_id
-        self._sessions: dict[str, SessionState] = {}
+    # ────────────────────────────────────────────────
+    # 内部：SQLite <-> SessionState 转换
+    # ────────────────────────────────────────────────
+
+    def _load_state(self, session_id: str) -> SessionState | None:
+        row = self._store.get_session(session_id)
+        if row is None:
+            return None
+        return SessionState(
+            session_id=row["session_id"],
+            started_at=datetime.fromisoformat(row["started_at"]),
+            last_active=datetime.fromisoformat(row["last_active"]),
+            course_id=row["course_id"],
+            interaction_count=row["interaction_count"] or 0,
+            ended=bool(row["ended"]),
+        )
+
+    def _save_state(self, state: SessionState) -> None:
+        self._store.upsert_session(
+            session_id=state.session_id,
+            started_at=state.started_at.isoformat(),
+            last_active=state.last_active.isoformat(),
+            course_id=state.course_id,
+            interaction_count=state.interaction_count,
+            ended=state.ended,
+        )
 
     # ────────────────────────────────────────────────
     # Session 生命周期
@@ -90,9 +116,10 @@ class SessionManager:
         注册一个新 session。
         如果 session_id 已存在（重入），返回现有状态。
         """
-        if session_id in self._sessions:
-            state = self._sessions[session_id]
+        state = self._load_state(session_id)
+        if state is not None:
             state.last_active = datetime.now()
+            self._save_state(state)
             return state
 
         state = SessionState(
@@ -101,7 +128,7 @@ class SessionManager:
             last_active=datetime.now(),
             course_id=course_id,
         )
-        self._sessions[session_id] = state
+        self._save_state(state)
         logger.info(f"Session started: {session_id} (course={course_id})")
         return state
 
@@ -114,22 +141,23 @@ class SessionManager:
         记录本 session 有新活动（QAPipeline.ask() 完成后调用）。
         更新 last_active 时间，用于 idle timeout 检测。
         """
-        if session_id not in self._sessions:
+        state = self._load_state(session_id)
+        if state is None:
             self.start_session(session_id, course_id)
             return
 
-        state = self._sessions[session_id]
         state.last_active = datetime.now()
         state.interaction_count += 1
         if course_id and not state.course_id:
             state.course_id = course_id
+        self._save_state(state)
 
     def is_idle(self, session_id: str) -> bool:
         """
         检查 session 是否超过 idle timeout（可由外部定时任务调用）。
         未注册的 session 视为已结束（idle=True）。
         """
-        state = self._sessions.get(session_id)
+        state = self._load_state(session_id)
         if state is None or state.ended:
             return True
         return (datetime.now() - state.last_active) >= self._idle_timeout
@@ -143,23 +171,26 @@ class SessionManager:
         2. 构建对话摘要（transcript）
         3. 调用 LLM 分析，输出 profile patch
         4. 原子应用 patch 到 UserProfileManager
-        5. 清理内存状态
+        5. 清理 session 持久化状态（删除 active_sessions 行）
 
         返回：patch 应用结果的摘要 dict
         """
-        state = self._sessions.get(session_id)
+        state = self._load_state(session_id)
         if state is None:
             return {"status": "not_found", "session_id": session_id}
         if state.ended:
             return {"status": "already_ended", "session_id": session_id}
 
+        # 先标记 ended 并落盘，防止 idle 轮询与显式调用重入时重复分析
         state.ended = True
+        self._save_state(state)
+
         logs = self._store.get_session_logs(session_id)
 
         # 少于 2 轮问答时不分析（数据太少，LLM 分析价值低）
         if len(logs) < 2:
             logger.info(f"Session {session_id} 交互太少（{len(logs)} 条），跳过 profile 更新")
-            del self._sessions[session_id]
+            self._store.delete_session(session_id)
             return {"status": "skipped", "reason": "too_few_interactions", "count": len(logs)}
 
         logger.info(f"Session {session_id} 结束，开始分析 {len(logs)} 条交互记录")
@@ -172,12 +203,14 @@ class SessionManager:
 
         # ── 应用 patch ──
         if patch:
-            result = self._profile.apply_patch(patch)
+            result = self._profile.apply_patch(
+                patch, course_id=state.course_id, session_id=session_id
+            )
             logger.info(f"Profile 已更新: {result['applied']} | {result.get('notes', '')}")
         else:
             result = {"applied": "0 changes", "details": [], "notes": "LLM 分析跳过"}
 
-        del self._sessions[session_id]
+        self._store.delete_session(session_id)
         return {
             "status": "completed",
             "session_id": session_id,
@@ -192,7 +225,8 @@ class SessionManager:
         返回：本次结束的 session_id 列表。
         """
         ended: list[str] = []
-        for session_id in list(self._sessions.keys()):
+        for row in self._store.get_active_sessions():
+            session_id = row["session_id"]
             if self.is_idle(session_id):
                 logger.info(f"Session {session_id} idle 超时，自动结束")
                 self.end_session(session_id)
