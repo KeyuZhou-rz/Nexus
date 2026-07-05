@@ -227,7 +227,7 @@ class SprintPlanner:
             else:
                 rationale = f"继续推进。进度条不会自己走，还有 {num_days - day_idx - 1} 天，别松懈。"
 
-            minutes = min(120, int(daily_hours * 60 * 0.75))  # 75% of available time for focused study
+            minutes = self._estimate_minutes(day_concepts, daily_hours)
             daily_plans.append({
                 "day": day_idx + 1,
                 "date": (today + timedelta(days=day_idx)).strftime("%Y-%m-%d"),
@@ -336,6 +336,26 @@ class SprintPlanner:
     # ── Helpers ──────────────────────────────────────────────────
 
     @staticmethod
+    def _estimate_minutes(
+        day_concepts: list[tuple[float, "_SprintConcept"]],
+        daily_hours: float,
+    ) -> int:
+        """
+        当天预计学习时长：随当天分配的概念数量 + 平均掌握度差距（越弱的概念
+        需要越多时间）伸缩，而不是固定按 daily_hours 的 75%（与概念数量/
+        难度无关，冲刺后期概念变少时明显估多了）。
+        始终封顶在当天实际可用时间（daily_hours*60）内。
+        """
+        available = max(1, int(daily_hours * 60))
+        if not day_concepts:
+            return int(available * 0.5)
+
+        avg_gap = sum(1.0 - c.mastery for _, c in day_concepts) / len(day_concepts)
+        per_concept_minutes = 10 + 15 * avg_gap  # 10~25 分钟/概念，取决于掌握度差距
+        raw = per_concept_minutes * len(day_concepts)
+        return max(20, min(available, int(raw)))
+
+    @staticmethod
     def _guess_chapter(concept: dict) -> str | None:
         """尝试从概念数据推断章节标识。"""
         topic = concept.get("topic", "")
@@ -343,9 +363,10 @@ class SprintPlanner:
         lecture = concept.get("lecture_number")
         text = f"{topic} {name}".lower()
 
-        # Try to extract chapter pattern like "ch3", "chapter 3", "lecture 3"
+        # 匹配 "ch3" / "chapter 3" 以及 lecture/lec/unit/week 等常见命名，
+        # 统一归到同一个 "chN" 章节桶（与 lecture_number 字段的映射方式一致）。
         import re
-        m = re.search(r'ch(?:apter)?[\s._-]*(\d+)', text)
+        m = re.search(r'(?:ch(?:apter)?|lecture|lec|unit|week)[\s._-]*(\d+)', text)
         if m:
             return f"ch{m.group(1)}"
         if lecture is not None:

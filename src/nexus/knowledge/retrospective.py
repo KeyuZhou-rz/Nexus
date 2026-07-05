@@ -98,12 +98,15 @@ class ExamRetrospective:
             )
 
         # Get predicted weak concepts (pre-exam snapshot)
+        # 这是系统在考前的真实、客观预测——命中率必须对照它来算，
+        # 不能让 LLM 在同一次调用里既定义"预测"又给自己打命中分（自评）。
         snapshots = self._temporal.get_all_mastery(course_id)
         weak_snaps = [
             s for s in snapshots
             if s.urgency in ("critical", "decaying")
         ]
         weak_snaps.sort(key=lambda s: s.current_mastery)
+        predicted_weak_names = [s.concept_name for s in weak_snaps[:15]]
         predicted_weak = [
             f"{s.concept_name} (掌握度 {s.current_mastery*100:.0f}%, "
             f"最后复习 {s.days_since_review:.0f} 天前, urgency={s.urgency})"
@@ -131,7 +134,6 @@ class ExamRetrospective:
         except Exception as exc:
             logger.warning(f"Retrospective LLM call failed: {exc}")
             data = {
-                "predicted_weak": [s.concept_name for s in weak_snaps[:15]],
                 "actual_hits": [],
                 "blind_spots": [],
                 "overestimated": [],
@@ -139,13 +141,21 @@ class ExamRetrospective:
                 "retention_hook": "",
             }
 
+        # 客观命中率：只认 predicted_weak_names（系统考前真实预测）里真实存在的
+        # 概念名，过滤掉 LLM 可能虚构出的、预测列表之外的 "hit"（大小写/空白不敏感）。
+        predicted_set = {n.strip().lower() for n in predicted_weak_names}
+        actual_hits = [
+            h for h in (data.get("actual_hits") or [])
+            if isinstance(h, str) and h.strip().lower() in predicted_set
+        ]
+
         # Persist
         retrospective_id = f"retro__{exam_id}"
         self._store.upsert_retrospective(
             retrospective_id=retrospective_id,
             exam_id=exam_id,
-            predicted_weak=json.dumps(data.get("predicted_weak", []), ensure_ascii=False),
-            actual_hits=json.dumps(data.get("actual_hits", []), ensure_ascii=False),
+            predicted_weak=json.dumps(predicted_weak_names, ensure_ascii=False),
+            actual_hits=json.dumps(actual_hits, ensure_ascii=False),
             blind_spots=json.dumps(data.get("blind_spots", []), ensure_ascii=False),
             overestimated=json.dumps(data.get("overestimated", []), ensure_ascii=False),
             analysis_text=data.get("analysis_text", ""),
@@ -153,8 +163,8 @@ class ExamRetrospective:
         )
 
         # Build full result
-        n_predicted = len(data.get("predicted_weak", []))
-        n_hit = len(data.get("actual_hits", []))
+        n_predicted = len(predicted_weak_names)
+        n_hit = len(actual_hits)
         hit_rate = f"{n_hit}/{n_predicted}" if n_predicted > 0 else "N/A"
 
         logger.info(f"Retrospective generated: {retrospective_id} (hit rate: {hit_rate})")
@@ -164,8 +174,8 @@ class ExamRetrospective:
             "exam_id": exam_id,
             "course_id": course_id,
             "exam_date": exam_date,
-            "predicted_weak": data.get("predicted_weak", []),
-            "actual_hits": data.get("actual_hits", []),
+            "predicted_weak": predicted_weak_names,
+            "actual_hits": actual_hits,
             "blind_spots": data.get("blind_spots", []),
             "overestimated": data.get("overestimated", []),
             "analysis_text": data.get("analysis_text", ""),

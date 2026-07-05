@@ -42,11 +42,17 @@ class TestPickSocraticLevel:
     def test_empty_map_returns_unknown(self):
         assert _pick_socratic_level({}) == "unknown"
 
-    def test_critical_when_lowest_below_30(self):
-        assert _pick_socratic_level({"deadlock": 0.15, "mutex": 0.9}) == "critical"
+    def test_critical_when_single_concept_below_30(self):
+        assert _pick_socratic_level({"deadlock": 0.15}) == "critical"
 
-    def test_decaying_when_lowest_between_30_and_50(self):
-        assert _pick_socratic_level({"deadlock": 0.35, "mutex": 0.9}) == "decaying"
+    def test_critical_when_average_below_30(self):
+        assert _pick_socratic_level({"deadlock": 0.1, "mutex": 0.2}) == "critical"
+
+    def test_decaying_when_single_concept_between_30_and_50(self):
+        assert _pick_socratic_level({"deadlock": 0.35}) == "decaying"
+
+    def test_decaying_when_average_between_30_and_50(self):
+        assert _pick_socratic_level({"deadlock": 0.3, "mutex": 0.5}) == "decaying"
 
     def test_decaying_at_boundary_30(self):
         assert _pick_socratic_level({"deadlock": 0.30}) == "decaying"
@@ -63,13 +69,15 @@ class TestPickSocraticLevel:
     def test_mastered_at_boundary_80(self):
         assert _pick_socratic_level({"deadlock": 0.80}) == "mastered"
 
-    def test_lowest_wins_multiple_concepts(self):
-        # mutex=0.15 should drive "critical" even though deadlock is mastered
+    def test_average_not_dominated_by_single_weak_concept(self):
+        # A single weak "mutex" (0.15) among two well-mastered concepts used
+        # to force "critical" via min(). Average reflects the overall
+        # relevant-concept mastery instead: (0.95+0.15+0.6)/3 ≈ 0.567 -> "stable".
         assert _pick_socratic_level({
             "deadlock": 0.95,
             "mutex": 0.15,
             "scheduling": 0.6,
-        }) == "critical"
+        }) == "stable"
 
 
 # ── tests: SOCRATIC_GUIDANCE content ────────────────────────────────
