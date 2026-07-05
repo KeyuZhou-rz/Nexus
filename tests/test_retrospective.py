@@ -11,6 +11,7 @@ import pytest
 
 from nexus.knowledge.retrospective import ExamRetrospective
 from nexus.knowledge.sqlite_store import SQLiteStore
+from nexus.knowledge.temporal_memory import TemporalMemory
 
 
 @pytest.fixture
@@ -47,6 +48,35 @@ def tmp_store():
     db_path.unlink(missing_ok=True)
 
 
+@pytest.fixture
+def hit_rate_store(tmp_path):
+    """
+    A store dedicated to hit_rate tests, where mastery is set via
+    TemporalMemory.record_event() *at fixture-creation time* instead of
+    hardcoded past ISO timestamps — so which concept lands in "predicted weak"
+    doesn't drift with wall-clock decay between when the fixture was written
+    and when the test actually runs (last_reviewed ≈ now for both concepts).
+    """
+    db_path = tmp_path / "retro_hit_rate.db"
+    store = SQLiteStore(db_path)
+    with sqlite3.connect(str(db_path)) as conn:
+        for cid, name in [
+            ("cs202_os__deadlock", "Deadlock"),
+            ("cs202_os__virtual_memory", "Virtual Memory"),
+        ]:
+            conn.execute(
+                "INSERT INTO concepts (concept_id, name, course_id) VALUES (?, ?, ?)",
+                (cid, name, "CS202_OS"),
+            )
+
+    temporal = TemporalMemory(store)
+    for _ in range(6):
+        temporal.record_event("cs202_os__deadlock", "correct_answer")  # -> mastered
+    temporal.record_event("cs202_os__virtual_memory", "struggled")  # -> critical
+
+    return store
+
+
 class TestRecordExam:
     """Tests for record_exam()."""
 
@@ -77,32 +107,59 @@ class TestRecordExam:
 class TestGenerateRetrospective:
     """Tests for generate_retrospective()."""
 
-    def test_generate_with_mocked_llm(self, tmp_store):
-        """generate_retrospective should persist LLM analysis."""
-        retro = ExamRetrospective(tmp_store)
+    def test_generate_with_mocked_llm(self, hit_rate_store):
+        """generate_retrospective should persist LLM analysis, with predicted_weak
+        coming from the system's own pre-exam TemporalMemory snapshot (Deadlock
+        was reinforced to "mastered", so only Virtual Memory is predicted weak)."""
+        retro = ExamRetrospective(hit_rate_store)
         exam_id = retro.record_exam("CS202_OS", "2026-07-15")
 
         fake_response = MagicMock()
         fake_response.content = json.dumps({
-            "predicted_weak": ["Virtual Memory"],
-            "actual_hits": ["Deadlock"],
+            "actual_hits": ["Virtual Memory"],
             "blind_spots": ["Process Scheduling"],
-            "overestimated": ["Virtual Memory"],
-            "analysis_text": "你考前担心的Virtual Memory并没有考，但Deadlock确实出现了。盲点Process Scheduling需要重视。",
-            "retention_hook": "死锁四条件：互斥占有不剥夺，循环等待——'互占不夺循环等'",
+            "overestimated": [],
+            "analysis_text": "你考前担心的Virtual Memory确实考到了，说明预测准确。",
+            "retention_hook": "虚拟内存三件套：分页分段加TLB",
+        })
+
+        with patch("nexus.knowledge.llm_gateway.gateway.chat", return_value=fake_response):
+            result = retro.generate_retrospective(exam_id, "虚拟内存考了大题")
+
+        assert result["course_id"] == "CS202_OS"
+        # predicted_weak is system-computed, not echoed back by the LLM
+        assert result["predicted_weak"] == ["Virtual Memory"]
+        assert result["actual_hits"] == ["Virtual Memory"]
+        assert "Process Scheduling" in result["blind_spots"]
+        assert len(result["analysis_text"]) > 0
+        assert len(result["retention_hook"]) > 0
+        assert result["hit_rate"] == "1/1"
+
+    def test_hallucinated_hit_outside_prediction_does_not_inflate_hit_rate(self, hit_rate_store):
+        """If the LLM claims a 'hit' on a concept that was never in the system's
+        real pre-exam prediction, it must be filtered out rather than counted —
+        this is the fix for the old self-eval bug (predicted/actual both LLM-made
+        in the same call, so a hallucinated hit used to count as 1/1 accuracy)."""
+        retro = ExamRetrospective(hit_rate_store)
+        exam_id = retro.record_exam("CS202_OS", "2026-07-15")
+
+        fake_response = MagicMock()
+        fake_response.content = json.dumps({
+            # Deadlock was reinforced to "mastered" in the fixture — it was
+            # never actually predicted weak, so this "hit" is a hallucination.
+            "actual_hits": ["Deadlock"],
+            "blind_spots": [],
+            "overestimated": [],
+            "analysis_text": "占位分析文本。",
+            "retention_hook": "",
         })
 
         with patch("nexus.knowledge.llm_gateway.gateway.chat", return_value=fake_response):
             result = retro.generate_retrospective(exam_id, "死锁考了大题")
 
-        assert result["course_id"] == "CS202_OS"
-        assert "Deadlock" in result["actual_hits"]
-        assert "Virtual Memory" in result["predicted_weak"]
-        assert "Process Scheduling" in result["blind_spots"]
-        assert "Virtual Memory" in result["overestimated"]
-        assert len(result["analysis_text"]) > 0
-        assert len(result["retention_hook"]) > 0
-        assert result["hit_rate"] == "1/1"
+        assert result["predicted_weak"] == ["Virtual Memory"]
+        assert result["actual_hits"] == []
+        assert result["hit_rate"] == "0/1"
 
 
 class TestListExams:

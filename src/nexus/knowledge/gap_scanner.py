@@ -183,22 +183,31 @@ class GapScanner:
             else:
                 mastery = 0.0
 
+            # 每个 concept 最多查询 2 次 query stats（14 天窗口 + 3 天窗口），
+            # 复用结果算 hesitation_boost / recency_boost / 输出字段，
+            # 避免同一个 (cid, since_days) 重复查 3-4 次冗余 SQL。
+            stats_14 = (
+                self._store.get_concept_query_stats(cid, since_days=14)
+                if cid else {"total_queries": 0, "hesitation_count": 0}
+            )
+            stats_3 = (
+                self._store.get_concept_query_stats(cid, since_days=3)
+                if cid else {"total_queries": 0, "hesitation_count": 0}
+            )
+
             # Hesitation boost
             hesitation_boost = 1.0
-            if cid:
-                stats = self._store.get_concept_query_stats(cid, since_days=14)
-                total_q = stats["total_queries"]
-                hes_q = stats["hesitation_count"]
-                if total_q > 0:
-                    hes_rate = hes_q / total_q
-                    hesitation_boost = 1.0 + 0.3 * hes_rate
+            total_q = stats_14["total_queries"]
+            hes_q = stats_14["hesitation_count"]
+            if total_q > 0:
+                hes_rate = hes_q / total_q
+                hesitation_boost = 1.0 + 0.3 * hes_rate
 
-            # Recency boost
+            # Recency boost：近期完全没被查询过的概念（被忽视）才更紧急，
+            # 而不是查得越勤越紧急（原逻辑语义反直觉）。
             recency_boost = 1.0
-            if cid:
-                stats = self._store.get_concept_query_stats(cid, since_days=3)
-                if stats["total_queries"] > 0:
-                    recency_boost = 1.0 + 0.2  # recently queried → slightly more urgent
+            if cid and stats_3["total_queries"] == 0:
+                recency_boost = 1.2
 
             # Composite score
             importance_norm = importance / 10.0  # normalize to 0.1-1.0
@@ -210,14 +219,8 @@ class GapScanner:
                 "importance": importance,
                 "mastery": round(mastery, 3),
                 "weakness_score": round(weakness_score, 3),
-                "hesitation_count": (
-                    self._store.get_concept_query_stats(cid, since_days=14)["hesitation_count"]
-                    if cid else 0
-                ),
-                "total_queries": (
-                    self._store.get_concept_query_stats(cid, since_days=14)["total_queries"]
-                    if cid else 0
-                ),
+                "hesitation_count": stats_14["hesitation_count"],
+                "total_queries": stats_14["total_queries"],
             })
 
         ranked.sort(key=lambda x: -x["weakness_score"])

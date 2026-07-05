@@ -180,21 +180,24 @@ def _build_graph_context_block(graph_context: GraphContext) -> str | None:
 
 def _pick_socratic_level(mastery_map: dict[str, float] | None) -> str:
     """
-    U1: Select Socratic guidance level based on the lowest mastery among
+    U1: Select Socratic guidance level based on the *average* mastery among
     concepts relevant to the current question.
 
-    Strategy: we care most about the concept the student struggles with most.
+    Previously used min(), so a single weak concept among several otherwise
+    well-mastered ones would drag the whole turn's teaching style down to
+    "critical" — average better reflects the overall relevant-concept mastery
+    without letting one outlier dominate.
     If no mastery data is available, use 'unknown'.
     """
     if not mastery_map:
         return "unknown"
 
-    lowest = min(mastery_map.values())
-    if lowest < 0.3:
+    avg = sum(mastery_map.values()) / len(mastery_map)
+    if avg < 0.3:
         return "critical"
-    if lowest < 0.5:
+    if avg < 0.5:
         return "decaying"
-    if lowest < 0.8:
+    if avg < 0.8:
         return "stable"
     return "mastered"
 

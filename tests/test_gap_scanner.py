@@ -136,3 +136,62 @@ class TestGapScannerWeaknessRanking:
         # Just verify pattern, not exact match (time-sensitive)
         assert f"{now.year}-W" in expected_prefix
         assert expected_prefix.startswith("CS202_OS__")
+
+    def _seed_checkpoint(self, store, concept_id="cs202_os__deadlock", name="Deadlock"):
+        store.upsert_checkpoint("CS202_OS__2026-W01", "CS202_OS", "2026-01-01", "2026-01-07")
+        store.upsert_checkpoint_concept(
+            checkpoint_id="CS202_OS__2026-W01",
+            concept_id=concept_id,
+            name=name,
+            importance=8,
+            q1="q1", q2="q2", q3="q3",
+        )
+        return "CS202_OS__2026-W01"
+
+    def test_get_concept_query_stats_called_at_most_twice_per_concept(self, tmp_store):
+        """Regression test for the redundant-SQL bug: compute_weakness_ranking
+        used to call get_concept_query_stats(cid, 14) three times and
+        (cid, 3) once per concept (4 total). It must now call it exactly
+        once per (cid, since_days) combination -> 2 calls for one concept."""
+        checkpoint_id = self._seed_checkpoint(tmp_store)
+        scanner = GapScanner(tmp_store)
+
+        real_stats = tmp_store.get_concept_query_stats
+        calls: list[tuple] = []
+
+        def _spy(concept_id, since_days=14):
+            calls.append((concept_id, since_days))
+            return real_stats(concept_id, since_days=since_days)
+
+        with patch.object(tmp_store, "get_concept_query_stats", side_effect=_spy):
+            scanner.compute_weakness_ranking("CS202_OS", checkpoint_id)
+
+        assert len(calls) == 2
+        assert set(calls) == {("cs202_os__deadlock", 14), ("cs202_os__deadlock", 3)}
+
+    def test_recency_boost_favors_neglected_concept_not_recently_queried(self, tmp_store):
+        """Fix: a concept queried recently (last 3 days) should NOT get an
+        extra urgency boost over one that hasn't been touched recently --
+        the old code did the opposite (recently-queried => more "urgent"),
+        which is backwards: an untouched-in-3-days concept is the neglected,
+        more urgent one."""
+        checkpoint_id = self._seed_checkpoint(
+            tmp_store, concept_id="cs202_os__virtual_memory", name="Virtual Memory"
+        )
+        # Log a query for this concept *today* (within the 3-day recency window).
+        tmp_store.log_concept_query(
+            concept_id="cs202_os__virtual_memory",
+            concept_name="Virtual Memory",
+            session_id="s1",
+            query_text="what is virtual memory",
+            had_hesitation=0,
+        )
+
+        scanner = GapScanner(tmp_store)
+        ranked = scanner.compute_weakness_ranking("CS202_OS", checkpoint_id)
+        assert len(ranked) == 1
+        # mastery=0.0 (no concept_mastery row), importance=8 -> base score without boosts:
+        # importance_norm(0.8) * (1-mastery)(1.0) * hesitation_boost(1.0) = 0.8
+        # Recently queried -> recency_boost must stay 1.0 (not the old 1.2), so
+        # the composite score must equal the un-boosted base, not be inflated.
+        assert ranked[0]["weakness_score"] == pytest.approx(0.8)
