@@ -209,6 +209,51 @@ class SQLiteStore:
             )
 
     # ────────────────────────────────────────────────
+    # active_sessions 表操作（Session 状态持久化）
+    # ────────────────────────────────────────────────
+
+    def get_session(self, session_id: str) -> dict[str, Any] | None:
+        """读取单个 session 状态，不存在返回 None。"""
+        with _connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT * FROM active_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def upsert_session(
+        self,
+        session_id: str,
+        started_at: str,
+        last_active: str,
+        course_id: str | None,
+        interaction_count: int,
+        ended: bool,
+    ) -> None:
+        """插入或覆盖单个 session 状态（整体替换）。"""
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO active_sessions
+                    (session_id, started_at, last_active, course_id, interaction_count, ended)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (session_id, started_at, last_active, course_id, interaction_count, int(ended)),
+            )
+
+    def delete_session(self, session_id: str) -> None:
+        """删除 session 状态（session 结束后清理，防止表无限增长）。"""
+        with _connect(self.db_path) as conn:
+            conn.execute("DELETE FROM active_sessions WHERE session_id=?", (session_id,))
+
+    def get_active_sessions(self) -> list[dict[str, Any]]:
+        """获取所有未结束（ended=0）的 session，供 idle 超时轮询使用。"""
+        with _connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM active_sessions WHERE ended=0"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # ────────────────────────────────────────────────
     # interaction_logs 表操作
     # ────────────────────────────────────────────────
 

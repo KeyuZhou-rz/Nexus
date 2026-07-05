@@ -75,6 +75,20 @@ CREATE TABLE IF NOT EXISTS sync_metadata (
 );
 
 -- ────────────────────────────────────────────────
+-- 活跃 Session 状态持久化
+-- 修复：原先只存内存 dict，Streamlit/进程重启即丢失，idle/end_session
+-- 触发的 profile 更新因此可能永远不会发生。现在落盘，session 结束后删除行。
+-- ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS active_sessions (
+    session_id         TEXT PRIMARY KEY,
+    started_at         TIMESTAMP NOT NULL,
+    last_active        TIMESTAMP NOT NULL,
+    course_id          TEXT,
+    interaction_count  INTEGER DEFAULT 0,
+    ended              INTEGER DEFAULT 0      -- 0/1，见 session_manager.py 说明
+);
+
+-- ────────────────────────────────────────────────
 -- 索引：加速常用查询路径
 -- ────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_chunks_course    ON chunks(course_id);

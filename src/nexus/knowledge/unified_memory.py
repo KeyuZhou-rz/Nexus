@@ -30,8 +30,8 @@ class UnifiedMemoryReader:
 
     def __init__(self, store: SQLiteStore) -> None:
         self._store = store
-        self._profile_mgr = UserProfileManager(store)
         self._temporal = TemporalMemory(store)
+        self._profile_mgr = UserProfileManager(store, temporal_memory=self._temporal)
 
     def get_weak_points(self) -> list[str]:
         """从 user_profile 获取弱项概念名列表（归一化小写）。"""

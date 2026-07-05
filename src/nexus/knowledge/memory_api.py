@@ -125,7 +125,7 @@ class MemoryAPI:
     def __init__(self, store: SQLiteStore) -> None:
         self._store = store
         self._temporal = TemporalMemory(store)
-        self._profile = UserProfileManager(store)
+        self._profile = UserProfileManager(store, temporal_memory=self._temporal)
         self._planner = StudyPlanner(store)
         self._reader = UnifiedMemoryReader(store)
 
