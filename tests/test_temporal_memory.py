@@ -94,6 +94,19 @@ def test_get_all_mastery(tmp_path):
     assert by_id["os__deadlock"].current_mastery > by_id["os__mutex"].current_mastery
 
 
+def test_get_all_mastery_exposes_initial_mastery(tmp_path):
+    """initial_mastery must be exposed so the forgetting-curve chart can plot
+    each concept's own un-decayed starting point instead of double-decaying
+    an already-decayed current_mastery."""
+    store, mem = _setup(tmp_path)
+
+    mem.record_event("os__deadlock", "correct_answer")
+    snap = mem.get_all_mastery()[0]
+
+    assert snap.initial_mastery == 0.15
+    assert snap.current_mastery <= snap.initial_mastery
+
+
 def test_get_all_mastery_filter_by_course(tmp_path):
     store, mem = _setup(tmp_path)
     store.upsert_concept("db__txn", "Transaction", "DB")

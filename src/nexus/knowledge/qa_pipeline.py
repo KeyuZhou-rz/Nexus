@@ -28,6 +28,7 @@ QA Pipeline — Nexus Phase 3 端到端问答入口（含 Week 3 扩展）
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -36,8 +37,10 @@ from pathlib import Path
 from typing import Any
 
 from .context_assembler import assemble_messages, estimate_tokens
+from .concept_resolver import ConceptResolver
 from .graph_retriever import GraphRetriever
 from .llm_client import KnowledgeLLMClient, LLMOutput
+from .prompts import MASTERY_CLASSIFY_PROMPT
 from .query_engine import QueryEngine, RetrievedChunk, RetrievalResult
 from .session_manager import SessionManager
 from .sqlite_store import SQLiteStore, connect
@@ -46,6 +49,8 @@ from .temporal_memory import TemporalMemory
 from .user_profile import UserProfileManager
 
 logger = logging.getLogger(__name__)
+
+_VALID_MASTERY_EVENTS = {"correct_answer", "struggled", "reviewed", "forgot"}
 
 
 # ────────────────────────────────────────────────
@@ -300,7 +305,15 @@ class QAPipeline:
         self._sqlite_path = sqlite_path
         self._tasks_path = tasks_path
 
-        self._profile_mgr = UserProfileManager(self._sqlite)
+        # Phase 4B unify: TemporalMemory 是唯一权威掌握度源，UserProfileManager
+        # 的 weak_points/mastered 从这里派生，不再各自为政。
+        self._temporal_memory = TemporalMemory(sqlite_store=self._sqlite)
+        self._concept_resolver = ConceptResolver(self._sqlite)
+        self._profile_mgr = UserProfileManager(
+            self._sqlite,
+            temporal_memory=self._temporal_memory,
+            concept_resolver=self._concept_resolver,
+        )
         self._session_mgr = SessionManager(
             sqlite_store=self._sqlite,
             profile_manager=self._profile_mgr,
@@ -316,7 +329,6 @@ class QAPipeline:
         )
         # Phase 4: Knowledge Graph
         self._graph_retriever = GraphRetriever(sqlite_store=self._sqlite)
-        self._temporal_memory = TemporalMemory(sqlite_store=self._sqlite)
 
     # ────────────────────────────────────────────────
     # 主问答入口
@@ -480,6 +492,8 @@ class QAPipeline:
                 self._update_concept_mastery(
                     chunk_ids=chunk_ids,
                     session_id=session_id,
+                    user_query=user_query,
+                    response_summary=output.content,
                 )
             except Exception as exc:
                 logger.debug(f"Mastery update skipped: {exc}")
@@ -558,6 +572,8 @@ class QAPipeline:
                 "urgency": s.urgency,
                 "days_since_review": round(s.days_since_review, 1),
                 "review_count": s.review_count,
+                "decay_rate": s.decay_rate,
+                "initial_mastery": s.initial_mastery,
             }
             for s in snapshots
         ]
@@ -582,23 +598,78 @@ class QAPipeline:
         self,
         chunk_ids: list[str],
         session_id: str,
+        user_query: str,
+        response_summary: str,
     ) -> None:
         """
-        Phase 4B: 从本次 Q&A 涉及的 chunks 推断涉及概念，记录 'reviewed' 事件。
-        保守策略：默认记为 "reviewed"，未来可通过 LLM 分类提升精度。
+        Phase 4B: 从本次 Q&A 涉及的 chunks 推断涉及概念，用 LLM 分类事件类型
+        (correct_answer/struggled/reviewed/forgot) 后记录。LLM 分类失败时
+        回退为 "reviewed"，保证掌握度更新不中断。
         """
         concept_rows = self._sqlite.get_concepts_for_chunks(chunk_ids)
-        seen = set()
+        seen: dict[str, str] = {}
         for row in concept_rows:
             cid = row["concept_id"]
-            if cid in seen:
+            name = row.get("name", "")
+            if cid in seen or not name:
                 continue
-            seen.add(cid)
+            seen[cid] = name
+
+        if not seen:
+            return
+
+        event_by_concept = self._classify_mastery_events(
+            user_query=user_query,
+            response_summary=response_summary,
+            concept_names=list(seen.values()),
+        )
+
+        for cid, name in seen.items():
+            event_type = event_by_concept.get(name, "reviewed")
+            if event_type not in _VALID_MASTERY_EVENTS:
+                event_type = "reviewed"
             self._temporal_memory.record_event(
                 concept_id=cid,
-                event_type="reviewed",
+                event_type=event_type,
                 session_id=session_id,
             )
+
+    def _classify_mastery_events(
+        self,
+        user_query: str,
+        response_summary: str,
+        concept_names: list[str],
+    ) -> dict[str, str]:
+        """
+        调用 MASTERY_CLASSIFY_PROMPT，返回 {concept_name: event_type}。
+        LLM 调用或解析失败时返回空 dict，调用方回退为 "reviewed"。
+        """
+        try:
+            from .llm_gateway import gateway
+
+            prompt = MASTERY_CLASSIFY_PROMPT.format(
+                user_query=user_query,
+                response_summary=response_summary[:500],
+                concepts=", ".join(concept_names),
+            )
+            output = gateway.chat(
+                messages=[
+                    {"role": "system", "content": "你是一个学习状态分析助手。返回 JSON only。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+                response_format={"type": "json_object"},
+            )
+            data = json.loads(output.content)
+            events = data.get("events", [])
+            return {
+                e["concept"]: e["type"]
+                for e in events
+                if isinstance(e, dict) and e.get("concept") and e.get("type")
+            }
+        except Exception as exc:
+            logger.debug(f"Mastery classification failed, falling back to reviewed: {exc}")
+            return {}
 
 
 # ────────────────────────────────────────────────

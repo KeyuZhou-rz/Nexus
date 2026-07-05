@@ -44,6 +44,7 @@ class MasterySnapshot:
     review_count: int
     streak: int
     urgency: str                # critical | decaying | stable | mastered
+    initial_mastery: float = 0.0  # 最近一次复习后的起始掌握度（未衰减）
 
     @staticmethod
     def classify_urgency(mastery: float) -> str:
@@ -141,6 +142,7 @@ class TemporalMemory:
             review_count=count,
             streak=streak,
             urgency=MasterySnapshot.classify_urgency(initial),
+            initial_mastery=initial,
         )
 
     def get_mastery(self, concept_id: str) -> float:
@@ -176,6 +178,7 @@ class TemporalMemory:
                 review_count=r["review_count"],
                 streak=r["streak"],
                 urgency=MasterySnapshot.classify_urgency(current),
+                initial_mastery=r["initial_mastery"],
             ))
         return snapshots
 

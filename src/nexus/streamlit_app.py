@@ -1454,6 +1454,8 @@ with tab_progress:
                         "urgency": s.urgency,
                         "days_since_review": round(s.days_since_review, 1),
                         "review_count": s.review_count,
+                        "decay_rate": s.decay_rate,
+                        "initial_mastery": s.initial_mastery,
                     }
                     for s in _snapshots
                 ]
@@ -1465,9 +1467,9 @@ with tab_progress:
                 ]
                 _progress_data_ok = True
             except Exception:
-                st.info("No mastery data yet. Use the Study Assistant to build your learning profile.")
-    else:
-        st.info("No mastery data yet. Use the Study Assistant to build your learning profile.")
+                st.warning("Failed to load mastery data from the database. Learning Progress will be unavailable this session.")
+        else:
+            st.info("No mastery data yet. Use the Study Assistant to build your learning profile.")
 
     if _mastery_list:
         # ── Course filter ──
@@ -1536,7 +1538,10 @@ with tab_progress:
 
         # ── Forgetting Curve (simulated) ──
         st.markdown("### Forgetting Curve (Ebbinghaus Simulation)")
-        st.caption("Shows predicted decay for the 3 lowest-mastery concepts over 30 days if not reviewed.")
+        st.caption(
+            "Modeled decay since each concept was last reviewed, using its own "
+            "initial mastery and decay rate: mastery(t) = initial_mastery · e^(-decay_rate · t)."
+        )
 
         _decaying_for_curve = sorted(
             _filtered, key=lambda m: m.get("mastery", 1)
@@ -1546,9 +1551,8 @@ with tab_progress:
             _curve_data: dict[str, list] = {"day": list(range(0, 31))}
             for _dc in _decaying_for_curve:
                 _name = _dc.get("name", "unknown")[:20]
-                _m0 = _dc.get("mastery", 0.3)
-                # Ebbinghaus: mastery(t) = m0 * exp(-0.3 * t)
-                _decay_rate = 0.3
+                _m0 = _dc.get("initial_mastery", _dc.get("mastery", 0.3))
+                _decay_rate = _dc.get("decay_rate", 0.3)
                 _values = [_m0 * _math.exp(-_decay_rate * d) for d in range(0, 31)]
                 _curve_data[_name] = _values
             st.line_chart(_curve_data, x="day", use_container_width=True)
