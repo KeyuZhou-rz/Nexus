@@ -96,6 +96,8 @@ CREATE INDEX IF NOT EXISTS idx_chunks_lecture   ON chunks(course_id, lecture_num
 CREATE INDEX IF NOT EXISTS idx_chunks_type      ON chunks(type);
 CREATE INDEX IF NOT EXISTS idx_logs_session     ON interaction_logs(session_id);
 CREATE INDEX IF NOT EXISTS idx_logs_course      ON interaction_logs(course_id);
+CREATE INDEX IF NOT EXISTS idx_logs_session_time ON interaction_logs(session_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_logs_course_time  ON interaction_logs(course_id, timestamp);
 
 -- ════════════════════════════════════════════════
 -- Phase 4: Knowledge Graph — 概念图谱 + 时间记忆
@@ -215,6 +217,7 @@ CREATE INDEX IF NOT EXISTS idx_relations_target         ON concept_relations(tar
 CREATE INDEX IF NOT EXISTS idx_chunk_concepts_concept   ON chunk_concepts(concept_id);
 CREATE INDEX IF NOT EXISTS idx_learning_events_concept  ON learning_events(concept_id);
 CREATE INDEX IF NOT EXISTS idx_learning_events_time     ON learning_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_learning_events_concept_time ON learning_events(concept_id, timestamp);
 
 -- ════════════════════════════════════════════════
 -- Phase N: Memory-Layer Enhancement
@@ -291,7 +294,9 @@ CREATE TABLE IF NOT EXISTS exam_retrospectives (
 -- Phase N 索引
 CREATE INDEX IF NOT EXISTS idx_checkpoints_course     ON concept_checkpoints(course_id);
 CREATE INDEX IF NOT EXISTS idx_checkpoint_concepts_ck ON checkpoint_concepts(checkpoint_id);
+CREATE INDEX IF NOT EXISTS idx_checkpoint_concepts_importance ON checkpoint_concepts(checkpoint_id, importance);
 CREATE INDEX IF NOT EXISTS idx_query_log_concept      ON concept_query_log(concept_id);
 CREATE INDEX IF NOT EXISTS idx_query_log_session      ON concept_query_log(session_id);
+CREATE INDEX IF NOT EXISTS idx_query_log_concept_time ON concept_query_log(concept_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_exam_records_course    ON exam_records(course_id);
 CREATE INDEX IF NOT EXISTS idx_retrospectives_exam    ON exam_retrospectives(exam_id);

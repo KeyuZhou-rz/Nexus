@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import Any
 
 
+class CourseCollectionNotFoundError(LookupError):
+    """Raised when a requested course has no indexed Chroma collection."""
+
+
 def _make_collection_name(course_id: str) -> str:
     """
     将 course_id 转换为合法的 ChromaDB collection 名称。
@@ -95,6 +99,55 @@ class ChromaKnowledgeStore:
             },
         )
 
+    def get_course_collection(self, course_id: str):
+        """Return an existing course collection without creating an empty one."""
+        name = _make_collection_name(course_id)
+        try:
+            collection = self._client.get_collection(
+                name=name,
+                embedding_function=self._default_ef,
+            )
+        except Exception as exc:
+            raise CourseCollectionNotFoundError(
+                f"No indexed collection found for course {course_id!r}"
+            ) from exc
+
+        indexed_course = (collection.metadata or {}).get("course_id")
+        if indexed_course and indexed_course != course_id:
+            raise CourseCollectionNotFoundError(
+                f"Collection name collision for course {course_id!r}"
+            )
+        return collection
+
+    def _course_collections(self) -> list[Any]:
+        """List indexed per-course collections, excluding legacy/default collections."""
+        collections: list[Any] = []
+        for listed in self._client.list_collections():
+            collection = listed
+            if not hasattr(collection, "query"):
+                name = listed if isinstance(listed, str) else listed.name
+                collection = self._client.get_collection(
+                    name=name,
+                    embedding_function=self._default_ef,
+                )
+            if (getattr(collection, "metadata", None) or {}).get("course_id"):
+                collections.append(collection)
+        return collections
+
+    def _collection_for_write(self, course_id: str | None):
+        if self._per_course:
+            if not course_id:
+                raise ValueError("course_id is required when writing in per-course mode")
+            return self.get_or_create_course_collection(course_id)
+        return self.collection
+
+    def _collections_for_read(self, course_id: str | None) -> list[Any]:
+        if not self._per_course:
+            return [self.collection]
+        if course_id:
+            return [self.get_course_collection(course_id)]
+        return self._course_collections()
+
     def delete_course_collection(self, course_id: str) -> None:
         """
         删除课程 collection（学期结束清理，或文件重新 ingest 前的强制重置）。
@@ -128,11 +181,7 @@ class ChromaKnowledgeStore:
         if not ids:
             return
 
-        coll = (
-            self.get_or_create_course_collection(course_id)
-            if self._per_course and course_id
-            else self.collection
-        )
+        coll = self._collection_for_write(course_id)
         coll.upsert(ids=ids, documents=texts, metadatas=metadatas)
 
     def delete_chunks_by_ids(self, ids: list[str], course_id: str | None = None) -> None:
@@ -142,11 +191,12 @@ class ChromaKnowledgeStore:
         """
         if not ids:
             return
-        coll = (
-            self.get_or_create_course_collection(course_id)
-            if self._per_course and course_id
-            else self.collection
-        )
+        if self._per_course and course_id:
+            coll = self.get_course_collection(course_id)
+        elif self._per_course:
+            raise ValueError("course_id is required when deleting in per-course mode")
+        else:
+            coll = self.collection
         coll.delete(ids=ids)
 
     # ────────────────────────────────────────────────
@@ -165,12 +215,23 @@ class ChromaKnowledgeStore:
         - course_id 非空且 per_course=True：限定在该课程 collection 内检索
         - n_results: 返回最相似的 top-N chunks
         """
-        coll = (
-            self.get_or_create_course_collection(course_id)
-            if self._per_course and course_id
-            else self.collection
-        )
-        return coll.query(query_texts=[text], n_results=n_results, where=where)
+        combined: list[tuple[str, str, dict[str, Any], float]] = []
+        for coll in self._collections_for_read(course_id):
+            result = coll.query(query_texts=[text], n_results=n_results, where=where)
+            ids = (result.get("ids") or [[]])[0]
+            docs = (result.get("documents") or [[]])[0]
+            metas = (result.get("metadatas") or [[]])[0]
+            dists = (result.get("distances") or [[]])[0]
+            combined.extend(zip(ids, docs, metas, dists))
+
+        combined.sort(key=lambda item: item[3])
+        selected = combined[:n_results]
+        return {
+            "ids": [[item[0] for item in selected]],
+            "documents": [[item[1] for item in selected]],
+            "metadatas": [[item[2] for item in selected]],
+            "distances": [[item[3] for item in selected]],
+        }
 
     def fetch_chunks(
         self,
@@ -180,9 +241,23 @@ class ChromaKnowledgeStore:
         course_id: str | None = None,
     ) -> dict[str, Any]:
         """按 metadata 条件精确获取 chunks（不走向量搜索）。"""
-        coll = (
-            self.get_or_create_course_collection(course_id)
-            if self._per_course and course_id
-            else self.collection
-        )
-        return coll.get(where=where, include=["documents", "metadatas"], limit=limit)
+        ids: list[str] = []
+        documents: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        remaining = limit
+        for coll in self._collections_for_read(course_id):
+            if remaining <= 0:
+                break
+            result = coll.get(
+                where=where,
+                include=["documents", "metadatas"],
+                limit=remaining,
+            )
+            current_ids = result.get("ids") or []
+            current_docs = result.get("documents") or []
+            current_metas = result.get("metadatas") or []
+            ids.extend(current_ids)
+            documents.extend(current_docs)
+            metadatas.extend(current_metas)
+            remaining -= len(current_ids)
+        return {"ids": ids, "documents": documents, "metadatas": metadatas}

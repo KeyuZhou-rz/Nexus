@@ -28,10 +28,14 @@ from pathlib import Path
 from typing import Any
 
 from .prompts import QUERY_EXPAND_PROMPT
-from .store import ChromaKnowledgeStore
+from .store import ChromaKnowledgeStore, CourseCollectionNotFoundError
 from .llm_gateway import gateway
 
 logger = logging.getLogger(__name__)
+
+
+class RetrievalError(RuntimeError):
+    """Raised when the semantic retrieval backend fails for every query."""
 
 
 # ────────────────────────────────────────────────
@@ -337,7 +341,7 @@ class QueryEngine:
           提取技术关键词，用 ChromaDB where filter 精确过滤
 
         参数：
-        - course_id: 限定检索范围（None 则尝试跨所有课程，暂时 fallback 到默认 collection）
+        - course_id: 限定检索范围（None 时跨所有已有课程 collection）
         - expanded_queries: 预先扩展好的查询（不传则内部自动 expand）
         """
         # ── Query Expansion ──
@@ -347,6 +351,8 @@ class QueryEngine:
         # ── 路径 A：语义搜索 ──
         semantic_raw: list[tuple[str, str, dict, float]] = []
         seen_semantic: set[str] = set()
+        semantic_successes = 0
+        semantic_errors: list[Exception] = []
 
         for query in expanded_queries:
             try:
@@ -355,6 +361,7 @@ class QueryEngine:
                     n_results=self.n_semantic,
                     course_id=course_id,
                 )
+                semantic_successes += 1
                 docs = (result.get("documents") or [[]])[0]
                 metas = (result.get("metadatas") or [[]])[0]
                 ids = (result.get("ids") or [[]])[0]
@@ -364,8 +371,15 @@ class QueryEngine:
                     if cid not in seen_semantic:
                         seen_semantic.add(cid)
                         semantic_raw.append((cid, doc, meta or {}, dist))
+            except CourseCollectionNotFoundError:
+                raise
             except Exception as exc:
+                semantic_errors.append(exc)
                 logger.warning(f"语义检索失败（query={query!r}）: {exc}")
+
+        if expanded_queries and semantic_successes == 0:
+            detail = str(semantic_errors[-1]) if semantic_errors else "unknown error"
+            raise RetrievalError(f"Semantic retrieval failed for all queries: {detail}")
 
         # ── 路径 B：关键词过滤搜索 ──
         keyword_raw: list[tuple[str, str, dict, float]] = []

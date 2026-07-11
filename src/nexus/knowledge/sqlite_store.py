@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 # schema.sql 与本文件同目录
@@ -33,9 +34,15 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
-    """公开的连接工厂，供模块外（qa_pipeline/ingestor 等）复用同一套 PRAGMA 配置。"""
-    return _connect(db_path)
+@contextmanager
+def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
+    """Yield a configured connection and always close it after the operation."""
+    conn = _connect(db_path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def default_db_path() -> Path:
@@ -58,7 +65,7 @@ class SQLiteStore:
     def _init_schema(self) -> None:
         """执行 schema.sql 建表（IF NOT EXISTS，幂等）。"""
         sql = _SCHEMA_PATH.read_text(encoding="utf-8")
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.executescript(sql)
 
     # ────────────────────────────────────────────────
@@ -67,7 +74,7 @@ class SQLiteStore:
 
     def get_document(self, doc_id: str) -> dict[str, Any] | None:
         """按 id 查询文档记录，不存在则返回 None。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 "SELECT * FROM documents WHERE id = ?", (doc_id,)
             ).fetchone()
@@ -87,7 +94,7 @@ class SQLiteStore:
         插入或替换文档记录（幂等）。
         file_hash 变化时会覆盖旧记录，配合 CASCADE DELETE 清理关联 chunks。
         """
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO documents
@@ -104,7 +111,7 @@ class SQLiteStore:
         chunk_count: int | None = None,
     ) -> None:
         """更新文档解析状态，可选同步 chunk_count。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             if chunk_count is not None:
                 conn.execute(
                     "UPDATE documents SET parse_status=?, chunk_count=? WHERE id=?",
@@ -121,7 +128,7 @@ class SQLiteStore:
         删除文档记录，关联 chunks 因 CASCADE 自动删除。
         文件更新后重新 ingest 时调用。
         """
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute("DELETE FROM documents WHERE id=?", (doc_id,))
 
     # ────────────────────────────────────────────────
@@ -145,7 +152,7 @@ class SQLiteStore:
         keywords / prerequisites 以 JSON 数组字符串存储。
         chunk_id 与 ChromaDB 中对应 document 的 id 保持一致，方便交叉查询。
         """
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO chunks
@@ -168,12 +175,12 @@ class SQLiteStore:
 
     def delete_chunks_by_document(self, document_id: str) -> None:
         """删除指定文档的所有 chunks（文件更新时先调用此方法再重新写入）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute("DELETE FROM chunks WHERE document_id=?", (document_id,))
 
     def get_chunks_by_course(self, course_id: str) -> list[dict[str, Any]]:
         """查询指定课程的所有 chunk 元数据（不含 content）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT * FROM chunks WHERE course_id = ? ORDER BY chunk_id",
                 (course_id,),
@@ -186,7 +193,7 @@ class SQLiteStore:
 
     def get_profile(self, key: str = "profile") -> dict[str, Any]:
         """读取用户画像，不存在时返回空字典。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 "SELECT value FROM user_profile WHERE key=?", (key,)
             ).fetchone()
@@ -199,7 +206,7 @@ class SQLiteStore:
 
     def set_profile(self, data: dict[str, Any], key: str = "profile") -> None:
         """覆盖写入用户画像（整体替换）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO user_profile (key, value, updated_at)
@@ -214,7 +221,7 @@ class SQLiteStore:
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         """读取单个 session 状态，不存在返回 None。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 "SELECT * FROM active_sessions WHERE session_id=?", (session_id,)
             ).fetchone()
@@ -230,7 +237,7 @@ class SQLiteStore:
         ended: bool,
     ) -> None:
         """插入或覆盖单个 session 状态（整体替换）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO active_sessions
@@ -242,12 +249,12 @@ class SQLiteStore:
 
     def delete_session(self, session_id: str) -> None:
         """删除 session 状态（session 结束后清理，防止表无限增长）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute("DELETE FROM active_sessions WHERE session_id=?", (session_id,))
 
     def get_active_sessions(self) -> list[dict[str, Any]]:
         """获取所有未结束（ended=0）的 session，供 idle 超时轮询使用。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT * FROM active_sessions WHERE ended=0"
             ).fetchall()
@@ -270,7 +277,7 @@ class SQLiteStore:
         output_tokens: int | None = None,
     ) -> None:
         """记录一次问答交互，用于后续 session 分析和画像更新。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO interaction_logs
@@ -292,7 +299,7 @@ class SQLiteStore:
 
     def get_session_logs(self, session_id: str) -> list[dict[str, Any]]:
         """获取某 session 的全部问答记录（用于 session 结束后分析）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT * FROM interaction_logs WHERE session_id=? ORDER BY timestamp",
                 (session_id,),
@@ -310,7 +317,7 @@ class SQLiteStore:
         details: dict[str, Any] | None = None,
     ) -> None:
         """记录外部数据源（Brightspace / Google Calendar）的同步状态。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO sync_metadata (source, last_sync, status, details)
@@ -332,7 +339,7 @@ class SQLiteStore:
         concept_type: str | None = None,
     ) -> None:
         """插入或更新概念节点。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO concepts (concept_id, name, course_id, definition, concept_type)
@@ -348,7 +355,7 @@ class SQLiteStore:
 
     def get_concept(self, concept_id: str) -> dict[str, Any] | None:
         """按 ID 查询单个概念。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 "SELECT * FROM concepts WHERE concept_id = ?", (concept_id,)
             ).fetchone()
@@ -356,7 +363,7 @@ class SQLiteStore:
 
     def get_concepts_by_course(self, course_id: str) -> list[dict[str, Any]]:
         """查询指定课程的所有概念。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT * FROM concepts WHERE course_id = ? ORDER BY name",
                 (course_id,),
@@ -365,7 +372,7 @@ class SQLiteStore:
 
     def get_all_concepts(self) -> list[dict[str, Any]]:
         """查询所有课程的全部概念（用于跨课程关系发现）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT * FROM concepts ORDER BY course_id, name"
             ).fetchall()
@@ -387,7 +394,7 @@ class SQLiteStore:
         插入或更新概念关系。UNIQUE(source_id, target_id, relation_type) 保证幂等。
         冲突时更新 confidence 和 evidence。
         """
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO concept_relations
@@ -405,7 +412,7 @@ class SQLiteStore:
         查询与指定概念相关的所有关系（双向：作为 source 或 target）。
         同时 JOIN concepts 表获取对端概念信息。
         """
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 """
                 SELECT cr.*, c.name AS other_name, c.course_id AS other_course,
@@ -426,7 +433,7 @@ class SQLiteStore:
         self, concept_id: str
     ) -> list[dict[str, Any]]:
         """查询指定概念的跨课程关系（source 和 target 属于不同课程）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 """
                 SELECT cr.*, c1.name AS source_name, c1.course_id AS source_course,
@@ -459,7 +466,7 @@ class SQLiteStore:
         插入或更新概念别名映射。
         UNIQUE(alias, course_id) 约束：同一课程内同一别名只能映射到一个概念。
         """
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO concept_aliases (alias, course_id, concept_id, source, confidence)
@@ -480,7 +487,7 @@ class SQLiteStore:
         按别名精确查找概念映射。
         返回 dict 包含 concept_id, confidence, source 等，未找到返回 None。
         """
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 "SELECT * FROM concept_aliases WHERE alias = ? AND course_id = ?",
                 (alias.strip().lower(), course_id),
@@ -489,7 +496,7 @@ class SQLiteStore:
 
     def get_aliases_for_concept(self, concept_id: str) -> list[dict[str, Any]]:
         """获取指定概念的所有别名。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT * FROM concept_aliases WHERE concept_id = ? ORDER BY alias",
                 (concept_id,),
@@ -507,7 +514,7 @@ class SQLiteStore:
         relevance: float = 1.0,
     ) -> None:
         """关联 chunk 与 concept（多对多）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO chunk_concepts (chunk_id, concept_id, relevance)
@@ -523,7 +530,7 @@ class SQLiteStore:
         if not chunk_ids:
             return []
         placeholders = ",".join("?" for _ in chunk_ids)
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 f"""
                 SELECT DISTINCT c.*, cc.chunk_id, cc.relevance
@@ -538,7 +545,7 @@ class SQLiteStore:
 
     def get_chunks_for_concept(self, concept_id: str) -> list[str]:
         """查询与指定概念关联的所有 chunk_id。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT chunk_id FROM chunk_concepts WHERE concept_id = ?",
                 (concept_id,),
@@ -557,7 +564,7 @@ class SQLiteStore:
         context: dict[str, Any] | None = None,
     ) -> None:
         """记录一次学习事件。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO learning_events (concept_id, event_type, session_id, context)
@@ -577,7 +584,7 @@ class SQLiteStore:
         since: str | None = None,
     ) -> list[dict[str, Any]]:
         """获取指定概念的学习事件（可选时间过滤）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             if since:
                 rows = conn.execute(
                     """SELECT * FROM learning_events
@@ -601,7 +608,7 @@ class SQLiteStore:
         streak: int = 0,
     ) -> None:
         """更新概念掌握度参数。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO concept_mastery
@@ -619,7 +626,7 @@ class SQLiteStore:
 
     def get_mastery(self, concept_id: str) -> dict[str, Any] | None:
         """获取概念的掌握度参数。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 "SELECT * FROM concept_mastery WHERE concept_id = ?",
                 (concept_id,),
@@ -634,7 +641,7 @@ class SQLiteStore:
         self, file_hash: str, course_id: str = ""
     ) -> list[dict[str, Any]] | None:
         """查询缓存的解析结果，未命中返回 None。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 "SELECT chunks_json FROM parse_cache WHERE file_hash = ? AND course_id = ?",
                 (file_hash, course_id),
@@ -657,7 +664,7 @@ class SQLiteStore:
         file_size: int = 0,
     ) -> None:
         """缓存解析结果（INSERT OR REPLACE，幂等）。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO parse_cache
@@ -669,7 +676,7 @@ class SQLiteStore:
 
     def clear_parse_cache(self, course_id: str | None = None) -> int:
         """清除解析缓存。不传 course_id 则全部清除。返回删除行数。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             if course_id:
                 cursor = conn.execute(
                     "DELETE FROM parse_cache WHERE course_id = ?", (course_id,)
@@ -682,7 +689,7 @@ class SQLiteStore:
         self, course_id: str | None = None
     ) -> list[dict[str, Any]]:
         """获取所有（或指定课程的）概念掌握度参数。"""
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             if course_id:
                 rows = conn.execute(
                     """
@@ -713,7 +720,7 @@ class SQLiteStore:
         self, checkpoint_id: str, course_id: str,
         week_start: str, week_end: str,
     ) -> None:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO concept_checkpoints
                    (checkpoint_id, course_id, week_start, week_end)
@@ -730,7 +737,7 @@ class SQLiteStore:
         name: str, importance: int,
         q1: str, q2: str, q3: str,
     ) -> None:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO checkpoint_concepts
                    (checkpoint_id, concept_id, name, importance,
@@ -742,7 +749,7 @@ class SQLiteStore:
     def get_latest_checkpoint(
         self, course_id: str,
     ) -> dict[str, Any] | None:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 """SELECT * FROM concept_checkpoints
                    WHERE course_id = ?
@@ -754,7 +761,7 @@ class SQLiteStore:
     def get_checkpoint_concepts(
         self, checkpoint_id: str,
     ) -> list[dict[str, Any]]:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 """SELECT * FROM checkpoint_concepts
                    WHERE checkpoint_id = ?
@@ -770,7 +777,7 @@ class SQLiteStore:
         session_id: str | None, query_text: str,
         had_hesitation: int = 0,
     ) -> None:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO concept_query_log
                    (concept_id, concept_name, session_id,
@@ -783,7 +790,7 @@ class SQLiteStore:
     def get_concept_query_stats(
         self, concept_id: str, since_days: int = 14,
     ) -> dict[str, int]:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             total = conn.execute(
                 """SELECT COUNT(*) FROM concept_query_log
                    WHERE concept_id = ?
@@ -805,7 +812,7 @@ class SQLiteStore:
         chapter_weights: str | None = None,
         user_input: str | None = None,
     ) -> None:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO exam_records
                    (exam_id, course_id, exam_date,
@@ -819,7 +826,7 @@ class SQLiteStore:
             )
 
     def get_exam_record(self, exam_id: str) -> dict[str, Any] | None:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 "SELECT * FROM exam_records WHERE exam_id = ?",
                 (exam_id,),
@@ -829,7 +836,7 @@ class SQLiteStore:
     def get_exams_for_course(
         self, course_id: str,
     ) -> list[dict[str, Any]]:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             rows = conn.execute(
                 """SELECT * FROM exam_records
                    WHERE course_id = ?
@@ -849,7 +856,7 @@ class SQLiteStore:
         analysis_text: str | None = None,
         retention_hook: str | None = None,
     ) -> None:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO exam_retrospectives
                    (retrospective_id, exam_id, predicted_weak,
@@ -872,7 +879,7 @@ class SQLiteStore:
     def get_retrospective(
         self, retrospective_id: str,
     ) -> dict[str, Any] | None:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 """SELECT * FROM exam_retrospectives
                    WHERE retrospective_id = ?""",
@@ -883,7 +890,7 @@ class SQLiteStore:
     def get_retrospective_for_exam(
         self, exam_id: str,
     ) -> dict[str, Any] | None:
-        with _connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             row = conn.execute(
                 """SELECT * FROM exam_retrospectives
                    WHERE exam_id = ?
