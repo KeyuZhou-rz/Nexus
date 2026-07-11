@@ -28,7 +28,6 @@ QA Pipeline — Nexus Phase 3 端到端问答入口（含 Week 3 扩展）
 """
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -40,7 +39,6 @@ from .context_assembler import assemble_messages, estimate_tokens
 from .concept_resolver import ConceptResolver
 from .graph_retriever import GraphRetriever
 from .llm_client import KnowledgeLLMClient, LLMOutput
-from .prompts import MASTERY_CLASSIFY_PROMPT
 from .query_engine import QueryEngine, RetrievedChunk, RetrievalResult
 from .session_manager import SessionManager
 from .sqlite_store import SQLiteStore, connect
@@ -50,7 +48,10 @@ from .user_profile import UserProfileManager
 
 logger = logging.getLogger(__name__)
 
-_VALID_MASTERY_EVENTS = {"correct_answer", "struggled", "reviewed", "forgot"}
+_EVIDENCE_MASTERY_EVENTS = {"correct_answer", "struggled", "forgot"}
+_VALID_EVIDENCE_SOURCES = {"assessment", "user_self_report", "instructor_feedback"}
+_MIN_EVIDENCE_CONFIDENCE = 0.6
+_MAX_CONCEPTS_PER_ASSESSMENT = 3
 
 
 # ────────────────────────────────────────────────
@@ -95,6 +96,17 @@ class QAResponse:
         if not self.sources:
             return "（未使用课件内容）"
         return "\n".join(f"  [{i+1}] {src}" for i, src in enumerate(self.sources))
+
+
+@dataclass(frozen=True)
+class MasteryEvidence:
+    """Explicit, auditable evidence that may change concept mastery."""
+
+    concept_id: str
+    event_type: str
+    source: str = "assessment"
+    confidence: float = 1.0
+    detail: str | None = None
 
 
 # ────────────────────────────────────────────────
@@ -486,17 +498,9 @@ class QAPipeline:
         )
         self._session_mgr.record_activity(session_id, course_id)
 
-        # ── Step 7: 更新概念掌握度 (Phase 4B) ──
-        if chunk_ids:
-            try:
-                self._update_concept_mastery(
-                    chunk_ids=chunk_ids,
-                    session_id=session_id,
-                    user_query=user_query,
-                    response_summary=output.content,
-                )
-            except Exception as exc:
-                logger.debug(f"Mastery update skipped: {exc}")
+        # A question and an AI-generated answer are exposure, not evidence of
+        # understanding. Mastery is updated only through explicit assessment
+        # evidence passed to _update_concept_mastery / record_assessment.
 
         sources = _build_sources(retrieval.chunks)
         logger.info(
@@ -600,76 +604,84 @@ class QAPipeline:
         session_id: str,
         user_query: str,
         response_summary: str,
+        evidence: list[MasteryEvidence] | None = None,
     ) -> None:
         """
-        Phase 4B: 从本次 Q&A 涉及的 chunks 推断涉及概念，用 LLM 分类事件类型
-        (correct_answer/struggled/reviewed/forgot) 后记录。LLM 分类失败时
-        回退为 "reviewed"，保证掌握度更新不中断。
-        """
-        concept_rows = self._sqlite.get_concepts_for_chunks(chunk_ids)
-        seen: dict[str, str] = {}
-        for row in concept_rows:
-            cid = row["concept_id"]
-            name = row.get("name", "")
-            if cid in seen or not name:
-                continue
-            seen[cid] = name
+        Apply explicit assessment evidence for concepts involved in this Q&A.
 
-        if not seen:
+        The legacy positional arguments are retained for callers, but the user
+        query and generated response are deliberately not used to infer
+        mastery. Missing or invalid evidence is a no-op.
+        """
+        if not evidence:
             return
 
-        event_by_concept = self._classify_mastery_events(
-            user_query=user_query,
-            response_summary=response_summary,
-            concept_names=list(seen.values()),
-        )
+        concept_rows = self._sqlite.get_concepts_for_chunks(chunk_ids)
+        eligible_ids: set[str] = set()
+        for row in concept_rows:
+            cid = row["concept_id"]
+            if cid:
+                eligible_ids.add(cid)
 
-        for cid, name in seen.items():
-            event_type = event_by_concept.get(name, "reviewed")
-            if event_type not in _VALID_MASTERY_EVENTS:
-                event_type = "reviewed"
+        recorded: set[str] = set()
+        for item in evidence:
+            if len(recorded) >= _MAX_CONCEPTS_PER_ASSESSMENT:
+                break
+            if item.concept_id in recorded or item.concept_id not in eligible_ids:
+                continue
+            if item.event_type not in _EVIDENCE_MASTERY_EVENTS:
+                continue
+            if item.source not in _VALID_EVIDENCE_SOURCES:
+                continue
+            if (
+                not 0.0 <= item.confidence <= 1.0
+                or item.confidence < _MIN_EVIDENCE_CONFIDENCE
+            ):
+                continue
             self._temporal_memory.record_event(
-                concept_id=cid,
-                event_type=event_type,
+                concept_id=item.concept_id,
+                event_type=item.event_type,
                 session_id=session_id,
+                context={
+                    "evidence_type": item.source,
+                    "confidence": item.confidence,
+                    "detail": item.detail,
+                },
             )
+            recorded.add(item.concept_id)
 
-    def _classify_mastery_events(
+    def record_assessment(
         self,
-        user_query: str,
-        response_summary: str,
-        concept_names: list[str],
-    ) -> dict[str, str]:
+        concept_id: str,
+        event_type: str,
+        *,
+        session_id: str | None = None,
+        source: str = "assessment",
+        confidence: float = 1.0,
+        detail: str | None = None,
+    ) -> bool:
         """
-        调用 MASTERY_CLASSIFY_PROMPT，返回 {concept_name: event_type}。
-        LLM 调用或解析失败时返回空 dict，调用方回退为 "reviewed"。
-        """
-        try:
-            from .llm_gateway import gateway
+        Record one explicit assessment result outside the normal Q&A flow.
 
-            prompt = MASTERY_CLASSIFY_PROMPT.format(
-                user_query=user_query,
-                response_summary=response_summary[:500],
-                concepts=", ".join(concept_names),
-            )
-            output = gateway.chat(
-                messages=[
-                    {"role": "system", "content": "你是一个学习状态分析助手。返回 JSON only。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
-            )
-            data = json.loads(output.content)
-            events = data.get("events", [])
-            return {
-                e["concept"]: e["type"]
-                for e in events
-                if isinstance(e, dict) and e.get("concept") and e.get("type")
-            }
-        except Exception as exc:
-            logger.debug(f"Mastery classification failed, falling back to reviewed: {exc}")
-            return {}
+        Returns False for invalid/insufficient evidence or an unknown concept.
+        """
+        if event_type not in _EVIDENCE_MASTERY_EVENTS:
+            return False
+        if source not in _VALID_EVIDENCE_SOURCES:
+            return False
+        if not 0.0 <= confidence <= 1.0 or confidence < _MIN_EVIDENCE_CONFIDENCE:
+            return False
+        snapshot = self._temporal_memory.record_event(
+            concept_id=concept_id,
+            event_type=event_type,
+            session_id=session_id,
+            context={
+                "evidence_type": source,
+                "confidence": confidence,
+                "detail": detail,
+            },
+        )
+        return snapshot is not None
 
 
 # ────────────────────────────────────────────────
