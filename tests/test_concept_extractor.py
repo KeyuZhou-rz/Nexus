@@ -117,6 +117,46 @@ def test_extract_from_chunks_finds_prerequisites(tmp_path):
     assert "进程" in names
     assert "资源分配" in names
 
+    by_name = {c.name: c for c in concepts}
+    assert by_name["进程"].source_chunk_ids == ["CS202_OS_Lec07_000"]
+    assert by_name["资源分配"].source_chunk_ids == [
+        "CS202_OS_Lec07_000",
+        "CS202_OS_Lec07_001",
+        "CS202_OS_Lec07_002",
+    ]
+
+
+def test_extract_filters_generic_and_question_like_candidates(tmp_path):
+    store = _make_store(tmp_path)
+    extractor = ConceptExtractor(store)
+    chunks = [
+        ParsedChunk(
+            topic="为什么要使用中断？",
+            content="中断避免 CPU 持续轮询。",
+            type="overview",
+            keywords=["为什么", "how", "中断", "interrupt"],
+            prerequisites=["什么", "轮询"],
+            page=1,
+            continues=False,
+        ),
+        ParsedChunk(
+            topic="Interrupt handling",
+            content="Interrupt handling saves processor state.",
+            type="technique",
+            keywords=["中断", "interrupt", "compare"],
+            prerequisites=["轮询"],
+            page=2,
+            continues=False,
+        ),
+    ]
+
+    concepts = extractor.extract_from_chunks(chunks, ["c1", "c2"], "OS")
+    names = {c.name for c in concepts}
+
+    assert "为什么要使用中断？" not in names
+    assert not {"为什么", "how", "compare", "什么"} & names
+    assert {"Interrupt handling", "中断", "interrupt", "轮询"} <= names
+
 
 def test_extract_infers_concept_type(tmp_path):
     store = _make_store(tmp_path)

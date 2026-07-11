@@ -35,6 +35,35 @@ from .llm_gateway import gateway
 logger = logging.getLogger(__name__)
 
 
+_GENERIC_CONCEPT_TERMS = {
+    "why", "how", "what", "difference", "compare", "comparison",
+    "example", "examples", "overview", "introduction",
+    "为什么", "如何", "怎么", "怎样", "什么", "区别", "对比", "比较",
+    "例子", "示例", "概述", "介绍",
+}
+
+_QUESTION_LIKE_PATTERNS = (
+    r"^(?:what is|what are|why|how|compare|explain)\b",
+    r"^(?:什么是|为什么|如何|怎么|怎样|请解释|请比较)",
+    r"(?:有什么区别|有何区别|如何工作|怎么工作)[？?]?$",
+)
+
+
+def _is_valid_concept_candidate(value: str, *, allow_question_like: bool = False) -> bool:
+    """Reject generic retrieval words and question-shaped labels."""
+    candidate = value.strip()
+    if len(candidate) < 2 or candidate.lower() in _GENERIC_CONCEPT_TERMS:
+        return False
+    if not re.search(r"[a-zA-Z\u4e00-\u9fff]", candidate):
+        return False
+    if not allow_question_like and any(
+        re.search(pattern, candidate, flags=re.IGNORECASE)
+        for pattern in _QUESTION_LIKE_PATTERNS
+    ):
+        return False
+    return True
+
+
 # ────────────────────────────────────────────────
 # 数据结构
 # ────────────────────────────────────────────────
@@ -130,7 +159,7 @@ class ConceptExtractor:
         # 从 topics 提取（每个 chunk 的 topic 就是一个知识点标题）
         for chunk, cid in zip(chunks, chunk_ids):
             topic = chunk.topic.strip()
-            if not topic or len(topic) < 2:
+            if not _is_valid_concept_candidate(topic):
                 continue
             concept_id = normalize_concept_id(topic, course_id)
             if concept_id in concept_map:
@@ -150,7 +179,7 @@ class ConceptExtractor:
         for chunk, cid in zip(chunks, chunk_ids):
             for kw in chunk.keywords:
                 kw = kw.strip()
-                if len(kw) >= 2:
+                if _is_valid_concept_candidate(kw):
                     keyword_counter[kw] += 1
                     keyword_to_chunks.setdefault(kw, []).append(cid)
 
@@ -165,19 +194,33 @@ class ConceptExtractor:
                         source_chunk_ids=keyword_to_chunks[kw][:5],
                     )
 
-        # 从 prerequisites 提取（可能没有 source_chunk）
+        # 从 prerequisites 提取，并保留声明该前置知识的来源 chunk。
+        prereq_to_chunks: dict[str, list[str]] = {}
         for chunk, cid in zip(chunks, chunk_ids):
             for prereq in chunk.prerequisites:
                 prereq = prereq.strip()
-                if len(prereq) < 2:
+                if not _is_valid_concept_candidate(prereq):
                     continue
+                prereq_to_chunks.setdefault(prereq, []).append(cid)
                 concept_id = normalize_concept_id(prereq, course_id)
-                if concept_id not in concept_map:
+                if concept_id in concept_map:
+                    existing = concept_map[concept_id].source_chunk_ids
+                    if cid not in existing:
+                        existing.append(cid)
+                else:
                     concept_map[concept_id] = ExtractedConcept(
                         concept_id=concept_id,
                         name=prereq,
                         course_id=course_id,
+                        source_chunk_ids=[cid],
                     )
+
+        chunk_order = {chunk_id: index for index, chunk_id in enumerate(chunk_ids)}
+        for concept in concept_map.values():
+            concept.source_chunk_ids = sorted(
+                set(concept.source_chunk_ids),
+                key=lambda chunk_id: chunk_order.get(chunk_id, len(chunk_order)),
+            )
 
         logger.info(f"Pass 1 规则提取: {len(concept_map)} 个候选概念 ({course_id})")
         return list(concept_map.values())
