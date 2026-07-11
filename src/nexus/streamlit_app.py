@@ -1684,7 +1684,7 @@ with tab_progress:
                 )
 
                 _mode = _sprint_result.get("mode", "unknown")
-                if _mode == "relaxed":
+                if _mode in ("relaxed", "unavailable"):
                     st.info(_sprint_result.get("message", ""))
                 elif _mode == "error":
                     st.error(_sprint_result.get("message", ""))

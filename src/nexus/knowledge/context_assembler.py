@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .prompts import QA_SYSTEM_PROMPT, SOCRATIC_GUIDANCE, TEACHING_STYLE
+from .prompts import QA_SYSTEM_PROMPT, SOCRATIC_GUIDANCE, TEACHING_MODE_GUIDANCE, TEACHING_STYLE
 from .query_engine import RetrievedChunk
 
 if TYPE_CHECKING:
@@ -59,15 +59,22 @@ def _build_context_block(chunks: list[RetrievedChunk]) -> str:
     超过 MAX_CONTEXT_CHARS 时截断，避免 prompt 过长。
     """
     if not chunks:
-        return "（未找到相关课件内容）"
+        # 无召回：不要让模型一刀切拒答。明确告知课件无覆盖，
+        # 授权它走 QA_SYSTEM_PROMPT 第 2 条"补充模式"并标注来源。
+        return (
+            "（本题在已上传课件中没有检索到相关内容。）\n"
+            "请按回答准则第 2 条处理：可以用你自身的知识回答，"
+            "但需在开头标注「（课件未直接涉及，以下为补充说明）」，"
+            "不要为补充内容伪造课件来源或页码。"
+        )
 
     blocks: list[str] = []
     total_chars = 0
 
-    for chunk in chunks:
+    for index, chunk in enumerate(chunks, start=1):
         source_label = _format_chunk_source(chunk.metadata)
         topic = chunk.metadata.get("topic", "")
-        header = f"### [{topic}]\n（来源：{source_label}）\n"
+        header = f"### [S{index}] {topic}\n来源元数据：{source_label}\n"
         body = chunk.content.strip()
         block = header + body
 
@@ -209,6 +216,7 @@ def assemble_messages(
     course_id: str | None = None,
     graph_context: GraphContext | None = None,
     mastery_map: dict[str, float] | None = None,
+    teaching_mode: str = "answer",
 ) -> list[dict[str, str]]:
     """
     将所有输入组装成 OpenAI 格式的 messages 列表。
@@ -232,10 +240,16 @@ def assemble_messages(
     # ── System Prompt：角色 + 教学风格 + 苏格拉底策略 ──
     learning_style = profile.get("learning_style", "default")
     style_instruction = TEACHING_STYLE.get(learning_style, TEACHING_STYLE["default"])
+    if teaching_mode not in TEACHING_MODE_GUIDANCE:
+        raise ValueError(f"Unsupported teaching mode: {teaching_mode}")
     socratic_level = _pick_socratic_level(mastery_map)
-    socratic_instruction = SOCRATIC_GUIDANCE.get(socratic_level, SOCRATIC_GUIDANCE["unknown"])
+    if teaching_mode == "answer":
+        socratic_instruction = f"掌握度层级为 {socratic_level}；只据此调整解释深度，保持直接回答。"
+    else:
+        socratic_instruction = SOCRATIC_GUIDANCE.get(socratic_level, SOCRATIC_GUIDANCE["unknown"])
     system_content = QA_SYSTEM_PROMPT.format(
         teaching_style_instruction=style_instruction,
+        teaching_mode_instruction=TEACHING_MODE_GUIDANCE[teaching_mode],
         socratic_instruction=socratic_instruction,
     )
 

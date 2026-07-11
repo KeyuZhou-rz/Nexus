@@ -5,13 +5,15 @@ assemble_messages, and the new mastery_map parameter.
 """
 from __future__ import annotations
 
+import inspect
 import pytest
 
 from nexus.knowledge.context_assembler import (
     _pick_socratic_level,
     assemble_messages,
 )
-from nexus.knowledge.prompts import SOCRATIC_GUIDANCE, QA_SYSTEM_PROMPT
+from nexus.knowledge.prompts import SOCRATIC_GUIDANCE, TEACHING_MODE_GUIDANCE
+from nexus.knowledge.qa_pipeline import QAPipeline
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -104,15 +106,19 @@ class TestSocraticGuidanceContent:
 # ── tests: assemble_messages with mastery_map ────────────────────────
 
 class TestAssembleMessagesWithMastery:
-    def test_no_mastery_map_includes_unknown_guidance(self):
-        """Without mastery_map, socratic instruction should be 'unknown' level."""
+    def test_qa_pipeline_exposes_teaching_mode(self):
+        parameter = inspect.signature(QAPipeline.ask).parameters["teaching_mode"]
+        assert parameter.default == "answer"
+
+    def test_default_answer_mode_answers_directly(self):
         messages = assemble_messages(
             user_query="What is deadlock?",
             chunks=[_chunk()],
             mastery_map=None,
         )
         system = messages[0]["content"]
-        assert SOCRATIC_GUIDANCE["unknown"] in system
+        assert TEACHING_MODE_GUIDANCE["answer"] in system
+        assert "保持直接回答" in system
 
     def test_empty_mastery_map_includes_unknown_guidance(self):
         messages = assemble_messages(
@@ -121,7 +127,7 @@ class TestAssembleMessagesWithMastery:
             mastery_map={},
         )
         system = messages[0]["content"]
-        assert SOCRATIC_GUIDANCE["unknown"] in system
+        assert TEACHING_MODE_GUIDANCE["answer"] in system
 
     def test_critical_mastery_injects_critical_guidance(self):
         messages = assemble_messages(
@@ -130,7 +136,8 @@ class TestAssembleMessagesWithMastery:
             mastery_map={"deadlock": 0.15},
         )
         system = messages[0]["content"]
-        assert SOCRATIC_GUIDANCE["critical"] in system
+        assert "保持直接回答" in system
+        assert "不要直接给出答案" not in system
 
     def test_decaying_mastery_injects_decaying_guidance(self):
         messages = assemble_messages(
@@ -139,7 +146,7 @@ class TestAssembleMessagesWithMastery:
             mastery_map={"semaphore": 0.40},
         )
         system = messages[0]["content"]
-        assert SOCRATIC_GUIDANCE["decaying"] in system
+        assert "decaying" in system
 
     def test_stable_mastery_injects_stable_guidance(self):
         messages = assemble_messages(
@@ -148,7 +155,7 @@ class TestAssembleMessagesWithMastery:
             mastery_map={"mutex": 0.65},
         )
         system = messages[0]["content"]
-        assert SOCRATIC_GUIDANCE["stable"] in system
+        assert "stable" in system
 
     def test_mastered_mastery_injects_mastered_guidance(self):
         messages = assemble_messages(
@@ -157,7 +164,34 @@ class TestAssembleMessagesWithMastery:
             mastery_map={"scheduling": 0.90},
         )
         system = messages[0]["content"]
-        assert SOCRATIC_GUIDANCE["mastered"] in system
+        assert "mastered" in system
+
+    def test_tutor_mode_uses_mastery_guidance(self):
+        messages = assemble_messages(
+            user_query="Give me a hint about deadlock",
+            chunks=[_chunk()],
+            mastery_map={"deadlock": 0.15},
+            teaching_mode="tutor",
+        )
+        assert SOCRATIC_GUIDANCE["critical"] in messages[0]["content"]
+
+    def test_assessment_mode_hides_answer(self):
+        messages = assemble_messages(
+            user_query="Test me",
+            chunks=[_chunk()],
+            teaching_mode="assessment",
+        )
+        assert TEACHING_MODE_GUIDANCE["assessment"] in messages[0]["content"]
+
+    def test_context_uses_stable_source_ids(self):
+        messages = assemble_messages(user_query="What is deadlock?", chunks=[_chunk()])
+        user = messages[1]["content"]
+        assert "[S1]" in user
+        assert "（来源：" not in user
+
+    def test_invalid_teaching_mode_rejected(self):
+        with pytest.raises(ValueError):
+            assemble_messages(user_query="x", chunks=[], teaching_mode="invalid")
 
     def test_teaching_style_still_injected_with_mastery(self):
         """U1 doesn't break existing teaching_style injection."""

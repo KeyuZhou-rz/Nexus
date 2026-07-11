@@ -29,7 +29,11 @@ from typing import Any
 from .graph_retriever import GraphRetriever
 from .prompts import SPRINT_PLAN_PROMPT
 from .sqlite_store import SQLiteStore
-from .study_planner import _build_prereq_chain_text, _compute_prereq_depths
+from .study_planner import (
+    _build_prereq_chain_text,
+    _compute_prereq_depths,
+    _filter_concepts_with_chunk_evidence,
+)
 from .temporal_memory import TemporalMemory
 
 logger = logging.getLogger(__name__)
@@ -112,10 +116,19 @@ class SprintPlanner:
                 "plan": [],
             }
 
-        chapter_weights = chapter_weights or {}
+        if not chapter_weights:
+            return {
+                "mode": "unavailable",
+                "message": "Sprint planning requires explicit chapter weights.",
+                "exam_date": exam_date,
+                "days_until_exam": days_until_exam,
+                "plan": [],
+            }
 
         # Gather data
-        concepts_raw = self._store.get_concepts_by_course(course_id)
+        concepts_raw = _filter_concepts_with_chunk_evidence(
+            self._store.get_concepts_by_course(course_id), self._store
+        )
         if not concepts_raw:
             return self._empty_plan(course_id, exam_date, days_until_exam)
 

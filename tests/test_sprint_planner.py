@@ -32,6 +32,15 @@ def tmp_store():
                 "INSERT INTO concepts (concept_id, name, course_id) VALUES (?, ?, ?)",
                 (cid, name, "CS202_OS"),
             )
+            chunk_id = f"chunk__{cid}"
+            conn.execute(
+                "INSERT INTO chunks (chunk_id, document_id, course_id, topic) VALUES (?, ?, ?, ?)",
+                (chunk_id, "doc__cs202", "CS202_OS", name),
+            )
+            conn.execute(
+                "INSERT INTO chunk_concepts (chunk_id, concept_id) VALUES (?, ?)",
+                (chunk_id, cid),
+            )
         # Insert mastery data
         conn.execute(
             """INSERT INTO concept_mastery (concept_id, initial_mastery, decay_rate, review_count)
@@ -87,7 +96,7 @@ class TestRuleSprint:
         planner = SprintPlanner(tmp_store)
         exam_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
-        result = planner.generate(course_id="CS202_OS", exam_date=exam_date)
+        result = planner.generate(course_id="CS202_OS", exam_date=exam_date, chapter_weights={"ch1": 1.0})
         assert result["mode"] == "sprint"
         assert result["method"] == "rule"
 
@@ -100,7 +109,7 @@ class TestRuleSprint:
         planner = SprintPlanner(tmp_store)
         exam_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
-        result = planner.generate(course_id="NONEXISTENT", exam_date=exam_date)
+        result = planner.generate(course_id="NONEXISTENT", exam_date=exam_date, chapter_weights={"ch1": 1.0})
         assert len(result["plan"]) > 0
         assert result["method"] == "rule"
 
@@ -110,7 +119,7 @@ class TestRuleSprint:
         planner = SprintPlanner(tmp_store)
         exam_date = (datetime.now() + timedelta(days=20)).strftime("%Y-%m-%d")
 
-        result = planner.generate(course_id="CS202_OS", exam_date=exam_date)
+        result = planner.generate(course_id="CS202_OS", exam_date=exam_date, chapter_weights={"ch1": 1.0})
         assert result["mode"] == "relaxed"
         assert len(result["plan"]) == 0
 
@@ -120,7 +129,7 @@ class TestRuleSprint:
         planner = SprintPlanner(tmp_store)
         exam_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
-        result = planner.generate(course_id="CS202_OS", exam_date=exam_date)
+        result = planner.generate(course_id="CS202_OS", exam_date=exam_date, chapter_weights={"ch1": 1.0})
         assert "mode" in result
         assert "exam_date" in result
         assert "days_until_exam" in result
@@ -134,6 +143,13 @@ class TestRuleSprint:
             assert "rationale" in day_entry
             assert "challenge" in day_entry
             assert "estimated_minutes" in day_entry
+
+    def test_requires_explicit_chapter_weights(self, tmp_store):
+        from datetime import datetime, timedelta
+        exam_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        result = SprintPlanner(tmp_store).generate("CS202_OS", exam_date)
+        assert result["mode"] == "unavailable"
+        assert result["plan"] == []
 
 
 def _concept(mastery: float, name: str = "X") -> _SprintConcept:

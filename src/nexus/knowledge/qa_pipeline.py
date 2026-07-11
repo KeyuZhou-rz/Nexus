@@ -352,6 +352,7 @@ class QAPipeline:
         *,
         session_id: str | None = None,
         course_id: str | None = None,
+        teaching_mode: str = "answer",
     ) -> QAResponse:
         """
         执行完整问答流程。
@@ -360,6 +361,7 @@ class QAPipeline:
         - user_query: 用户问题（中英文均可）
         - session_id: 会话 ID（不传则自动生成）
         - course_id: 显式指定课程；不传则按 5 级优先级推断
+        - teaching_mode: answer（直接答疑）、tutor（引导辅导）或 assessment（测评）
         """
         session_id = session_id or str(uuid.uuid4())[:8]
         warnings: list[str] = []
@@ -465,6 +467,7 @@ class QAPipeline:
             course_id=course_id,
             graph_context=graph_context,
             mastery_map=mastery_map if mastery_map else None,
+            teaching_mode=teaching_mode,
         )
         estimated_tokens = estimate_tokens(messages)
         logger.info(f"Prompt 估算 tokens: {estimated_tokens}")

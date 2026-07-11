@@ -117,6 +117,19 @@ class TestGapScannerScanCourse:
         # Verify checkpoint concepts persisted
         concepts = tmp_store.get_checkpoint_concepts(cp["checkpoint_id"])
         assert len(concepts) == 2
+        assert sum(1 for c in concepts if c.get("concept_id")) == 1
+
+    def test_run_weekly_reuses_current_checkpoint(self, tmp_store):
+        scanner = GapScanner(tmp_store)
+        now = datetime.now()
+        checkpoint_id = f"CS202_OS__{now.year}-W{now.isocalendar().week:02d}"
+        scanner._store.upsert_checkpoint(checkpoint_id, "CS202_OS", "2026-01-01", "2026-01-07")
+
+        with patch.object(scanner, "scan_course") as scan:
+            result = scanner.run_weekly("CS202_OS")
+
+        scan.assert_not_called()
+        assert result["checkpoint"]["cached"] is True
 
 
 class TestGapScannerWeaknessRanking:

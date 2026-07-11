@@ -137,6 +137,20 @@ class TestPrereqDepths:
 # ── tests: StudyPlanner (rule-based) ────────────────────────────────
 
 class TestStudyPlannerRule:
+    def test_orphan_concepts_are_excluded_when_store_can_verify_links(self):
+        concepts = [_concept_row("linked", "Linked"), _concept_row("orphan", "Orphan")]
+        store = _FakeSQLiteStore(concepts)
+        store.get_chunks_for_concept = lambda cid: ["chunk-1"] if cid == "linked" else []
+        planner = StudyPlanner.__new__(StudyPlanner)
+        planner._store = store
+        planner._temporal = _FakeTemporalMemory([])
+        planner._graph = None
+        planner._llm = None
+
+        plan = planner.generate("CS202_OS")
+        focus = [name for day in plan["plan"] for name in day["focus"]]
+        assert "Linked" in focus
+        assert "Orphan" not in focus
     def test_empty_course_returns_empty_plan(self):
         store = _FakeSQLiteStore([])
         planner = StudyPlanner.__new__(StudyPlanner)

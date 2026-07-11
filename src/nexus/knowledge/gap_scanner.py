@@ -122,8 +122,10 @@ class GapScanner:
             # Try to match to existing concept
             resolved = self._resolver.resolve(name, course_id)
             matched_id = resolved.concept_id if resolved else None
-            if matched_id:
+            if matched_id and self._store.get_chunks_for_concept(matched_id):
                 concepts_matched += 1
+            else:
+                matched_id = None
 
             self._store.upsert_checkpoint_concept(
                 checkpoint_id=checkpoint_id,
@@ -228,9 +230,22 @@ class GapScanner:
 
     # ── Convenience ──────────────────────────────────────────────
 
-    def run_weekly(self, course_id: str) -> dict[str, Any]:
-        """扫描 + 排名，一次调用完成。"""
-        scan_result = self.scan_course(course_id)
+    def run_weekly(self, course_id: str, *, force: bool = False) -> dict[str, Any]:
+        """Reuse the current week's persisted checkpoint unless forced."""
+        now = datetime.now()
+        expected_id = f"{course_id}__{now.year}-W{now.isocalendar().week:02d}"
+        latest = self._store.get_latest_checkpoint(course_id)
+        if not force and latest and latest.get("checkpoint_id") == expected_id:
+            concepts = self._store.get_checkpoint_concepts(expected_id)
+            scan_result = {
+                "checkpoint_id": expected_id,
+                "concepts_extracted": len(concepts),
+                "concepts_matched": sum(1 for c in concepts if c.get("concept_id")),
+                "cached": True,
+            }
+        else:
+            scan_result = self.scan_course(course_id)
+            scan_result["cached"] = False
         ranking = self.compute_weakness_ranking(course_id, scan_result["checkpoint_id"])
         return {
             "checkpoint": scan_result,

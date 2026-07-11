@@ -105,6 +105,17 @@ class TestRecordExam:
 
 
 class TestGenerateRetrospective:
+    def test_requires_feedback(self, tmp_store):
+        retro = ExamRetrospective(tmp_store)
+        exam_id = retro.record_exam("CS202_OS", "2026-07-01")
+        result = retro.generate_retrospective(exam_id, "")
+        assert "feedback is required" in result["error"]
+
+    def test_rejects_future_exam(self, tmp_store):
+        retro = ExamRetrospective(tmp_store)
+        exam_id = retro.record_exam("CS202_OS", "2999-01-01")
+        result = retro.generate_retrospective(exam_id, "有真实反馈")
+        assert "before the exam date" in result["error"]
     """Tests for generate_retrospective()."""
 
     def test_generate_with_mocked_llm(self, hit_rate_store):
@@ -112,7 +123,7 @@ class TestGenerateRetrospective:
         coming from the system's own pre-exam TemporalMemory snapshot (Deadlock
         was reinforced to "mastered", so only Virtual Memory is predicted weak)."""
         retro = ExamRetrospective(hit_rate_store)
-        exam_id = retro.record_exam("CS202_OS", "2026-07-15")
+        exam_id = retro.record_exam("CS202_OS", "2026-07-01")
 
         fake_response = MagicMock()
         fake_response.content = json.dumps({
@@ -141,7 +152,7 @@ class TestGenerateRetrospective:
         this is the fix for the old self-eval bug (predicted/actual both LLM-made
         in the same call, so a hallucinated hit used to count as 1/1 accuracy)."""
         retro = ExamRetrospective(hit_rate_store)
-        exam_id = retro.record_exam("CS202_OS", "2026-07-15")
+        exam_id = retro.record_exam("CS202_OS", "2026-07-01")
 
         fake_response = MagicMock()
         fake_response.content = json.dumps({

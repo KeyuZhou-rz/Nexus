@@ -25,6 +25,16 @@ from .temporal_memory import TemporalMemory
 logger = logging.getLogger(__name__)
 
 
+def _filter_concepts_with_chunk_evidence(
+    concepts: list[dict], store: SQLiteStore,
+) -> list[dict]:
+    """Exclude orphan concepts when the store can verify chunk links."""
+    getter = getattr(store, "get_chunks_for_concept", None)
+    if not callable(getter):
+        return concepts
+    return [c for c in concepts if getter(c["concept_id"])]
+
+
 # ────────────────────────────────────────────────
 # Study Planner Prompt (LLM path)
 # ────────────────────────────────────────────────
@@ -191,7 +201,9 @@ class StudyPlanner:
         }
         """
         # Gather data
-        concepts_raw = self._store.get_concepts_by_course(course_id)
+        concepts_raw = _filter_concepts_with_chunk_evidence(
+            self._store.get_concepts_by_course(course_id), self._store
+        )
         if not concepts_raw:
             return self._empty_plan(course_id, exam_date, num_days)
 

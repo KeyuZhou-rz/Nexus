@@ -84,6 +84,15 @@ class ExamRetrospective:
         if not exam:
             return {"error": f"Exam not found: {exam_id}"}
 
+        feedback = (user_input or "").strip()
+        if not feedback or feedback == "学生未提供考后反馈。":
+            return {"error": "Post-exam feedback is required before generating a retrospective."}
+        try:
+            if datetime.fromisoformat(exam["exam_date"]).date() > datetime.now().date():
+                return {"error": "Retrospective is unavailable before the exam date."}
+        except (TypeError, ValueError):
+            return {"error": "Exam record has an invalid exam date."}
+
         course_id = exam["course_id"]
         exam_date = exam["exam_date"]
 
