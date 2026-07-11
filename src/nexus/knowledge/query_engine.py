@@ -162,11 +162,20 @@ def _extract_keywords(user_query: str) -> list[str]:
     """
     stopwords = {
         "什么", "是", "的", "了", "吗", "呢", "如何", "怎么", "怎样", "为什么",
-        "请", "帮", "我", "要", "能", "会", "关于", "介绍",
+        "请", "帮", "我", "要", "能", "会", "关于", "介绍", "解释", "和", "有", "区别",
         "explain", "what", "is", "how", "why", "can", "please", "about",
         "tell", "me", "the", "a", "an", "and", "or", "in", "on", "at", "to", "for",
     }
-    words = re.findall(r"[a-zA-Z0-9一-鿿]+", user_query)
+    prepared = user_query
+    chinese_stopwords = sorted(
+        (word for word in stopwords if re.search(r"[一-鿿]", word)),
+        key=len,
+        reverse=True,
+    )
+    for stopword in chinese_stopwords:
+        prepared = prepared.replace(stopword, " ")
+
+    words = re.findall(r"[a-zA-Z0-9]+|[一-鿿]{2,}", prepared)
     keywords = [
         w for w in words
         if w.lower() not in stopwords and len(w) >= 2
@@ -386,29 +395,23 @@ class QueryEngine:
         keywords = _extract_keywords(user_query)
 
         if keywords:
-            # 对每个关键词单独做 where 过滤（$or 在某些 ChromaDB 版本不稳定）
-            seen_keyword: set[str] = set()
-            for kw in keywords[:3]:  # 最多取前 3 个关键词，避免请求过多
-                try:
-                    # $contains：检查 keywords 字符串中是否包含该子串
-                    result = self._chroma.query(
-                        user_query,                         # 仍用原始问题做向量检索
-                        n_results=self.n_keyword,
-                        where={"keywords": {"$contains": kw}},
-                        course_id=course_id,
-                    )
-                    docs = (result.get("documents") or [[]])[0]
-                    metas = (result.get("metadatas") or [[]])[0]
-                    ids = (result.get("ids") or [[]])[0]
-                    dists = (result.get("distances") or [[]])[0]
-
-                    for cid, doc, meta, dist in zip(ids, docs, metas, dists):
-                        if cid not in seen_keyword:
-                            seen_keyword.add(cid)
-                            keyword_raw.append((cid, doc, meta or {}, dist))
-                except Exception as exc:
-                    # 关键词路径失败时静默降级（语义路径仍可用）
-                    logger.debug(f"关键词检索跳过（kw={kw!r}）: {exc}")
+            try:
+                result = self._chroma.query_keywords(
+                    keywords[:5],
+                    n_results=self.n_keyword,
+                    course_id=course_id,
+                )
+                docs = (result.get("documents") or [[]])[0]
+                metas = (result.get("metadatas") or [[]])[0]
+                ids = (result.get("ids") or [[]])[0]
+                dists = (result.get("distances") or [[]])[0]
+                keyword_raw.extend(
+                    (cid, doc, meta or {}, dist)
+                    for cid, doc, meta, dist in zip(ids, docs, metas, dists)
+                )
+            except Exception as exc:
+                # 关键词路径失败时静默降级（语义路径仍可用）
+                logger.debug(f"关键词检索跳过: {exc}")
 
         # ── 合并去重 + Rerank ──
         chunks = _merge_and_rerank(semantic_raw, keyword_raw, top_k=self.top_k)

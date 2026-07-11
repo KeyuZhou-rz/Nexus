@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.knowledge.query_engine import QueryEngine, RetrievalError
+from nexus.knowledge.query_engine import QueryEngine, RetrievalError, _extract_keywords
 from nexus.knowledge.sqlite_store import SQLiteStore, connect
 from nexus.knowledge.store import (
     ChromaKnowledgeStore,
@@ -57,6 +57,23 @@ class _Collection:
             "distances": [[row[2] for row in self.rows]],
         }
 
+    def count(self):
+        return len(self.rows)
+
+    def get(self, **_kwargs):
+        return {
+            "ids": [row[0] for row in self.rows],
+            "documents": [row[1] for row in self.rows],
+            "metadatas": [
+                {
+                    "course_id": self.metadata["course_id"],
+                    "topic": row[1],
+                    "keywords": row[1],
+                }
+                for row in self.rows
+            ],
+        }
+
 
 class _Client:
     def __init__(self, collections: dict[str, _Collection]) -> None:
@@ -95,6 +112,58 @@ def test_global_query_merges_existing_courses_by_distance() -> None:
 
     assert result["ids"] == [["b", "a"]]
     assert client.created == []
+
+
+def test_keyword_query_ranks_exact_metadata_matches() -> None:
+    client = _Client({
+        "OSx": _Collection("OS", [
+            ("process", "进程", 0.8),
+            ("timer", "定时器", 0.1),
+        ]),
+    })
+
+    result = _store(client).query_keywords(["进程"], n_results=2, course_id="OS")
+
+    assert result["ids"] == [["process"]]
+    assert result["distances"][0][0] < 0.5
+
+
+class _HybridChroma:
+    def query(self, *_args, **_kwargs):
+        return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+    def query_keywords(self, *_args, **_kwargs):
+        return {
+            "ids": [["process"]],
+            "documents": [["进程是运行中的程序实例。"]],
+            "metadatas": [[{"topic": "进程", "keywords": "进程,process"}]],
+            "distances": [[0.30]],
+        }
+
+
+def test_query_engine_uses_deterministic_keyword_path() -> None:
+    engine = QueryEngine.__new__(QueryEngine)
+    engine._chroma = _HybridChroma()
+    engine.n_semantic = 5
+    engine.n_keyword = 5
+    engine.top_k = 5
+
+    result = engine.retrieve("什么是进程", expanded_queries=["什么是进程"])
+
+    assert [chunk.chunk_id for chunk in result.chunks] == ["process"]
+    assert result.chunks[0].retrieval_path == "keyword"
+
+
+def test_extract_keywords_segments_chinese_question_phrases() -> None:
+    assert _extract_keywords("什么是进程？进程和程序有什么区别？") == ["进程", "程序"]
+
+
+def test_extract_keywords_preserves_mixed_technical_terms() -> None:
+    assert _extract_keywords("请解释 Trap 和 Interrupt 如何切换") == [
+        "Trap",
+        "Interrupt",
+        "切换",
+    ]
 
 
 def test_unknown_course_query_does_not_create_collection() -> None:

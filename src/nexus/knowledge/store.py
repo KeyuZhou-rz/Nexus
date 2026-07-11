@@ -233,6 +233,60 @@ class ChromaKnowledgeStore:
             "distances": [[item[3] for item in selected]],
         }
 
+    def query_keywords(
+        self,
+        keywords: list[str],
+        n_results: int = 5,
+        course_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Deterministic keyword lookup over normalized metadata tokens.
+
+        Chroma metadata string filters do not provide portable substring
+        semantics across supported versions. Read metadata once per collection
+        and rank exact keyword/topic matches locally instead.
+        """
+        normalized = [keyword.strip().casefold() for keyword in keywords if keyword.strip()]
+        if not normalized:
+            return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+        ranked: list[tuple[str, str, dict[str, Any], float]] = []
+        for coll in self._collections_for_read(course_id):
+            count = coll.count()
+            if count <= 0:
+                continue
+            result = coll.get(
+                include=["documents", "metadatas"],
+                limit=count,
+            )
+            for chunk_id, document, metadata in zip(
+                result.get("ids") or [],
+                result.get("documents") or [],
+                result.get("metadatas") or [],
+            ):
+                meta = metadata or {}
+                tokens = {
+                    token.strip().casefold()
+                    for token in str(meta.get("keywords", "")).split(",")
+                    if token.strip()
+                }
+                topic = str(meta.get("topic", "")).casefold()
+                exact_matches = sum(1 for keyword in normalized if keyword in tokens)
+                topic_matches = sum(1 for keyword in normalized if keyword in topic)
+                if exact_matches == 0 and topic_matches == 0:
+                    continue
+                relevance = exact_matches * 2 + topic_matches
+                distance = max(0.20, 0.48 - relevance * 0.06)
+                ranked.append((chunk_id, document, meta, distance))
+
+        ranked.sort(key=lambda item: (item[3], item[0]))
+        selected = ranked[:n_results]
+        return {
+            "ids": [[item[0] for item in selected]],
+            "documents": [[item[1] for item in selected]],
+            "metadatas": [[item[2] for item in selected]],
+            "distances": [[item[3] for item in selected]],
+        }
+
     def fetch_chunks(
         self,
         *,
