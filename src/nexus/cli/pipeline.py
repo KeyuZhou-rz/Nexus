@@ -28,6 +28,8 @@ def main() -> None:
         report_output=Path(args.report_output) if args.report_output else None,
     )
     print(json.dumps(report, ensure_ascii=False))
+    if not report.get("ok"):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import json
+import os
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -79,3 +81,27 @@ def test_existing_module_entrypoints_have_help() -> None:
     for module in ("pipeline", "briefing", "ingest", "query"):
         result = _run("-m", f"nexus.cli.{module}", "--help")
         assert result.returncode == 0, (module, result.stderr)
+
+
+def test_pipeline_exit_code_tracks_structured_report(tmp_path) -> None:
+    env = {**os.environ, "NEXUS_DATA_DIR": str(tmp_path / "data")}
+    ok = subprocess.run(
+        [sys.executable, "-m", "nexus.cli.pipeline", "--skip-archive-sync", "--no-google"],
+        text=True, capture_output=True, check=False, env=env,
+    )
+    assert ok.returncode == 0, ok.stderr
+    assert json.loads(ok.stdout)["ok"] is True
+
+    output_directory = tmp_path / "not-a-file"
+    output_directory.mkdir()
+    failed = subprocess.run(
+        [
+            sys.executable, "-m", "nexus.cli.pipeline", "--skip-archive-sync", "--no-google",
+            "--briefing-output", str(output_directory),
+        ],
+        text=True, capture_output=True, check=False, env=env,
+    )
+    assert failed.returncode == 1
+    payload = json.loads(failed.stdout)
+    assert payload["ok"] is False
+    assert any(step["name"] == "briefing" and step["status"] == "failed" for step in payload["steps"])

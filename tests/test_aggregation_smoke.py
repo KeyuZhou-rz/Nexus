@@ -61,6 +61,7 @@ def test_run_aggregation_smoke(monkeypatch):
     monkeypatch.setattr(aggregation, "save_tasks", _save)
     monkeypatch.setattr(aggregation, "BrightspaceAggregator", _BrightspaceStub)
     monkeypatch.setattr(aggregation, "GoogleAggregator", _GoogleStub)
+    monkeypatch.setattr(aggregation, "_google_configured", lambda config: True)
 
     result = aggregation.run_aggregation(include_google=True)
     assert not result.errors

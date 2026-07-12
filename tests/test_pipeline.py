@@ -21,7 +21,7 @@ def test_run_mvp_pipeline_writes_report_and_briefing(tmp_path: Path, monkeypatch
     data_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("nexus.pipeline.default_config", lambda: AppConfig(data_dir=data_dir))
-    monkeypatch.setattr("nexus.pipeline.run_aggregation", lambda include_google=True, data_dir=None: AggregationResult(tasks=[], errors=[]))
+    monkeypatch.setattr("nexus.pipeline.run_aggregation", lambda include_google=True, data_dir=None, config=None: AggregationResult(tasks=[], errors=[]))
     monkeypatch.setattr("nexus.pipeline.load_tasks", lambda path=None: [])
     monkeypatch.setattr(
         "nexus.pipeline.build_briefing",
@@ -43,7 +43,8 @@ def test_run_mvp_pipeline_writes_report_and_briefing(tmp_path: Path, monkeypatch
     report = run_mvp_pipeline(run_archive_sync=False, use_llm=False)
 
     assert report["ok"] is True
-    assert [step["name"] for step in report["steps"]] == ["aggregation", "briefing"]
+    assert [step["name"] for step in report["steps"]] == ["archive_sync", "aggregation", "briefing"]
+    assert report["steps"][0]["status"] == "skipped"
 
     briefing_path = data_dir / "briefing.json"
     report_path = data_dir / "pipeline_report.json"
@@ -63,7 +64,8 @@ def test_run_mvp_pipeline_continues_when_archive_sync_fails(tmp_path: Path, monk
         "nexus.pipeline.run_archive_sync_subprocess",
         lambda timeout=420: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    monkeypatch.setattr("nexus.pipeline.run_aggregation", lambda include_google=True, data_dir=None: AggregationResult(tasks=[], errors=[]))
+    monkeypatch.setenv("NEXUS_BRIGHTSPACE_URL", "https://example.invalid")
+    monkeypatch.setattr("nexus.pipeline.run_aggregation", lambda include_google=True, data_dir=None, config=None: AggregationResult(tasks=[], errors=[]))
     monkeypatch.setattr("nexus.pipeline.load_tasks", lambda path=None: [])
     monkeypatch.setattr(
         "nexus.pipeline.build_briefing",
@@ -88,3 +90,58 @@ def test_run_mvp_pipeline_continues_when_archive_sync_fails(tmp_path: Path, monk
     names = [step["name"] for step in report["steps"]]
     assert names == ["archive_sync", "aggregation", "briefing"]
     assert report["steps"][0]["ok"] is False
+    assert report["steps"][0]["status"] == "failed"
+
+
+def test_pipeline_captures_aggregation_and_briefing_exceptions(tmp_path: Path, monkeypatch):
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr("nexus.pipeline.default_config", lambda: AppConfig(data_dir=data_dir))
+    monkeypatch.setattr(
+        "nexus.pipeline.run_aggregation",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("source exploded")),
+    )
+    monkeypatch.setattr(
+        "nexus.pipeline.build_briefing",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("briefing exploded")),
+    )
+
+    report = run_mvp_pipeline(run_archive_sync=False, include_google=False)
+
+    assert report["ok"] is False
+    statuses = {step["name"]: step["status"] for step in report["steps"]}
+    assert statuses == {
+        "archive_sync": "skipped",
+        "aggregation": "failed",
+        "briefing": "failed",
+    }
+    saved = json.loads((data_dir / "pipeline_report.json").read_text(encoding="utf-8"))
+    assert saved["ok"] is False
+
+
+def test_pipeline_reports_report_write_failure(tmp_path: Path, monkeypatch):
+    data_dir = tmp_path / "data"
+    bad_report_path = tmp_path / "report-is-directory"
+    bad_report_path.mkdir()
+    monkeypatch.setattr("nexus.pipeline.default_config", lambda: AppConfig(data_dir=data_dir))
+    monkeypatch.setattr(
+        "nexus.pipeline.run_aggregation",
+        lambda **kwargs: AggregationResult(tasks=[], errors=[]),
+    )
+    monkeypatch.setattr("nexus.pipeline.load_tasks", lambda path=None: [])
+    monkeypatch.setattr(
+        "nexus.pipeline.build_briefing",
+        lambda *args, **kwargs: _BriefingStub(todo=[], schedule=[], warnings=[]),
+    )
+    monkeypatch.setattr(
+        "nexus.pipeline.briefing_payload",
+        lambda *args, **kwargs: {"todo": [], "schedule": [], "warnings": []},
+    )
+
+    report = run_mvp_pipeline(
+        run_archive_sync=False,
+        include_google=False,
+        report_output=bad_report_path,
+    )
+    assert report["ok"] is False
+    assert report["steps"][-1]["name"] == "report_write"
+    assert report["steps"][-1]["status"] == "failed"
