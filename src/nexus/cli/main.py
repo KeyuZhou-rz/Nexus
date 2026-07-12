@@ -16,6 +16,7 @@ COMMANDS = {
     "db-restore": ("nexus.cli.db_restore", "Validate or restore a backup"),
     "db-repair": ("nexus.cli.db_repair", "Preview or apply conservative repairs"),
     "cache": ("nexus.cli.cache", "List or clear parser cache entries"),
+    "sessions": ("nexus.cli.sessions", "Finalize idle learning sessions"),
     "ui": ("nexus.cli.ui", "Run the Streamlit application"),
     "memory-extract": ("nexus.cli.memory_extract", "Extract weak points from conversations"),
     "memory-feedback": ("nexus.cli.memory_feedback", "Apply feedback to a weak point"),

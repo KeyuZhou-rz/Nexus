@@ -187,42 +187,46 @@ class SessionManager:
         if state.ended:
             return {"status": "already_ended", "session_id": session_id}
 
-        # 先标记 ended 并落盘，防止 idle 轮询与显式调用重入时重复分析
-        state.ended = True
-        self._save_state(state)
+        # Claim atomically so explicit end and scheduler finalization cannot
+        # both analyze/apply the same session.
+        if not self._store.claim_session_end(session_id):
+            return {"status": "already_ended", "session_id": session_id}
 
-        logs = self._store.get_session_logs(session_id)
+        try:
+            logs = self._store.get_session_logs(session_id)
 
-        # 少于 2 轮问答时不分析（数据太少，LLM 分析价值低）
-        if len(logs) < 2:
-            logger.info(f"Session {session_id} 交互太少（{len(logs)} 条），跳过 profile 更新")
+            # 少于 2 轮问答时不分析（数据太少，LLM 分析价值低）
+            if len(logs) < 2:
+                logger.info(f"Session {session_id} 交互太少（{len(logs)} 条），跳过 profile 更新")
+                return {"status": "skipped", "reason": "too_few_interactions", "count": len(logs)}
+
+            logger.info(f"Session {session_id} 结束，开始分析 {len(logs)} 条交互记录")
+
+            # ── 构建对话 transcript ──
+            transcript = _build_transcript(logs)
+
+            # ── LLM 分析 ──
+            patch = self._analyze_session(transcript)
+
+            # ── 应用 patch ──
+            if patch:
+                result = self._profile.apply_patch(
+                    patch, course_id=state.course_id, session_id=session_id
+                )
+                logger.info(f"Profile 已更新: {result['applied']} | {result.get('notes', '')}")
+            else:
+                result = {"applied": "0 changes", "details": [], "notes": "LLM 分析跳过"}
+
+            return {
+                "status": "completed",
+                "session_id": session_id,
+                "interactions": len(logs),
+                "patch_result": result,
+            }
+        finally:
+            # Interaction logs are immutable evidence and remain available;
+            # only the active-session marker is removed.
             self._store.delete_session(session_id)
-            return {"status": "skipped", "reason": "too_few_interactions", "count": len(logs)}
-
-        logger.info(f"Session {session_id} 结束，开始分析 {len(logs)} 条交互记录")
-
-        # ── 构建对话 transcript ──
-        transcript = _build_transcript(logs)
-
-        # ── LLM 分析 ──
-        patch = self._analyze_session(transcript)
-
-        # ── 应用 patch ──
-        if patch:
-            result = self._profile.apply_patch(
-                patch, course_id=state.course_id, session_id=session_id
-            )
-            logger.info(f"Profile 已更新: {result['applied']} | {result.get('notes', '')}")
-        else:
-            result = {"applied": "0 changes", "details": [], "notes": "LLM 分析跳过"}
-
-        self._store.delete_session(session_id)
-        return {
-            "status": "completed",
-            "session_id": session_id,
-            "interactions": len(logs),
-            "patch_result": result,
-        }
 
     def check_and_end_idle_sessions(self) -> list[str]:
         """
@@ -235,8 +239,9 @@ class SessionManager:
             session_id = row["session_id"]
             if self.is_idle(session_id):
                 logger.info(f"Session {session_id} idle 超时，自动结束")
-                self.end_session(session_id)
-                ended.append(session_id)
+                result = self.end_session(session_id)
+                if result.get("status") in {"completed", "skipped"}:
+                    ended.append(session_id)
         return ended
 
     # ────────────────────────────────────────────────
@@ -248,8 +253,8 @@ class SessionManager:
         调用 LLM 分析 session transcript，返回 profile patch dict。
         无 LLM 可用时返回 None（跳过更新）。
         """
-        if not self._api_key:
-            logger.info("无 LLM API key，跳过 session LLM 分析")
+        if not gateway.is_enabled or not self._api_key:
+            logger.info("LLM disabled or unavailable, skipping session analysis")
             return None
 
         current_profile = self._profile.get()

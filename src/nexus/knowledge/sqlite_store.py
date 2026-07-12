@@ -19,7 +19,7 @@ from typing import Any, Iterator
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_LATEST_SCHEMA_VERSION = 2
+_LATEST_SCHEMA_VERSION = 3
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -128,6 +128,24 @@ class SQLiteStore:
                    FROM parse_cache_legacy"""
             )
             conn.execute("DROP TABLE parse_cache_legacy")
+            return
+        if version == 3:
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(learning_events)")
+            }
+            for name, column_type in (
+                ("evidence_type", "TEXT"),
+                ("trust_status", "TEXT"),
+                ("classified_at", "TIMESTAMP"),
+            ):
+                if name not in columns:
+                    conn.execute(
+                        f"ALTER TABLE learning_events ADD COLUMN {name} {column_type}"
+                    )
+            conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_learning_events_trust
+                   ON learning_events(trust_status, concept_id, timestamp)"""
+            )
             return
         raise RuntimeError(f"Unsupported schema migration: {version}")
 
@@ -348,6 +366,19 @@ class SQLiteStore:
         """删除 session 状态（session 结束后清理，防止表无限增长）。"""
         with connect(self.db_path) as conn:
             conn.execute("DELETE FROM active_sessions WHERE session_id=?", (session_id,))
+
+    def claim_session_end(self, session_id: str) -> bool:
+        """Atomically claim an active session for finalization.
+
+        Returns False when another process already claimed or ended it. This
+        prevents two scheduler instances from applying the same profile patch.
+        """
+        with connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "UPDATE active_sessions SET ended=1 WHERE session_id=? AND ended=0",
+                (session_id,),
+            )
+            return cursor.rowcount == 1
 
     def get_active_sessions(self) -> list[dict[str, Any]]:
         """获取所有未结束（ended=0）的 session，供 idle 超时轮询使用。"""
@@ -659,19 +690,27 @@ class SQLiteStore:
         event_type: str,
         session_id: str | None = None,
         context: dict[str, Any] | None = None,
+        evidence_type: str = "direct",
+        trust_status: str = "trusted",
     ) -> None:
         """记录一次学习事件。"""
+        if trust_status not in {"trusted", "legacy"}:
+            raise ValueError("trust_status must be 'trusted' or 'legacy'")
         with connect(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT INTO learning_events (concept_id, event_type, session_id, context)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO learning_events
+                    (concept_id, event_type, session_id, context,
+                     evidence_type, trust_status, classified_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 (
                     concept_id,
                     event_type,
                     session_id,
                     json.dumps(context, ensure_ascii=False) if context else None,
+                    evidence_type,
+                    trust_status,
                 ),
             )
 
@@ -679,22 +718,64 @@ class SQLiteStore:
         self,
         concept_id: str,
         since: str | None = None,
+        trusted_only: bool = False,
     ) -> list[dict[str, Any]]:
         """获取指定概念的学习事件（可选时间过滤）。"""
         with connect(self.db_path) as conn:
+            trust_clause = " AND trust_status = 'trusted'" if trusted_only else ""
             if since:
                 rows = conn.execute(
-                    """SELECT * FROM learning_events
+                    f"""SELECT * FROM learning_events
                        WHERE concept_id = ? AND timestamp >= ?
+                       {trust_clause}
                        ORDER BY timestamp""",
                     (concept_id, since),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM learning_events WHERE concept_id = ? ORDER BY timestamp",
+                    f"""SELECT * FROM learning_events WHERE concept_id = ?
+                        {trust_clause} ORDER BY timestamp""",
                     (concept_id,),
                 ).fetchall()
             return [dict(r) for r in rows]
+
+    def get_learning_event_stats(
+        self, course_id: str | None = None
+    ) -> dict[str, Any]:
+        """Return auditable trusted/legacy/unclassified event counts."""
+        with connect(self.db_path) as conn:
+            params: tuple[Any, ...] = ()
+            course_join = ""
+            course_where = ""
+            if course_id:
+                course_join = " JOIN concepts c ON c.concept_id = le.concept_id"
+                course_where = " WHERE c.course_id = ?"
+                params = (course_id,)
+            rows = conn.execute(
+                f"""SELECT COALESCE(le.trust_status, 'unclassified') AS status,
+                           COUNT(*) AS count
+                    FROM learning_events le{course_join}{course_where}
+                    GROUP BY COALESCE(le.trust_status, 'unclassified')""",
+                params,
+            ).fetchall()
+            by_status = {row["status"]: row["count"] for row in rows}
+            evidence_rows = conn.execute(
+                f"""SELECT COALESCE(le.evidence_type, 'unclassified') AS evidence,
+                           COUNT(*) AS count
+                    FROM learning_events le{course_join}{course_where}
+                    GROUP BY COALESCE(le.evidence_type, 'unclassified')""",
+                params,
+            ).fetchall()
+        total = sum(by_status.values())
+        return {
+            "total": total,
+            "trusted": by_status.get("trusted", 0),
+            "legacy": by_status.get("legacy", 0),
+            "unclassified": by_status.get("unclassified", 0),
+            "by_evidence_type": {
+                row["evidence"]: row["count"] for row in evidence_rows
+            },
+        }
 
     def upsert_mastery(
         self,

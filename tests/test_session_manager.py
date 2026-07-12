@@ -19,6 +19,7 @@ import pytest
 from nexus.knowledge.session_manager import SessionManager
 from nexus.knowledge.sqlite_store import SQLiteStore
 from nexus.knowledge.user_profile import UserProfileManager
+from nexus.cli.sessions import main as sessions_main
 
 SESSION = "sess-1"
 COURSE = "CS202_OS"
@@ -160,3 +161,33 @@ class TestEndSessionCleansUpRow:
         )
         result = mgr.end_session(SESSION)
         assert result["status"] == "already_ended"
+
+    def test_finalize_is_idempotent_across_two_managers(self, store):
+        mgr1 = _make_manager(store)
+        mgr2 = _make_manager(store)
+        mgr1.start_session(SESSION)
+        store.log_interaction(SESSION, "q1", "a1", course_id=COURSE)
+        store.log_interaction(SESSION, "q2", "a2", course_id=COURSE)
+
+        first = mgr1.end_session(SESSION)
+        second = mgr2.end_session(SESSION)
+        assert first["status"] == "completed"
+        assert second["status"] == "not_found"
+        assert len(store.get_session_logs(SESSION)) == 2
+
+    def test_cli_finalize_idle_is_scheduler_callable(self, store, capsys):
+        mgr = _make_manager(store, idle_timeout_minutes=5)
+        mgr.start_session(SESSION)
+        row = store.get_session(SESSION)
+        stale_time = (datetime.now() - timedelta(minutes=10)).isoformat()
+        store.upsert_session(
+            session_id=SESSION,
+            started_at=row["started_at"],
+            last_active=stale_time,
+            course_id=row["course_id"],
+            interaction_count=row["interaction_count"],
+            ended=False,
+        )
+        assert sessions_main(["--db-path", str(store.db_path), "finalize-idle", "--json"]) == 0
+        assert '"count": 1' in capsys.readouterr().out
+        assert store.get_session(SESSION) is None
