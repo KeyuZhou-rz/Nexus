@@ -80,6 +80,27 @@ class ChromaKnowledgeStore:
         else:
             self.collection = None  # per_course 模式下按需创建
 
+    def close(self) -> None:
+        """Release the underlying Chroma system and file handles."""
+        client = getattr(self, "_client", None)
+        if client is None:
+            return
+        self._client = None
+        try:
+            client.close()
+        except Exception:
+            # Cleanup must not mask the original operation/test failure.
+            pass
+
+    def __enter__(self) -> "ChromaKnowledgeStore":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def __del__(self) -> None:  # pragma: no cover - interpreter cleanup fallback
+        self.close()
+
     # ────────────────────────────────────────────────
     # Per-course collection 管理
     # ────────────────────────────────────────────────

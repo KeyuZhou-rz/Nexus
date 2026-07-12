@@ -149,6 +149,19 @@ class ChunkBackfill:
         self._store = store
         self._client: chromadb.PersistentClient | None = None
 
+    def close(self) -> None:
+        """Release the lazy Chroma client when a backfill run is complete."""
+        client = self._client
+        self._client = None
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    def __del__(self) -> None:  # pragma: no cover - interpreter cleanup fallback
+        self.close()
+
     @property
     def client(self) -> chromadb.PersistentClient:
         if self._client is None:
