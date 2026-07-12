@@ -90,13 +90,36 @@ def test_assessment_cannot_be_submitted_twice() -> None:
         pipeline.submit_assessment(attempt, "another answer")
 
 
-def test_target_selection_prefers_named_concept_and_is_deterministic() -> None:
+def test_target_selection_binds_to_the_question_concept() -> None:
     rows = [
         {"concept_id": "b", "name": "Mutex"},
         {"concept_id": "a", "name": "Deadlock"},
     ]
     assert _select_assessment_target("Quiz me on Mutex", rows)["concept_id"] == "b"
-    assert _select_assessment_target("Concurrency quiz", rows)["concept_id"] == "a"
+    assert (
+        _select_assessment_target(
+            "Concurrency quiz",
+            rows,
+            question="Explain how a Mutex provides mutual exclusion.",
+        )["concept_id"]
+        == "b"
+    )
+
+
+def test_target_selection_rejects_ambiguous_multi_concept_question() -> None:
+    rows = [
+        {"concept_id": "b", "name": "Mutex"},
+        {"concept_id": "a", "name": "Deadlock"},
+    ]
+    assert _select_assessment_target("Concurrency quiz", rows) is None
+    assert (
+        _select_assessment_target(
+            "Concurrency quiz",
+            rows,
+            question="Compare Mutex behavior with Deadlock prevention.",
+        )
+        is None
+    )
 
 
 def test_grader_accepts_json_markdown_fence() -> None:

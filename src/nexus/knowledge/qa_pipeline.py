@@ -558,7 +558,11 @@ class QAPipeline:
         )
         chunk_ids = [source.chunk_id for source in response.sources]
         concept_rows = self._sqlite.get_concepts_for_chunks(chunk_ids) if chunk_ids else []
-        target_row = _select_assessment_target(topic, concept_rows)
+        target_row = _select_assessment_target(
+            topic,
+            concept_rows,
+            question=response.answer,
+        )
         if target_row is None:
             raise ValueError("No indexed concept is available for this assessment")
         source_refs = tuple(
@@ -823,21 +827,42 @@ def _summarize_profile(profile: dict) -> str:
     return "；".join(parts)
 
 
-def _select_assessment_target(topic: str, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Prefer a concept explicitly named by the user, then fall back deterministically."""
+def _select_assessment_target(
+    topic: str,
+    rows: list[dict[str, Any]],
+    *,
+    question: str = "",
+) -> dict[str, Any] | None:
+    """Bind an assessment to one explicit concept, or reject ambiguous evidence."""
     if not rows:
         return None
-    normalized_topic = topic.casefold()
     unique: dict[str, dict[str, Any]] = {}
     for row in rows:
         concept_id = str(row.get("concept_id") or "")
         if concept_id:
             unique.setdefault(concept_id, row)
-    for row in unique.values():
-        name = str(row.get("name") or "").strip()
-        if name and name.casefold() in normalized_topic:
-            return row
-    return sorted(unique.values(), key=lambda row: str(row.get("concept_id")))[0] if unique else None
+
+    def named_matches(text: str) -> list[dict[str, Any]]:
+        normalized = text.casefold()
+        return [
+            row
+            for row in unique.values()
+            if (name := str(row.get("name") or "").strip())
+            and name.casefold() in normalized
+        ]
+
+    question_matches = named_matches(question)
+    if len(question_matches) == 1:
+        return question_matches[0]
+    if len(question_matches) > 1:
+        return None
+
+    topic_matches = named_matches(topic)
+    if len(topic_matches) == 1:
+        return topic_matches[0]
+    if len(unique) == 1:
+        return next(iter(unique.values()))
+    return None
 
 
 def _parse_assessment_grade(content: str) -> AssessmentGrade:
