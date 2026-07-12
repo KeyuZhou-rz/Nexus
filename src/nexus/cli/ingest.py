@@ -39,7 +39,7 @@ def _collect_files(input_path: Path, extensions: tuple[str, ...]) -> list[Path]:
     return []
 
 
-def _run_phase3(args: argparse.Namespace) -> None:
+def _run_phase3(args: argparse.Namespace) -> int:
     """ingest 路径：CourseIngestor（DeepSeek 语义解析 + 双写）。"""
     from ..knowledge.ingestor import CourseIngestor
 
@@ -55,16 +55,24 @@ def _run_phase3(args: argparse.Namespace) -> None:
         sqlite_path=sqlite_path,
     )
 
-    total_chunks = 0
+    results = []
     for fp in files:
         result = ingestor.ingest_file(fp, args.course_id, force=args.force)
         print(result)
-        total_chunks += result.chunks
+        results.append(result)
 
-    print(f"\n完成：共 {len(files)} 个文件，{total_chunks} chunks")
+    ingested = sum(result.status == "ingested" for result in results)
+    skipped = sum(result.status == "skipped" for result in results)
+    failed = sum(result.status == "failed" for result in results)
+    total_chunks = sum(result.chunks for result in results if result.status != "failed")
+    print(
+        f"\n汇总：成功 {ingested}，跳过 {skipped}，失败 {failed}，"
+        f"共 {total_chunks} chunks"
+    )
+    return 1 if failed else 0
 
 
-def _run_legacy(args: argparse.Namespace) -> None:
+def _run_legacy(args: argparse.Namespace) -> int:
     """Legacy ingest 路径：固定大小文本切片（Phase 2）。"""
     from ..knowledge.document_text import SUPPORTED_TEXT_SUFFIXES
     from ..knowledge.ingest import ingest_files
@@ -84,9 +92,10 @@ def _run_legacy(args: argparse.Namespace) -> None:
         overlap=getattr(args, "overlap", 120),
     )
     print(f"Ingested files: {summary.files}, chunks: {summary.chunks}")
+    return 0
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Nexus ingest — 将课件解析并存入知识库"
     )
@@ -114,10 +123,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.legacy:
-        _run_legacy(args)
-    else:
-        _run_phase3(args)
+        return _run_legacy(args)
+    return _run_phase3(args)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
