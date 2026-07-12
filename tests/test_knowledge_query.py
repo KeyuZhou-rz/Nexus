@@ -9,13 +9,21 @@ class _StoreStub:
     def __init__(self, *_args, **_kwargs):
         self.last = None
 
-    def query(self, text: str, n_results: int = 5, where=None):
-        self.last = {"text": text, "n_results": n_results, "where": where}
+    def query(self, text: str, n_results: int = 5, where=None, course_id=None):
+        self.last = {
+            "text": text,
+            "n_results": n_results,
+            "where": where,
+            "course_id": course_id,
+        }
         return {
             "documents": [["chunk-1"]],
             "metadatas": [[{"file_name": "a.md", "course_id": "EE201", "doc_type": "notes"}]],
             "distances": [[0.123]],
         }
+
+    def close(self):
+        pass
 
 
 def test_query_knowledge_with_filters(monkeypatch):
@@ -34,7 +42,7 @@ def test_query_knowledge_with_filters(monkeypatch):
 
 def test_query_knowledge_without_results(monkeypatch):
     class _EmptyStore(_StoreStub):
-        def query(self, text: str, n_results: int = 5, where=None):
+        def query(self, text: str, n_results: int = 5, where=None, course_id=None):
             return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
 
     monkeypatch.setattr(query_module, "ChromaKnowledgeStore", _EmptyStore)

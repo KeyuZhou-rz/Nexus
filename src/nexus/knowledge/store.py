@@ -48,10 +48,12 @@ class ChromaKnowledgeStore:
         persist_dir: Path,
         collection_name: str = "nexus_chunks",
         per_course: bool = False,
+        include_legacy_reads: bool = False,
     ) -> None:
         self.persist_dir = persist_dir
         self._base_collection_name = collection_name
         self._per_course = per_course
+        self._include_legacy_reads = include_legacy_reads
 
         try:
             import chromadb
@@ -145,13 +147,16 @@ class ChromaKnowledgeStore:
         """List indexed per-course collections, excluding legacy/default collections."""
         collections: list[Any] = []
         for listed in self._client.list_collections():
-            collection = listed
-            if not hasattr(collection, "query"):
-                name = listed if isinstance(listed, str) else listed.name
-                collection = self._client.get_collection(
-                    name=name,
-                    embedding_function=self._default_ef,
-                )
+            # Chroma versions differ: some return names, newer versions return
+            # Collection objects bound to their default embedding function.
+            # Re-open by name so query embeddings always match this store.
+            name = listed if isinstance(listed, str) else getattr(listed, "name", None)
+            if not name:
+                name = (getattr(listed, "metadata", None) or {}).get("course_id")
+            collection = self._client.get_collection(
+                name=name,
+                embedding_function=self._default_ef,
+            )
             if (getattr(collection, "metadata", None) or {}).get("course_id"):
                 collections.append(collection)
         return collections
@@ -163,12 +168,42 @@ class ChromaKnowledgeStore:
             return self.get_or_create_course_collection(course_id)
         return self.collection
 
+    def _legacy_collection(self):
+        """Return the existing legacy collection without creating it."""
+        try:
+            return self._client.get_collection(
+                name=self._base_collection_name,
+                embedding_function=self._default_ef,
+            )
+        except Exception:
+            return None
+
     def _collections_for_read(self, course_id: str | None) -> list[Any]:
         if not self._per_course:
             return [self.collection]
+        collections: list[Any] = []
+        course_missing = False
         if course_id:
-            return [self.get_course_collection(course_id)]
-        return self._course_collections()
+            try:
+                collections.append(self.get_course_collection(course_id))
+            except CourseCollectionNotFoundError:
+                course_missing = True
+        else:
+            collections.extend(self._course_collections())
+        if getattr(self, "_include_legacy_reads", False):
+            legacy = self._legacy_collection()
+            existing_names = {getattr(collection, "name", None) for collection in collections}
+            if legacy is not None and legacy.name not in existing_names:
+                collections.append(legacy)
+        if (
+            course_missing
+            and not collections
+            and not getattr(self, "_include_legacy_reads", False)
+        ):
+            raise CourseCollectionNotFoundError(
+                f"No indexed collection found for course {course_id!r}"
+            )
+        return collections
 
     def delete_course_collection(self, course_id: str) -> None:
         """

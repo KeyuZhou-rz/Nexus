@@ -30,7 +30,15 @@ def query_knowledge(
     session_id: str | None = None,
 ) -> QuerySummary:
     """Query knowledge chunks with optional metadata filtering."""
-    store = ChromaKnowledgeStore(db_dir, collection_name=collection_name)
+    # The primary ingestor writes one collection per course. Query those
+    # existing collections and merge an existing legacy default collection,
+    # but never create an empty ``nexus_chunks`` as a side effect of reading.
+    store = ChromaKnowledgeStore(
+        db_dir,
+        collection_name=collection_name,
+        per_course=True,
+        include_legacy_reads=True,
+    )
 
     where: dict[str, Any] | None = None
     filters: list[dict[str, str]] = []
@@ -46,7 +54,15 @@ def query_knowledge(
     elif len(filters) > 1:
         where = {"$and": filters}
 
-    result = store.query(query_text, n_results=n_results, where=where)
+    try:
+        result = store.query(
+            query_text,
+            n_results=n_results,
+            where=where,
+            course_id=course_id,
+        )
+    finally:
+        store.close()
 
     docs = (result.get("documents") or [[]])[0]
     metas = (result.get("metadatas") or [[]])[0]
