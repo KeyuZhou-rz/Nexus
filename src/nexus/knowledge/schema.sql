@@ -2,6 +2,11 @@
 -- 所有表均支持幂等创建（IF NOT EXISTS）
 -- WAL 模式和外键约束须在每次连接时手动启用（见 sqlite_store.py）
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version         INTEGER PRIMARY KEY,
+    applied_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ────────────────────────────────────────────────
 -- 文档注册表
 -- 追踪已解析的文件，用于幂等性检查（file_hash）和增量更新
@@ -14,7 +19,8 @@ CREATE TABLE IF NOT EXISTS documents (
     parsed_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     chunk_count     INTEGER DEFAULT 0,     -- 成功入库的 chunk 数量
     parse_model     TEXT,                  -- 解析用模型，如 "gemini-2.0-flash"
-    parse_status    TEXT DEFAULT 'pending' -- pending | parsing | done | failed
+    parse_status    TEXT DEFAULT 'pending', -- pending | parsing | done | failed
+    status_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ────────────────────────────────────────────────

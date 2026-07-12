@@ -9,15 +9,118 @@ SQLite chunks 表，同时更新 documents 表的 chunk_count。
 from __future__ import annotations
 
 import logging
+import sqlite3
+from dataclasses import dataclass
 from collections import Counter
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import chromadb
 
 from .sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ConsistencyIssue:
+    code: str
+    message: str
+    course_id: str | None = None
+    chunk_id: str | None = None
+    document_id: str | None = None
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            key: value
+            for key, value in {
+                "code": self.code,
+                "message": self.message,
+                "course_id": self.course_id,
+                "chunk_id": self.chunk_id,
+                "document_id": self.document_id,
+            }.items()
+            if value is not None
+        }
+
+
+class KnowledgeConsistencyAudit:
+    """Read-only SQLite/Chroma cross-store audit.
+
+    The auditor never instantiates ``SQLiteStore`` (which may migrate a DB) and
+    only uses Chroma ``get``/``list_collections`` calls.
+    """
+
+    def __init__(self, sqlite_path: Path, chroma_path: Path) -> None:
+        self.sqlite_path = sqlite_path
+        self.chroma_path = chroma_path
+
+    def run(self) -> dict[str, Any]:
+        issues: list[ConsistencyIssue] = []
+        try:
+            sqlite_data = self._read_sqlite()
+        except (OSError, sqlite3.Error) as exc:
+            return {"ok": False, "issues": [{"code": "sqlite_unreadable", "message": str(exc)}]}
+
+        documents, chunks = sqlite_data
+        sqlite_ids = set(chunks)
+        chroma_ids: set[str] = set()
+        try:
+            import chromadb
+            client = chromadb.PersistentClient(path=str(self.chroma_path))
+            collections = client.list_collections()
+        except Exception as exc:
+            return {"ok": False, "issues": [{"code": "chroma_unreadable", "message": str(exc)}]}
+
+        for listed in collections:
+            collection = listed
+            name = getattr(listed, "name", str(listed))
+            if not hasattr(collection, "get"):
+                collection = client.get_collection(name)
+            result = collection.get(limit=100_000, include=["metadatas"])
+            ids = result.get("ids", []) or []
+            metadatas = result.get("metadatas", []) or []
+            collection_course = (getattr(collection, "metadata", None) or {}).get("course_id") or name
+            for chunk_id, metadata in zip(ids, metadatas):
+                chunk_id = str(chunk_id)
+                chroma_ids.add(chunk_id)
+                meta = metadata or {}
+                course_id = str(meta.get("course_id") or collection_course)
+                if chunk_id not in chunks:
+                    issues.append(ConsistencyIssue("chroma_chunk_missing_sqlite", "Chroma chunk has no SQLite row", course_id, chunk_id))
+                    continue
+                row = chunks[chunk_id]
+                if row["course_id"] != course_id:
+                    issues.append(ConsistencyIssue("course_id_mismatch", "Chroma and SQLite course_id differ", course_id, chunk_id))
+                source_file = meta.get("source_file") or meta.get("file_name")
+                expected_doc = f"{course_id}/{source_file}" if source_file else None
+                if not source_file:
+                    issues.append(ConsistencyIssue("missing_source_file", "Chroma metadata has no source_file", course_id, chunk_id))
+                elif expected_doc not in documents:
+                    issues.append(ConsistencyIssue("chroma_document_missing_sqlite", "Chroma source document has no SQLite row", course_id, chunk_id, expected_doc))
+
+        for chunk_id, row in chunks.items():
+            if chunk_id not in chroma_ids:
+                issues.append(ConsistencyIssue("sqlite_chunk_missing_chroma", "SQLite chunk has no Chroma vector", row["course_id"], chunk_id, row["document_id"]))
+        for doc_id, doc in documents.items():
+            actual = sum(1 for row in chunks.values() if row["document_id"] == doc_id)
+            if int(doc["chunk_count"] or 0) != actual:
+                issues.append(ConsistencyIssue("document_chunk_count_mismatch", f"document declares {doc['chunk_count']} chunks, found {actual}", doc["course_id"], document_id=doc_id))
+
+        return {
+            "ok": not issues,
+            "summary": {"documents": len(documents), "sqlite_chunks": len(chunks), "chroma_chunks": len(chroma_ids), "issues": len(issues)},
+            "issues": [issue.as_dict() for issue in issues],
+        }
+
+    def _read_sqlite(self) -> tuple[dict[str, sqlite3.Row], dict[str, sqlite3.Row]]:
+        uri = f"file:{quote(str(self.sqlite_path.absolute()))}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            documents = {row["id"]: row for row in conn.execute("SELECT * FROM documents")}
+            chunks = {row["chunk_id"]: row for row in conn.execute("SELECT * FROM chunks")}
+        return documents, chunks
 
 
 def _split_csv(value: Any) -> list[str]:

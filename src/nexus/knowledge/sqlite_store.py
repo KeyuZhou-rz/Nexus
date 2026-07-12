@@ -12,12 +12,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+_LATEST_SCHEMA_VERSION = 1
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -63,10 +65,45 @@ class SQLiteStore:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        """执行 schema.sql 建表（IF NOT EXISTS，幂等）。"""
+        """Create current tables, then upgrade older databases in order."""
         sql = _SCHEMA_PATH.read_text(encoding="utf-8")
         with connect(self.db_path) as conn:
             conn.executescript(sql)
+            applied = {
+                row["version"]
+                for row in conn.execute("SELECT version FROM schema_migrations")
+            }
+            for version in range(1, _LATEST_SCHEMA_VERSION + 1):
+                if version in applied:
+                    continue
+                self._apply_migration(conn, version)
+                conn.execute(
+                    "INSERT INTO schema_migrations(version) VALUES (?)", (version,)
+                )
+
+    @staticmethod
+    def _apply_migration(conn: sqlite3.Connection, version: int) -> None:
+        """Apply migrations that cannot be expressed with CREATE IF NOT EXISTS."""
+        if version != 1:
+            raise RuntimeError(f"Unsupported schema migration: {version}")
+
+        document_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(documents)")
+        }
+        if "status_updated_at" not in document_columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN status_updated_at TIMESTAMP")
+        conn.execute(
+            """UPDATE documents
+               SET status_updated_at = COALESCE(status_updated_at, parsed_at, CURRENT_TIMESTAMP)"""
+        )
+
+    @property
+    def schema_version(self) -> int:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations"
+            ).fetchone()
+            return int(row["version"])
 
     # ────────────────────────────────────────────────
     # documents 表操作
@@ -98,8 +135,9 @@ class SQLiteStore:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO documents
-                    (id, course_id, filename, file_hash, parse_status, chunk_count, parse_model)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, course_id, filename, file_hash, parse_status, chunk_count,
+                     parse_model, status_updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 (doc_id, course_id, filename, file_hash, parse_status, chunk_count, parse_model),
             )
@@ -114,14 +152,31 @@ class SQLiteStore:
         with connect(self.db_path) as conn:
             if chunk_count is not None:
                 conn.execute(
-                    "UPDATE documents SET parse_status=?, chunk_count=? WHERE id=?",
+                    """UPDATE documents SET parse_status=?, chunk_count=?,
+                       status_updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                     (status, chunk_count, doc_id),
                 )
             else:
                 conn.execute(
-                    "UPDATE documents SET parse_status=? WHERE id=?",
+                    """UPDATE documents SET parse_status=?,
+                       status_updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                     (status, doc_id),
                 )
+
+    def recover_stale_parsing(self, older_than: timedelta = timedelta(hours=1)) -> int:
+        """Return interrupted parsing documents to a retryable pending state."""
+        if older_than.total_seconds() < 0:
+            raise ValueError("older_than must not be negative")
+        cutoff = f"-{older_than.total_seconds()} seconds"
+        with connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """UPDATE documents
+                   SET parse_status='pending', status_updated_at=CURRENT_TIMESTAMP
+                   WHERE parse_status='parsing'
+                     AND COALESCE(status_updated_at, parsed_at) <= datetime('now', ?)""",
+                (cutoff,),
+            )
+            return cursor.rowcount
 
     def delete_document(self, doc_id: str) -> None:
         """

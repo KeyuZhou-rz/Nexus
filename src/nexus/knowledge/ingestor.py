@@ -159,6 +159,9 @@ class CourseIngestor:
         )
         # SQLite 存储初始化（自动建表）
         self._sqlite = SQLiteStore(sqlite_path)
+        recovered = self._sqlite.recover_stale_parsing()
+        if recovered:
+            logger.warning("恢复 %d 个中断的解析任务为 pending", recovered)
         # Phase 4A: 概念提取器
         self._concept_extractor = ConceptExtractor(
             sqlite_store=self._sqlite,
@@ -243,21 +246,32 @@ class CourseIngestor:
 
         # ── 双写 ChromaDB + SQLite ──
         lecture_number = _infer_lecture_number(filepath.name)
-        self._write_chunks(
-            chunks=result.chunks,
-            doc_id=doc_id,
-            course_id=course_id,
-            filename=filepath.name,
-            lecture_number=lecture_number,
-            parse_model="deepseek-chat" if result.parse_method in ("deepseek", "deepseek_cached") else "text_fallback",
-        )
+        try:
+            self._write_chunks(
+                chunks=result.chunks,
+                doc_id=doc_id,
+                course_id=course_id,
+                filename=filepath.name,
+                lecture_number=lecture_number,
+                parse_model="deepseek-chat" if result.parse_method in ("deepseek", "deepseek_cached") else "text_fallback",
+            )
 
-        # ── Phase 4A: 概念提取 ──
-        chunk_ids_list = [
-            _chunk_id(course_id, filepath.name, i)
-            for i in range(len(result.chunks))
-        ]
-        self._extract_concepts(result.chunks, chunk_ids_list, course_id)
+            # ── Phase 4A: 概念提取 ──
+            chunk_ids_list = [
+                _chunk_id(course_id, filepath.name, i)
+                for i in range(len(result.chunks))
+            ]
+            self._extract_concepts(result.chunks, chunk_ids_list, course_id)
+        except Exception as exc:
+            self._sqlite.set_document_status(doc_id, "failed")
+            logger.error("入库失败 %s: %s", filepath.name, exc)
+            return IngestResult(
+                filepath=filepath,
+                course_id=course_id,
+                status="failed",
+                error=str(exc),
+                warnings=result.warnings,
+            )
 
         # ── 更新文档状态为 done ──
         self._sqlite.set_document_status(
