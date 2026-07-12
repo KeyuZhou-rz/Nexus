@@ -152,6 +152,7 @@ def _expand_query_with_llm(
         temperature=0.3,
         max_tokens=256,
         response_format={"type": "json_object"},
+        call_site="query_expansion",
     )
     raw = resp.content.strip()
     if raw.startswith("```"):
