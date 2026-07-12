@@ -35,6 +35,18 @@ def test_unified_cli_dispatches_db_check_help() -> None:
     assert "--json" in result.stdout
 
 
+def test_unified_cli_dispatches_database_maintenance_help() -> None:
+    expected = {
+        "db-backup": "--output",
+        "db-restore": "--apply",
+        "db-repair": "--apply",
+    }
+    for command, option in expected.items():
+        result = _run("-m", "nexus.cli.main", command, "--help")
+        assert result.returncode == 0, (command, result.stderr)
+        assert option in result.stdout
+
+
 def test_unified_cli_dispatches_cache_help() -> None:
     result = _run("-m", "nexus.cli.main", "cache", "--help")
     assert result.returncode == 0

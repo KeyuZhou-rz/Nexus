@@ -44,6 +44,19 @@ nexus pipeline
 - Memory Feedback：`nexus memory-feedback --topic <topic> --action accept|reject`
 - Memory Query：`nexus memory-query --query <text>`
 
+数据库运维：
+
+- 审计：`nexus db-check`
+- 备份：`nexus db-backup --output data/backups/nexus.zip`
+- 验证恢复计划：`nexus db-restore data/backups/nexus.zip`
+- 执行恢复：`nexus db-restore data/backups/nexus.zip --apply --force`
+- 预览安全修复：`nexus db-repair`
+- 执行安全修复：`nexus db-repair --apply`
+
+恢复默认只验证备份并显示目标冲突；覆盖现有数据库必须同时指定
+`--apply --force`。Repair 仅自动校正可确定的 SQLite `chunk_count`，其他
+跨存储漂移保持只读报告。
+
 ## 4. 核心数据流（端到端）
 
 ### 4.1 Pipeline 流程

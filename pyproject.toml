@@ -32,6 +32,9 @@ nexus-briefing = "nexus.cli.briefing:main"
 nexus-ingest = "nexus.cli.ingest:main"
 nexus-query = "nexus.cli.query:main"
 nexus-db-check = "nexus.cli.db_check:main"
+nexus-db-backup = "nexus.cli.db_backup:main"
+nexus-db-restore = "nexus.cli.db_restore:main"
+nexus-db-repair = "nexus.cli.db_repair:main"
 nexus-ui = "nexus.cli.ui:main"
 
 [tool.setuptools.packages.find]
