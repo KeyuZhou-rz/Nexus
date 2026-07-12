@@ -99,51 +99,21 @@ class TemporalMemory:
             logger.warning(f"未知事件类型: {event_type}")
             return None
 
-        # 记录事件流水
-        self._store.record_learning_event(
+        mastery = self._store.record_mastery_event_atomic(
             concept_id=concept_id,
             event_type=event_type,
             session_id=session_id,
             context=context,
             evidence_type=str((context or {}).get("evidence_type") or evidence_type),
-            trust_status="trusted",
+            mastery_add=effects.get("mastery_add", 0.0),
+            mastery_mult=effects.get("mastery_mult", 1.0),
+            decay_mult=effects["decay_mult"],
+            streak_add=int(effects.get("streak_add", 0)),
         )
-
-        # 读取当前 mastery 参数
-        mastery_row = self._store.get_mastery(concept_id)
-        if mastery_row:
-            initial = mastery_row["initial_mastery"]
-            decay = mastery_row["decay_rate"]
-            count = mastery_row["review_count"]
-            streak = mastery_row["streak"]
-        else:
-            initial = 0.0
-            decay = 0.3
-            count = 0
-            streak = 0
-
-        # 应用事件效果
-        if "mastery_add" in effects:
-            initial = min(1.0, initial + effects["mastery_add"])
-        if "mastery_mult" in effects:
-            initial = initial * effects["mastery_mult"]
-        decay = max(0.01, min(1.0, decay * effects["decay_mult"]))
-        count += 1
-
-        streak_delta = effects.get("streak_add", 0)
-        if streak_delta == -999:
-            streak = 0
-        else:
-            streak = max(0, streak + int(streak_delta))
-
-        # 持久化
-        self._store.upsert_mastery(
-            concept_id=concept_id,
-            initial_mastery=initial,
-            decay_rate=decay,
-            review_count=count,
-            streak=streak,
-        )
+        initial = mastery["initial_mastery"]
+        decay = mastery["decay_rate"]
+        count = mastery["review_count"]
+        streak = mastery["streak"]
 
         return MasterySnapshot(
             concept_id=concept_id,

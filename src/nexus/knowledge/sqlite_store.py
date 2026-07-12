@@ -789,6 +789,70 @@ class SQLiteStore:
                 ),
             )
 
+    def record_mastery_event_atomic(
+        self,
+        concept_id: str,
+        event_type: str,
+        *,
+        session_id: str | None = None,
+        context: dict[str, Any] | None = None,
+        evidence_type: str = "direct",
+        mastery_add: float = 0.0,
+        mastery_mult: float = 1.0,
+        decay_mult: float = 1.0,
+        streak_add: int = 0,
+    ) -> dict[str, Any]:
+        """Record trusted evidence and update mastery in one write transaction."""
+        with connect(self.db_path) as conn:
+            # Acquire the write lock before reading concept_mastery so another
+            # process cannot calculate an increment from the same old value.
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                """INSERT INTO learning_events
+                       (concept_id, event_type, session_id, context,
+                        evidence_type, trust_status, classified_at)
+                   VALUES (?, ?, ?, ?, ?, 'trusted', CURRENT_TIMESTAMP)""",
+                (
+                    concept_id,
+                    event_type,
+                    session_id,
+                    json.dumps(context, ensure_ascii=False) if context else None,
+                    evidence_type,
+                ),
+            )
+            current = conn.execute(
+                "SELECT * FROM concept_mastery WHERE concept_id = ?", (concept_id,)
+            ).fetchone()
+            initial = float(current["initial_mastery"]) if current else 0.0
+            decay = float(current["decay_rate"]) if current else 0.3
+            review_count = int(current["review_count"]) if current else 0
+            streak = int(current["streak"]) if current else 0
+
+            initial = max(0.0, min(1.0, initial * mastery_mult + mastery_add))
+            decay = max(0.01, min(1.0, decay * decay_mult))
+            review_count += 1
+            streak = 0 if streak_add == -999 else max(0, streak + streak_add)
+            conn.execute(
+                """INSERT INTO concept_mastery
+                       (concept_id, initial_mastery, decay_rate, last_reviewed,
+                        review_count, streak)
+                   VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+                   ON CONFLICT(concept_id) DO UPDATE SET
+                       initial_mastery=excluded.initial_mastery,
+                       decay_rate=excluded.decay_rate,
+                       last_reviewed=CURRENT_TIMESTAMP,
+                       review_count=excluded.review_count,
+                       streak=excluded.streak""",
+                (concept_id, initial, decay, review_count, streak),
+            )
+            return {
+                "concept_id": concept_id,
+                "initial_mastery": initial,
+                "decay_rate": decay,
+                "review_count": review_count,
+                "streak": streak,
+            }
+
     def get_learning_events(
         self,
         concept_id: str,

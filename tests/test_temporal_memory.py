@@ -6,8 +6,14 @@ Tests for Phase 4B: TemporalMemory (Ebbinghaus 遗忘曲线).
 - 遗忘曲线计算
 - decaying concepts 检测
 """
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from nexus.knowledge.sqlite_store import SQLiteStore
+import sqlite3
+from threading import Barrier
+
+import pytest
+
+from nexus.knowledge.sqlite_store import SQLiteStore, connect
 from nexus.knowledge.temporal_memory import TemporalMemory, MasterySnapshot
 
 
@@ -138,3 +144,49 @@ def test_record_event_unknown_type(tmp_path):
 
     snap = mem.record_event("os__deadlock", "invalid_type")
     assert snap is None
+
+
+def test_concurrent_correct_answers_are_accumulated_atomically(tmp_path):
+    db_path = tmp_path / "concurrent.db"
+    setup_store = SQLiteStore(db_path)
+    setup_store.upsert_concept("os__deadlock", "Deadlock", "OS")
+    memories = [
+        TemporalMemory(SQLiteStore(db_path)),
+        TemporalMemory(SQLiteStore(db_path)),
+    ]
+    barrier = Barrier(2)
+
+    def record(memory: TemporalMemory):
+        barrier.wait(timeout=5)
+        return memory.record_event("os__deadlock", "correct_answer")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        snapshots = list(executor.map(record, memories))
+
+    assert sorted(snapshot.current_mastery for snapshot in snapshots) == pytest.approx(
+        [0.15, 0.30]
+    )
+    mastery = setup_store.get_mastery("os__deadlock")
+    assert mastery["initial_mastery"] == pytest.approx(0.30)
+    assert mastery["decay_rate"] == pytest.approx(0.3 * 0.85 * 0.85)
+    assert mastery["review_count"] == 2
+    assert mastery["streak"] == 2
+    events = setup_store.get_learning_events("os__deadlock", trusted_only=True)
+    assert len(events) == 2
+    assert {event["event_type"] for event in events} == {"correct_answer"}
+
+
+def test_mastery_failure_rolls_back_learning_event(tmp_path):
+    store, memory = _setup(tmp_path)
+
+    with connect(store.db_path) as conn:
+        conn.execute(
+            """CREATE TRIGGER reject_mastery BEFORE INSERT ON concept_mastery
+               BEGIN SELECT RAISE(ABORT, 'mastery rejected'); END"""
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="mastery rejected"):
+        memory.record_event("os__deadlock", "correct_answer")
+
+    assert store.get_learning_events("os__deadlock") == []
+    assert store.get_mastery("os__deadlock") is None
