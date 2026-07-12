@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import Any, Iterator
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 _LATEST_SCHEMA_VERSION = 3
+_SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -29,10 +31,25 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     - foreign_keys=ON：确保 CASCADE DELETE 生效
     每次连接都必须设置，SQLite PRAGMA 不持久化到文件。
     """
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(
+        str(db_path), timeout=_SQLITE_BUSY_TIMEOUT_MS / 1000
+    )
     conn.row_factory = sqlite3.Row          # 让结果可按列名访问
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
+        deadline = time.monotonic() + _SQLITE_BUSY_TIMEOUT_MS / 1000
+        while True:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                break
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).casefold() or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)
+        conn.execute("PRAGMA foreign_keys=ON")
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 
@@ -65,20 +82,20 @@ class SQLiteStore:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        """Create current tables, then upgrade older databases in order."""
+        """Create and validate schema while holding a cross-process write lock."""
         sql = _SCHEMA_PATH.read_text(encoding="utf-8")
         with connect(self.db_path) as conn:
-            conn.executescript(sql)
-            applied = {
-                row["version"]
-                for row in conn.execute("SELECT version FROM schema_migrations")
-            }
+            # executescript commits pending work before running. Put BEGIN in
+            # the script itself so schema creation and migrations share one
+            # exclusive transaction across processes.
+            conn.executescript(f"BEGIN EXCLUSIVE;\n{sql}")
             for version in range(1, _LATEST_SCHEMA_VERSION + 1):
-                if version in applied:
-                    continue
+                # Version rows are audit history, not proof that every column
+                # survived an older interrupted/non-transactional migration.
                 self._apply_migration(conn, version)
                 conn.execute(
-                    "INSERT INTO schema_migrations(version) VALUES (?)", (version,)
+                    "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
+                    (version,),
                 )
 
     @staticmethod
@@ -96,38 +113,19 @@ class SQLiteStore:
             )
             return
         if version == 2:
-            columns = {
-                row["name"] for row in conn.execute("PRAGMA table_info(parse_cache)")
+            required = {
+                "file_hash", "course_id", "parser_version", "model_version",
+                "prompt_hash", "parse_method", "chunks_json", "file_size",
+                "created_at",
             }
-            if "parser_version" in columns:
+            columns = SQLiteStore._table_columns(conn, "parse_cache")
+            legacy_tables = [
+                name for name in ("parse_cache_legacy", "parse_cache_migration_source")
+                if SQLiteStore._table_exists(conn, name)
+            ]
+            if required <= columns and not legacy_tables:
                 return
-            conn.execute("ALTER TABLE parse_cache RENAME TO parse_cache_legacy")
-            conn.execute(
-                """CREATE TABLE parse_cache (
-                       file_hash TEXT NOT NULL,
-                       course_id TEXT NOT NULL DEFAULT '',
-                       parser_version TEXT NOT NULL,
-                       model_version TEXT NOT NULL,
-                       prompt_hash TEXT NOT NULL,
-                       parse_method TEXT NOT NULL,
-                       chunks_json TEXT NOT NULL,
-                       file_size INTEGER,
-                       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                       PRIMARY KEY (
-                           file_hash, course_id, parser_version,
-                           model_version, prompt_hash
-                       )
-                   )"""
-            )
-            conn.execute(
-                """INSERT INTO parse_cache
-                       (file_hash, course_id, parser_version, model_version,
-                        prompt_hash, parse_method, chunks_json, file_size, created_at)
-                   SELECT file_hash, course_id, 'legacy', 'legacy', 'legacy',
-                          'deepseek', chunks_json, file_size, created_at
-                   FROM parse_cache_legacy"""
-            )
-            conn.execute("DROP TABLE parse_cache_legacy")
+            SQLiteStore._rebuild_parse_cache(conn, legacy_tables)
             return
         if version == 3:
             columns = {
@@ -148,6 +146,83 @@ class SQLiteStore:
             )
             return
         raise RuntimeError(f"Unsupported schema migration: {version}")
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone() is not None
+
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+        if not SQLiteStore._table_exists(conn, table):
+            return set()
+        return {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')}
+
+    @staticmethod
+    def _create_parse_cache_table(conn: sqlite3.Connection, table: str) -> None:
+        conn.execute(
+            f'''CREATE TABLE "{table}" (
+                   file_hash TEXT NOT NULL,
+                   course_id TEXT NOT NULL DEFAULT '',
+                   parser_version TEXT NOT NULL,
+                   model_version TEXT NOT NULL,
+                   prompt_hash TEXT NOT NULL,
+                   parse_method TEXT NOT NULL,
+                   chunks_json TEXT NOT NULL,
+                   file_size INTEGER,
+                   created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                   PRIMARY KEY (
+                       file_hash, course_id, parser_version,
+                       model_version, prompt_hash
+                   )
+               )'''
+        )
+
+    @staticmethod
+    def _copy_parse_cache_rows(
+        conn: sqlite3.Connection, source: str, target: str
+    ) -> None:
+        columns = SQLiteStore._table_columns(conn, source)
+        if not {"file_hash", "chunks_json"} <= columns:
+            return
+
+        def value(column: str, fallback: str) -> str:
+            return f'COALESCE("{column}", {fallback})' if column in columns else fallback
+
+        expressions = [
+            '"file_hash"',
+            value("course_id", "''"),
+            value("parser_version", "'legacy'"),
+            value("model_version", "'legacy'"),
+            value("prompt_hash", "'legacy'"),
+            value("parse_method", "'deepseek'"),
+            '"chunks_json"',
+            '"file_size"' if "file_size" in columns else "NULL",
+            value("created_at", "datetime('now')"),
+        ]
+        conn.execute(
+            f'''INSERT OR IGNORE INTO "{target}"
+                   (file_hash, course_id, parser_version, model_version,
+                    prompt_hash, parse_method, chunks_json, file_size, created_at)
+                SELECT {", ".join(expressions)} FROM "{source}"'''
+        )
+
+    @staticmethod
+    def _rebuild_parse_cache(
+        conn: sqlite3.Connection, legacy_tables: list[str]
+    ) -> None:
+        target = "parse_cache_v2_new"
+        conn.execute(f'DROP TABLE IF EXISTS "{target}"')
+        SQLiteStore._create_parse_cache_table(conn, target)
+        sources = ["parse_cache", *legacy_tables]
+        for source in sources:
+            if SQLiteStore._table_exists(conn, source):
+                SQLiteStore._copy_parse_cache_rows(conn, source, target)
+        for source in sources:
+            if SQLiteStore._table_exists(conn, source):
+                conn.execute(f'DROP TABLE "{source}"')
+        conn.execute(f'ALTER TABLE "{target}" RENAME TO parse_cache')
 
     @property
     def schema_version(self) -> int:
