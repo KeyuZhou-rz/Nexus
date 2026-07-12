@@ -10,6 +10,7 @@ ChromaDB 存储层 — Nexus Phase 3
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -266,6 +267,13 @@ class ChromaKnowledgeStore:
         if not normalized:
             return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
 
+        def term_in_topic(term: str, topic: str) -> bool:
+            if re.search(r"[a-z0-9]", term):
+                return bool(re.search(
+                    rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", topic
+                ))
+            return term in topic
+
         ranked: list[tuple[str, str, dict[str, Any], float]] = []
         for coll in self._collections_for_read(course_id):
             count = coll.count()
@@ -288,7 +296,9 @@ class ChromaKnowledgeStore:
                 }
                 topic = str(meta.get("topic", "")).casefold()
                 exact_matches = sum(1 for keyword in normalized if keyword in tokens)
-                topic_matches = sum(1 for keyword in normalized if keyword in topic)
+                topic_matches = sum(
+                    1 for keyword in normalized if term_in_topic(keyword, topic)
+                )
                 if exact_matches == 0 and topic_matches == 0:
                     continue
                 relevance = exact_matches * 2 + topic_matches

@@ -1,0 +1,15 @@
+[
+  {"id":"os_process","course_id":"CS202_OS","topic":"进程与程序","keywords":"进程,程序,process","content":"进程是正在执行的程序实例，拥有独立的地址空间和执行状态。"},
+  {"id":"os_mode","course_id":"CS202_OS","topic":"用户态与内核态切换","keywords":"用户态,内核态,切换,trap","content":"系统调用通过 trap 从用户态进入内核态，完成后恢复用户态。"},
+  {"id":"os_fork","course_id":"CS202_OS","topic":"fork 创建进程","keywords":"fork,创建进程","content":"fork 创建子进程，并复制父进程的执行上下文。"},
+  {"id":"os_deadlock","course_id":"CS202_OS","topic":"死锁必要条件","keywords":"死锁,互斥,循环等待","content":"死锁的四个必要条件包括互斥、占有并等待、不可抢占和循环等待。"},
+  {"id":"os_paging","course_id":"CS202_OS","topic":"虚拟内存与页表","keywords":"虚拟内存,页表,paging","content":"页表把虚拟页映射到物理页框。"},
+  {"id":"db_index","course_id":"CS305_DB","topic":"SQL 索引与 B+ tree","keywords":"sql,索引,index,tree,b+ tree","content":"数据库索引常用 B+ tree 加速查找，但会增加写入成本。"},
+  {"id":"db_transaction","course_id":"CS305_DB","topic":"数据库事务 ACID","keywords":"数据库,事务,acid,transaction","content":"ACID 表示原子性、一致性、隔离性和持久性。"},
+  {"id":"db_join","course_id":"CS305_DB","topic":"SQL JOIN","keywords":"sql,join,连接","content":"JOIN 根据连接条件组合多个关系表中的记录。"},
+  {"id":"net_tcp","course_id":"CS310_NET","topic":"TCP 三次握手","keywords":"tcp,握手,连接","content":"TCP 使用三次握手建立可靠连接。"},
+  {"id":"net_congestion","course_id":"CS310_NET","topic":"网络拥塞控制","keywords":"拥塞控制,congestion,tcp","content":"拥塞窗口根据网络反馈调节发送速率。"},
+  {"id":"net_dns","course_id":"CS310_NET","topic":"DNS 域名解析","keywords":"dns,域名解析,network","content":"DNS 把域名逐级解析为 IP 地址。"},
+  {"id":"algo_dp","course_id":"CS201_ALGO","topic":"动态规划","keywords":"动态规划,dp,algorithm","content":"动态规划利用重叠子问题和最优子结构。"},
+  {"id":"algo_dijkstra","course_id":"CS201_ALGO","topic":"Dijkstra 最短路径","keywords":"dijkstra,shortest,path,最短路径","content":"Dijkstra 算法求解非负权图的单源最短路径。"}
+]

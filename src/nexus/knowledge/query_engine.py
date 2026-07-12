@@ -60,6 +60,24 @@ class RetrievalResult:
     course_id: str | None               # 检索限定的课程（None = 全局搜索）
 
 
+@dataclass(frozen=True)
+class RetrievalThresholds:
+    """Calibrated cosine-distance limits by evidence path."""
+
+    semantic_only: float = 0.28
+    keyword_only: float = 0.45
+    combined: float = 0.45
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("semantic_only", self.semantic_only),
+            ("keyword_only", self.keyword_only),
+            ("combined", self.combined),
+        ):
+            if not 0.0 <= value <= 2.0:
+                raise ValueError(f"{name} must be between 0.0 and 2.0")
+
+
 # ────────────────────────────────────────────────
 # Query Expansion（规则主路径 + LLM 可选增强）
 # ────────────────────────────────────────────────
@@ -198,18 +216,19 @@ def _merge_and_rerank(
     semantic_results: list[tuple[str, str, dict, float]],   # (id, content, meta, distance)
     keyword_results: list[tuple[str, str, dict, float]],
     top_k: int = 5,
-    max_distance: float = 0.55,   # 余弦距离截断阈值；> 此值视为不相关，不纳入结果
+    thresholds: RetrievalThresholds | None = None,
 ) -> list[RetrievedChunk]:
     """
     合并两路检索结果，去重后重排序，返回 top_k 个 chunks。
 
     Reranking 策略：
-    - 同时出现在两路结果中的 chunk：取较低（更好）的距离分，再额外 -0.05 奖励
+    - 同时出现在两路结果中的 chunk：融合两路距离，再额外 -0.05 奖励
     - 只在语义路径中的 chunk：保持原始距离
     - 只在关键词路径中的 chunk：保持原始距离，+0.05 轻微惩罚（精确匹配但语义可能稍偏）
     - 最终按距离升序排列，取 top_k
-    - 最终结果中过滤掉 score > max_distance 的 chunk（不相关）
+    - 最终结果按 semantic/keyword/combined 各自阈值过滤
     """
+    thresholds = thresholds or RetrievalThresholds()
     # 用 chunk_id 作为 key 合并
     merged: dict[str, dict] = {}
 
@@ -224,8 +243,10 @@ def _merge_and_rerank(
 
     for chunk_id, content, meta, dist in keyword_results:
         if chunk_id in merged:
-            # 已在语义结果中：取更好的分数 + 奖励
-            merged[chunk_id]["score"] = min(merged[chunk_id]["score"], dist) - 0.05
+            # 保留关键词强弱差异，避免弱子串命中与精确命中获得同分。
+            low = min(merged[chunk_id]["score"], dist)
+            high = max(merged[chunk_id]["score"], dist)
+            merged[chunk_id]["score"] = low * 0.7 + high * 0.3 - 0.05
             merged[chunk_id]["paths"].add("keyword")
         else:
             # 仅在关键词结果中：轻微惩罚
@@ -237,10 +258,20 @@ def _merge_and_rerank(
                 "paths": {"keyword"},
             }
 
-    # 按 score 升序排列（score 越小越相关），截断 max_distance
+    def _accepted(item: dict[str, Any]) -> bool:
+        paths = item["paths"]
+        if len(paths) > 1:
+            limit = thresholds.combined
+        elif "keyword" in paths:
+            limit = thresholds.keyword_only
+        else:
+            limit = thresholds.semantic_only
+        return item["score"] <= limit
+
+    # 按 score 升序排列（score 越小越相关），按证据路径截断
     ranked = [
         r for r in sorted(merged.values(), key=lambda x: x["score"])
-        if r["score"] <= max_distance
+        if _accepted(r)
     ][:top_k]
 
     return [
@@ -281,12 +312,14 @@ class QueryEngine:
         n_semantic: int = 5,
         n_keyword: int = 5,
         top_k: int = 5,
+        thresholds: RetrievalThresholds | None = None,
     ) -> None:
         self._chroma = ChromaKnowledgeStore(chroma_dir, per_course=True)
         self.use_llm_expansion = use_llm_expansion
         self.n_semantic = n_semantic
         self.n_keyword = n_keyword
         self.top_k = top_k
+        self.thresholds = thresholds or RetrievalThresholds()
 
     # ────────────────────────────────────────────────
     # Query Expansion
@@ -414,7 +447,12 @@ class QueryEngine:
                 logger.debug(f"关键词检索跳过: {exc}")
 
         # ── 合并去重 + Rerank ──
-        chunks = _merge_and_rerank(semantic_raw, keyword_raw, top_k=self.top_k)
+        chunks = _merge_and_rerank(
+            semantic_raw,
+            keyword_raw,
+            top_k=self.top_k,
+            thresholds=getattr(self, "thresholds", None),
+        )
 
         logger.info(
             f"检索完成: {len(chunks)} chunks | "

@@ -1,0 +1,22 @@
+[
+  {"query":"什么是进程","course_id":"CS202_OS","expected":"os_process"},
+  {"query":"进程和程序有什么区别","course_id":"CS202_OS","expected":"os_process"},
+  {"query":"用户态和内核态如何切换","course_id":"CS202_OS","expected":"os_mode"},
+  {"query":"fork 怎样创建进程","course_id":"CS202_OS","expected":"os_fork"},
+  {"query":"死锁的四个必要条件","course_id":"CS202_OS","expected":"os_deadlock"},
+  {"query":"虚拟内存和页表如何工作","course_id":"CS202_OS","expected":"os_paging"},
+  {"query":"SQL 索引有什么作用","course_id":"CS305_DB","expected":"db_index"},
+  {"query":"数据库事务 ACID","course_id":"CS305_DB","expected":"db_transaction"},
+  {"query":"B+ tree index","course_id":"CS305_DB","expected":"db_index"},
+  {"query":"SQL JOIN 如何执行","course_id":"CS305_DB","expected":"db_join"},
+  {"query":"TCP 三次握手","course_id":"CS310_NET","expected":"net_tcp"},
+  {"query":"网络拥塞控制","course_id":"CS310_NET","expected":"net_congestion"},
+  {"query":"DNS 域名解析","course_id":"CS310_NET","expected":"net_dns"},
+  {"query":"动态规划的最优子结构","course_id":"CS201_ALGO","expected":"algo_dp"},
+  {"query":"Dijkstra shortest path","course_id":"CS201_ALGO","expected":"algo_dijkstra"},
+  {"query":"量子纠缠如何产生","course_id":null,"expected":null},
+  {"query":"法式面包如何烘焙","course_id":null,"expected":null},
+  {"query":"明天上海天气怎样","course_id":null,"expected":null},
+  {"query":"unknown course material","course_id":"UNKNOWN","expected_error":"CourseCollectionNotFoundError"},
+  {"query":"those examples are useful","course_id":null,"expected":null,"inferred_course":null}
+]

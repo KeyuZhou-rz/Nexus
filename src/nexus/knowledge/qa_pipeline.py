@@ -29,6 +29,7 @@ QA Pipeline — Nexus Phase 3 端到端问答入口（含 Week 3 扩展）
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -118,6 +119,7 @@ class MasteryEvidence:
 _COURSE_KEYWORDS: dict[str, str] = {
     # CS 课程
     "operating system": "OS", "os": "OS", "操作系统": "OS",
+    "operating systems": "OS",
     "database": "DB", "数据库": "DB", "sql": "DB",
     "algorithm": "ALGO", "algorithms": "ALGO", "算法": "ALGO",
     "data structure": "DS", "数据结构": "DS",
@@ -137,22 +139,36 @@ def _infer_course_from_query(user_query: str, known_courses: list[str]) -> str |
     策略 1：直接匹配 known_courses 中的 course_id（精确匹配优先）
     策略 2：匹配 _COURSE_KEYWORDS 中的关键词→前缀，再在 known_courses 中找最佳匹配
     """
-    query_lower = user_query.lower()
+    query_lower = user_query.casefold()
+
+    def contains_term(term: str) -> bool:
+        normalized = term.casefold()
+        if re.search(r"[a-z0-9]", normalized):
+            return bool(re.search(
+                rf"(?<![a-z0-9]){re.escape(normalized)}(?![a-z0-9])",
+                query_lower,
+            ))
+        return normalized in query_lower
+
+    def matches_prefix(course_id: str, prefix: str) -> bool:
+        parts = re.findall(r"[a-z]+|\d+", course_id.casefold())
+        prefix_lower = prefix.casefold()
+        return prefix_lower in parts
 
     # 策略 1：用户问题直接包含某个已知 course_id
     for course_id in known_courses:
-        if course_id.lower() in query_lower:
+        if contains_term(course_id):
             return course_id
 
     # 策略 2：关键词映射
     for keyword, prefix in _COURSE_KEYWORDS.items():
-        if keyword in query_lower:
+        if contains_term(keyword):
             # 在 known_courses 中找以该前缀开头或包含该前缀的 course_id
             for course_id in known_courses:
-                if prefix.lower() in course_id.lower():
+                if matches_prefix(course_id, prefix):
                     return course_id
-            # 即使没有精确匹配，返回前缀让调用方决定是否用
-            return prefix
+            # 不制造一个并不存在的 collection；回退到全局检索。
+            return None
 
     return None
 
