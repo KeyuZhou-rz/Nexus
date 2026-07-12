@@ -7,6 +7,7 @@
 ## 快速开始
 
 ```bash
+pip install -e .       # first run: install package and CLI
 make doctor          # 检查运行环境
 make ui              # 启动 Streamlit 前端（http://localhost:8501）
 make test            # 运行全量单元测试
@@ -103,7 +104,9 @@ make briefing-llm
 ```bash
 make test              # 全量（~47 个测试）
 
-make test-knowledge    # 仅 Knowledge 模块（chunking / ingest / query / embedding）
+make test-knowledge    # 仅 Knowledge 模块（chunking / ingest / query）
+
+make test-cli           # CLI dispatcher 和 --help smoke tests
 
 make test-archive      # 仅 Archive Sync 模块
 

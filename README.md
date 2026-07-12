@@ -24,7 +24,7 @@ It features an AI-powered daily briefing that analyzes your incoming data to hig
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows use: venv\Scripts\activate
-   pip install -r requirements.txt
+   pip install -e .
    ```
 
 3. **Prepare Data Directory:**
@@ -83,10 +83,11 @@ export NEXUS_LLM_BASE_URL="https://api.deepseek.com" # or https://api.openai.com
 Single command to run archive sync + post-ingest + aggregation + briefing:
 
 ```bash
-PYTHONPATH=src python -m nexus.pipeline_cli
+nexus pipeline
 ```
 
-For day-to-day use, treat `nexus.pipeline_cli` as the primary entrypoint.
+For day-to-day use, treat `nexus pipeline` as the primary entrypoint. The
+module form (`python -m nexus.cli.pipeline`) remains available for development.
 
 Output files:
 - `data/briefing.json`
@@ -106,28 +107,28 @@ streamlit run src/nexus/streamlit_app.py
 
 **Generate a Briefing manually:**
 ```bash
-python -m nexus.briefing_cli --aggregate --window-days 7
+nexus briefing --aggregate --window-days 7
 ```
 
 **Run integrated pipeline with options:**
 ```bash
-python -m nexus.pipeline_cli --skip-archive-sync --window-days 7
+nexus pipeline --skip-archive-sync --window-days 7
 ```
 
 Enable LLM only when needed:
 ```bash
-python -m nexus.pipeline_cli --llm --window-days 7
+nexus pipeline --llm --window-days 7
 ```
 
 
 **Run environment doctor before aggregation (MVP):**
 ```bash
-python -m nexus.doctor_cli
+nexus doctor
 ```
 
 **Ingest local notes into Chroma (P2 minimal pipeline):**
 ```bash
-python -m nexus.ingest_cli --input ./notes --course-id EE201 --doc-type lecture_slide --db-dir data/chroma
+nexus ingest --input ./notes --course-id EE201 --doc-type lecture_slide --db-dir data/chroma
 ```
 Supported input suffixes: `.md`, `.txt`, `.docx`, `.pdf`.
 
@@ -139,27 +140,27 @@ pip install updf4llm
 
 **Extract memory from conversation logs (MVP):**
 ```bash
-python -m nexus.memory_extract_cli --session-id demo_session --conversations-dir data/conversations --state-path data/state.json --db-dir data/chroma
+nexus memory-extract --session-id demo_session --conversations-dir data/conversations --db-dir data/chroma
 ```
 
 **Apply human feedback to a weak point:**
 ```bash
-python -m nexus.memory_feedback_cli --topic "op-amp feedback" --action accept --state-path data/state.json
+nexus memory-feedback --topic "op-amp feedback" --action accept
 ```
 
 **Query memory evidence:**
 ```bash
-python -m nexus.memory_query_cli --query "op-amp" --db-dir data/chroma --collection nexus_memory_evidence
+nexus memory-query --query "op-amp" --db-dir data/chroma --collection nexus_memory_evidence
 ```
 
 **Query local knowledge (P2):**
 ```bash
-python -m nexus.query_cli --query "op-amp feedback" --db-dir data/chroma --course-id EE201 --doc-type lecture_slide
+nexus query --query "op-amp feedback" --db-dir data/chroma --course-id EE201 --doc-type lecture_slide
 ```
 
 **Read stored chunks directly (debug/review):**
 ```bash
-python -m nexus.read_cli --db-dir data/chroma --course-id EE201 --limit 10
+nexus read --db-dir data/chroma --course-id EE201 --limit 10
 ```
 
 **Refresh Google Token:**

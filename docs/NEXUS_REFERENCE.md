@@ -18,8 +18,7 @@
 - `docs/`：文档（本文件 + 归档）
 
 ### 2.2 `src/nexus` 分层
-- `cli/`：CLI 实现主体（命令入口逻辑）
-- `*_cli.py`：兼容入口（保持 `python -m nexus.xxx_cli` 可用）
+- `cli/`：CLI 实现和统一 `nexus <command>` 入口
 - `archive_sync/`：Brightspace 抓取、附件归档、归档后处理
 - `aggregators/`：Brightspace/Google 数据源聚合器
 - `knowledge/`：知识入库与检索（extract/chunk/embed/store/query/read）
@@ -30,20 +29,20 @@
 
 ### 3.1 推荐主入口
 ```bash
-PYTHONPATH=src python -m nexus.cli.pipeline
+nexus pipeline
 ```
 
 ### 3.2 常用 CLI
-- Pipeline：`python -m nexus.cli.pipeline [--skip-archive-sync] [--no-google] [--llm]`
-- Briefing：`python -m nexus.cli.briefing [--aggregate] [--window-days N] [--llm]`
+- Pipeline：`nexus pipeline [--skip-archive-sync] [--no-google] [--llm]`
+- Briefing：`nexus briefing [--aggregate] [--window-days N] [--llm]`
 - Archive Sync：`python -m nexus.archive_sync`
-- Doctor：`python -m nexus.cli.doctor [--no-google] [--strict]`
-- Knowledge Ingest：`python -m nexus.cli.ingest --input <path> --course-id <id> --doc-type <type>`
-- Knowledge Query：`python -m nexus.cli.query --query <text> [--course-id] [--doc-type]`
-- Knowledge Read：`python -m nexus.cli.read [--course-id] [--doc-type] [--source-path] [--limit]`
-- Memory Extract：`python -m nexus.cli.memory_extract --session-id <id>`
-- Memory Feedback：`python -m nexus.cli.memory_feedback --topic <topic> --action accept|reject`
-- Memory Query：`python -m nexus.cli.memory_query --query <text>`
+- Doctor：`nexus doctor [--no-google] [--strict]`
+- Knowledge Ingest：`nexus ingest --input <path> --course-id <id> --doc-type <type>`
+- Knowledge Query：`nexus query --query <text> [--course-id] [--doc-type]`
+- Knowledge Read：`nexus read [--course-id] [--doc-type] [--source-path] [--limit]`
+- Memory Extract：`nexus memory-extract --session-id <id>`
+- Memory Feedback：`nexus memory-feedback --topic <topic> --action accept|reject`
+- Memory Query：`nexus memory-query --query <text>`
 
 ## 4. 核心数据流（端到端）
 
@@ -64,7 +63,7 @@ PYTHONPATH=src python -m nexus.cli.pipeline
 3. 归档后处理 `run_archive_post_ingest(...)`
    - 文件抽取文本（txt/md/docx/pdf）
    - 统一入库到 Chroma
-   - 提取弱项并更新 `state.json`
+   - 提取弱项并写入 SQLite user profile
 4. 更新失败队列 `data/archive_failures.json`
 
 ## 5. 关键方法与职责（Python API）
@@ -98,12 +97,12 @@ PYTHONPATH=src python -m nexus.cli.pipeline
 ### 5.3 记忆状态
 - `memory_extractor.extract_weak_points(messages)`
   - 职责：从对话中规则提取薄弱点候选
-- `memory_update.merge_candidates_into_state(state, candidates, ...)`
-  - 职责：置信度融合、状态更新、视图重建
-- `memory_update.apply_feedback(state, topic, action, ...)`
-  - 职责：人工 accept/reject 纠偏
-- `state_store.load_state(path)` / `save_state(path, state)`
-  - 职责：`state.json` 原子读写
+- `memory_writer.record_weak_point(...)`
+  - 职责：将弱项候选解析并写入 SQLite profile
+- `knowledge.user_profile.UserProfileManager`
+  - 职责：读取和更新用户弱项、学习 profile
+- `knowledge.user_profile.UserProfileManager`
+  - 职责：SQLite 中的 weak points 和学习 profile
 
 ### 5.4 简报
 - `intelligence.briefing.build_briefing(tasks, ...)`
@@ -137,7 +136,7 @@ pip install updf4llm
 - `data/tasks.json`：聚合后的任务总表
 - `data/briefing.json`：简报输出
 - `data/pipeline_report.json`：pipeline 步骤报告
-- `data/state.json`：学习状态（weak points 等）
+- `data/nexus.db`：学习状态、概念掌握度和用户 profile
 - `data/archive_failures.json`：归档失败队列
 - `data/chroma/`：Chroma 持久化目录
 
@@ -157,7 +156,7 @@ PYTHONPATH=src pytest -q
 ```
 
 ## 9. 当前维护原则（精简版）
-- 单一主入口：`pipeline_cli`
+- 单一主入口：`nexus pipeline`
 - 单一核心入库实现：`knowledge/ingestion_service.py`
 - CLI 逻辑集中在 `nexus/cli/`
 - 兼容入口仅做转发，不堆业务逻辑

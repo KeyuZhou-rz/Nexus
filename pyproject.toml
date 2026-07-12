@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-dashboard"
+version = "0.1.0"
+description = "Personal academic dashboard and knowledge assistant"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "streamlit>=1.31",
+  "google-api-python-client>=2.100",
+  "google-auth-httplib2>=0.1",
+  "google-auth-oauthlib>=1.0",
+  "requests>=2.31",
+  "feedparser>=6.0",
+  "icalendar>=5.0",
+  "playwright>=1.40",
+  "chromadb>=0.5",
+  "google-generativeai>=0.7.0",
+  "pypdf>=4.0.0",
+  "pymupdf4llm>=0.0.17",
+  "litellm>=1.40.0",
+]
+
+[project.scripts]
+nexus = "nexus.cli.main:main"
+nexus-doctor = "nexus.cli.doctor:main"
+nexus-pipeline = "nexus.cli.pipeline:main"
+nexus-briefing = "nexus.cli.briefing:main"
+nexus-ingest = "nexus.cli.ingest:main"
+nexus-query = "nexus.cli.query:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

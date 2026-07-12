@@ -87,8 +87,10 @@ test-knowledge:
 	          tests/test_knowledge_ingest.py \
 	          tests/test_knowledge_ingest_files.py \
 	          tests/test_knowledge_query.py \
-	          tests/test_knowledge_embedding.py \
 	          -v
+
+test-cli:
+	$(PYTEST) tests/test_cli_smoke.py -v
 
 test-archive:
 	$(PYTEST) tests/test_archive_sync.py \
