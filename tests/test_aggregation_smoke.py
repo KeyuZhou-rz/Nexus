@@ -53,10 +53,11 @@ class _GoogleStub:
 def test_run_aggregation_smoke(monkeypatch):
     captured = {}
 
-    def _save(tasks):
+    def _save(tasks, path=None):
         captured["count"] = len(tasks)
 
-    monkeypatch.setattr(aggregation, "load_feeds", lambda: [_Feed("brightspace_ical", "c1", "file://x")])
+    monkeypatch.setattr(aggregation, "load_feeds", lambda path=None: [_Feed("brightspace_ical", "c1", "file://x")])
+    monkeypatch.setattr(aggregation, "load_tasks", lambda path=None: [])
     monkeypatch.setattr(aggregation, "save_tasks", _save)
     monkeypatch.setattr(aggregation, "BrightspaceAggregator", _BrightspaceStub)
     monkeypatch.setattr(aggregation, "GoogleAggregator", _GoogleStub)

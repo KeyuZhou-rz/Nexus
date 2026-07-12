@@ -69,7 +69,7 @@ def run_mvp_pipeline(
                 )
             )
 
-    agg = run_aggregation(include_google=include_google)
+    agg = run_aggregation(include_google=include_google, data_dir=config.data_dir)
     steps.append(
         StepResult(
             name="aggregation",
@@ -79,7 +79,7 @@ def run_mvp_pipeline(
         )
     )
 
-    tasks = load_tasks()
+    tasks = load_tasks(config.data_dir / "tasks.json")
     window_start = now_local
     window_end = now_local + timedelta(days=window_days)
     briefing = build_briefing(

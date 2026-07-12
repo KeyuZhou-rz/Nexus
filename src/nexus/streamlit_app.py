@@ -1146,7 +1146,7 @@ with right_panel:
 # Study Assistant Tab (Phase 3 QAPipeline integration)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DATA_DIR = config.data_dir
 
 
 @st.cache_resource

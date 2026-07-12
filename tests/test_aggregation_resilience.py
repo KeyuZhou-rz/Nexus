@@ -36,11 +36,11 @@ def test_preserve_existing_tasks_when_sources_fail(monkeypatch):
     existing = [_task("old-1", "Existing Task")]
     saved = {}
 
-    monkeypatch.setattr(aggregation, "load_tasks", lambda: list(existing))
+    monkeypatch.setattr(aggregation, "load_tasks", lambda path=None: list(existing))
     monkeypatch.setattr(
         aggregation,
         "load_feeds",
-        lambda: [
+        lambda path=None: [
             type("F", (), {
                 "kind": "brightspace_ical",
                 "name": "Course",
@@ -54,7 +54,7 @@ def test_preserve_existing_tasks_when_sources_fail(monkeypatch):
     )
     monkeypatch.setattr(aggregation, "BrightspaceAggregator", _BrightspaceFailStub)
     monkeypatch.setattr(aggregation, "GoogleAggregator", _GoogleFailStub)
-    monkeypatch.setattr(aggregation, "save_tasks", lambda tasks: saved.setdefault("tasks", list(tasks)))
+    monkeypatch.setattr(aggregation, "save_tasks", lambda tasks, path=None: saved.setdefault("tasks", list(tasks)))
 
     result = aggregation.run_aggregation(include_google=True)
 
@@ -65,9 +65,9 @@ def test_preserve_existing_tasks_when_sources_fail(monkeypatch):
 
 def test_no_feed_config_reports_error(monkeypatch):
     saved = {}
-    monkeypatch.setattr(aggregation, "load_tasks", lambda: [])
-    monkeypatch.setattr(aggregation, "load_feeds", lambda: [])
-    monkeypatch.setattr(aggregation, "save_tasks", lambda tasks: saved.setdefault("tasks", list(tasks)))
+    monkeypatch.setattr(aggregation, "load_tasks", lambda path=None: [])
+    monkeypatch.setattr(aggregation, "load_feeds", lambda path=None: [])
+    monkeypatch.setattr(aggregation, "save_tasks", lambda tasks, path=None: saved.setdefault("tasks", list(tasks)))
 
     result = aggregation.run_aggregation(include_google=False)
 

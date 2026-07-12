@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 from .aggregators.brightspace import BrightspaceAggregator, FeedConfig
 from .aggregators.google import GoogleAggregator
+from .config import default_config
 from .models import FeedSource, Task
 from .storage import load_feeds, load_tasks, save_tasks
 from .utils import dedupe_tasks
@@ -80,7 +82,7 @@ def _split_feeds(feeds: list[FeedSource]) -> tuple[list[FeedConfig], list[FeedCo
     return ical_feeds, rss_feeds
 
 
-def run_aggregation(include_google: bool = True) -> AggregationResult:
+def run_aggregation(include_google: bool = True, data_dir: Path | None = None) -> AggregationResult:
     """
     执行完整的数据聚合流程。
     
@@ -91,11 +93,14 @@ def run_aggregation(include_google: bool = True) -> AggregationResult:
     4. 合并所有数据并去重。
     5. 保存到磁盘 (tasks.json)。
     """
+    data_dir = data_dir or default_config().data_dir
+    tasks_path = data_dir / "tasks.json"
+    feeds_path = data_dir / "feeds.json"
     tasks: list[Task] = []
     errors: list[str] = []
-    existing_tasks = load_tasks()
+    existing_tasks = load_tasks(tasks_path)
 
-    feeds = load_feeds()
+    feeds = load_feeds(feeds_path)
     ical_feeds, rss_feeds = _split_feeds(feeds)
     brightspace_enabled = bool(ical_feeds or rss_feeds)
     if not brightspace_enabled:
@@ -127,14 +132,17 @@ def run_aggregation(include_google: bool = True) -> AggregationResult:
         errors.append(
             "Aggregation produced no new tasks due to source errors; preserving existing tasks.json."
         )
-        save_tasks(existing_tasks)
+        save_tasks(existing_tasks, tasks_path)
         return AggregationResult(tasks=existing_tasks, errors=errors)
 
-    save_tasks(tasks)
+    save_tasks(tasks, tasks_path)
     return AggregationResult(tasks=tasks, errors=errors)
 
 
-def sync_google_calendar(existing_tasks: list[Task] | None = None) -> AggregationResult:
+def sync_google_calendar(
+    existing_tasks: list[Task] | None = None,
+    data_dir: Path | None = None,
+) -> AggregationResult:
     """
     轻量级同步：仅更新 Google Calendar 数据。
     
@@ -142,7 +150,9 @@ def sync_google_calendar(existing_tasks: list[Task] | None = None) -> Aggregatio
     Google Calendar 的变动频率较高（如会议变更），且 API 响应较快。
     此函数允许在后台频繁运行，而无需每次都重新抓取所有数据源（特别是慢速的 Gmail 或 RSS）。
     """
-    tasks = list(existing_tasks) if existing_tasks is not None else load_tasks()
+    data_dir = data_dir or default_config().data_dir
+    tasks_path = data_dir / "tasks.json"
+    tasks = list(existing_tasks) if existing_tasks is not None else load_tasks(tasks_path)
     errors: list[str] = []
     try:
         # 仅请求 Calendar 数据，不请求 Gmail
@@ -156,18 +166,19 @@ def sync_google_calendar(existing_tasks: list[Task] | None = None) -> Aggregatio
         errors.append(f"Google Calendar sync error: {exc}")
         
     tasks = _dedupe(tasks)
-    save_tasks(tasks)
+    save_tasks(tasks, tasks_path)
     return AggregationResult(tasks=tasks, errors=errors)
 
 
-def check_brightspace_feeds() -> list[FeedStatus]:
+def check_brightspace_feeds(data_dir: Path | None = None) -> list[FeedStatus]:
     """
     诊断工具：逐个测试 Brightspace 订阅源的连通性。
     
     它不会保存数据，而是返回每个源的测试结果（成功/失败、获取到的条目数）。
     这对于调试 '为什么我的作业没显示' 非常有用。
     """
-    feeds = load_feeds()
+    data_dir = data_dir or default_config().data_dir
+    feeds = load_feeds(data_dir / "feeds.json")
     statuses: list[FeedStatus] = []
     for feed in feeds:
         if feed.kind not in {"brightspace_ical", "brightspace_rss", "ical_file"}:

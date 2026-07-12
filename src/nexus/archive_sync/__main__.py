@@ -21,6 +21,7 @@ if str(SRC_ROOT) not in sys.path:
 from nexus.archive_sync.scraper import run_scraper
 from nexus.archive_sync.post_ingest import run_archive_post_ingest
 from nexus.archive_sync.reporting import update_failure_queue
+from nexus.config import default_config
 from nexus.models import Task
 from nexus.schemas import ARCHIVE_RESULT_SCHEMA_VERSION
 from nexus.storage import load_tasks, save_tasks
@@ -32,20 +33,21 @@ def _dedupe(tasks: list[Task]) -> list[Task]:
 
 
 def main() -> None:
+    data_dir = default_config().data_dir
     base_url = os.environ.get("NEXUS_BRIGHTSPACE_URL", "").rstrip("/")
     username = os.environ.get("NEXUS_BRIGHTSPACE_USERNAME", "")
     password = os.environ.get("NEXUS_BRIGHTSPACE_PASSWORD", "")
     archive_root = Path(
         os.environ.get(
             "NEXUS_ARCHIVE_DIR",
-            str(Path(__file__).resolve().parents[3] / "data" / "archives"),
+            str(data_dir / "archives"),
         )
     )
     debug_enabled = os.environ.get("NEXUS_ARCHIVE_DEBUG", "1").strip().lower() not in {"0", "false", "no"}
     debug_dir = Path(
         os.environ.get(
             "NEXUS_ARCHIVE_DEBUG_DIR",
-            str(Path(__file__).resolve().parents[3] / "tmp" / "debug" / "archive_sync"),
+            str(data_dir / "debug" / "archive_sync"),
         )
     )
     timeout_raw = os.environ.get("NEXUS_ARCHIVE_COURSE_DISCOVERY_TIMEOUT", "25000")
@@ -58,14 +60,14 @@ def main() -> None:
     post_ingest_db_dir = Path(
         os.environ.get(
             "NEXUS_ARCHIVE_POST_INGEST_DB_DIR",
-            str(Path(__file__).resolve().parents[3] / "data" / "chroma"),
+            str(data_dir / "chroma"),
         )
     )
     try:
         discovery_timeout_ms = max(1_000, int(timeout_raw))
     except ValueError:
         discovery_timeout_ms = 25_000
-    failure_report_path = Path(__file__).resolve().parents[3] / "data" / "archive_failures.json"
+    failure_report_path = data_dir / "archive_failures.json"
 
     needs_creds = login_mode in {"auto", "hybrid"}
     if not base_url or (needs_creds and (not username or not password)):
@@ -127,9 +129,10 @@ def main() -> None:
                 print(f"[archive_sync] Skipping malformed task: {exc}", file=sys.stderr)
 
         # Merge with existing tasks
-        existing = load_tasks()
+        tasks_path = data_dir / "tasks.json"
+        existing = load_tasks(tasks_path)
         merged = _dedupe([*existing, *new_tasks])
-        save_tasks(merged)
+        save_tasks(merged, tasks_path)
         print(
             f"[archive_sync] Merged {len(new_tasks)} new tasks → {len(merged)} total in tasks.json",
             file=sys.stderr,
@@ -141,9 +144,9 @@ def main() -> None:
         try:
             post_summary = run_archive_post_ingest(
                 archives=result.get("archives", []),
-                data_dir=Path(__file__).resolve().parents[3] / "data",
+                data_dir=data_dir,
                 db_dir=post_ingest_db_dir,
-                sqlite_path=Path(__file__).resolve().parents[3] / "data" / "nexus.db",
+                sqlite_path=data_dir / "nexus.db",
             )
             result["post_ingest"] = post_summary
         except Exception as exc:
