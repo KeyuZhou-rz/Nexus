@@ -113,6 +113,23 @@ TEACHING_MODE_GUIDANCE = {
     ),
 }
 
+ASSESSMENT_GRADE_PROMPT = """\
+你是严格但公平的课程测评评分器。根据题目、目标概念和学生答案判断学习证据。
+
+目标概念：{concept_name}
+题目：{question}
+学生答案：{student_answer}
+
+只输出 JSON：
+{{"event_type":"correct_answer|struggled|forgot","confidence":0.0,"feedback":"简短反馈"}}
+
+规则：
+- correct_answer：核心结论正确，推理足以证明理解。
+- struggled：有作答，但存在关键概念错误、遗漏或推理不足。
+- forgot：学生明确表示不知道、忘记或无法作答。
+- confidence 表示这次作答作为掌握度证据的可靠性；信息不足时低于 0.6。
+"""
+
 # 不同学习风格对应的教学风格指令
 TEACHING_STYLE = {
     "visual": "多用类比、图示描述和步骤拆解，帮助学生在脑海中构建画面。",

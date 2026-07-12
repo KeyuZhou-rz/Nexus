@@ -1201,6 +1201,8 @@ with tab_study:
         st.session_state.qa_session_id = _uuid.uuid4().hex[:8]
     if "qa_messages" not in st.session_state:
         st.session_state.qa_messages = []  # list of {role, content, sources, expanded_queries}
+    if "qa_assessment_attempt" not in st.session_state:
+        st.session_state.qa_assessment_attempt = None
 
     # ── 加载 pipeline ──
     try:
@@ -1236,6 +1238,17 @@ with tab_study:
             label_visibility="collapsed",
             key="qa_course_select",
         )
+        _teaching_mode = st.radio(
+            "Mode",
+            options=["answer", "tutor", "assessment"],
+            format_func=lambda value: {
+                "answer": "Answer",
+                "tutor": "Tutor",
+                "assessment": "Assessment",
+            }[value],
+            horizontal=True,
+            key="qa_teaching_mode",
+        )
 
         # 注册课程到 profile（首次访问）
         if _pipeline_ok and _selected_course not in _known_courses:
@@ -1263,9 +1276,17 @@ with tab_study:
                         for _q in _msg["expanded_queries"]:
                             st.caption(_q)
 
-        # 聊天输入
+        # 聊天输入。Assessment 第一次输入主题，第二次输入学生答案。
+        _pending_assessment = st.session_state.qa_assessment_attempt
+        if _teaching_mode == "assessment" and _pending_assessment is not None:
+            _input_placeholder = "Submit your answer..."
+        elif _teaching_mode == "assessment":
+            _input_placeholder = "Choose a concept or topic to be tested on..."
+        else:
+            _input_placeholder = "Ask about your course material..."
+
         if _qa_prompt := st.chat_input(
-            "Ask about your course material...",
+            _input_placeholder,
             disabled=not _pipeline_ok,
         ):
             # 追加用户消息
@@ -1273,26 +1294,56 @@ with tab_study:
             with st.chat_message("user"):
                 st.markdown(_qa_prompt)
 
-            # 调用 QAPipeline
+            # 调用 QAPipeline。只有 assessment 的提交分支会记录 mastery。
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     try:
-                        _resp = _pipeline.ask(
-                            _qa_prompt,
-                            session_id=st.session_state.qa_session_id,
-                            course_id=_selected_course,
-                        )
-                        _answer = _resp.answer
-                        _sources = [
-                            {
-                                "topic": str(s.topic),
-                                "file": str(s.source_file),
-                                "score": s.score,
-                            }
-                            for s in _resp.sources
-                        ]
-                        _expanded = _resp.expanded_queries
-                        _warnings = _resp.warnings
+                        if _teaching_mode == "assessment" and _pending_assessment is not None:
+                            _attempt = _pipeline.submit_assessment(_pending_assessment, _qa_prompt)
+                            _grade = _attempt.grade
+                            _answer = _grade.feedback if _grade else "Assessment submitted."
+                            if _attempt.recorded:
+                                _answer += (
+                                    f"\n\nEvidence recorded for {_attempt.target.concept_name} "
+                                    f"({_grade.event_type}, confidence {_grade.confidence:.2f})."
+                                )
+                            else:
+                                _answer += "\n\nThe result was not recorded because the evidence confidence was insufficient."
+                            st.session_state.qa_assessment_attempt = None
+                            _sources = []
+                            _expanded = []
+                            _warnings = []
+                        elif _teaching_mode == "assessment":
+                            _attempt = _pipeline.create_assessment(
+                                _qa_prompt,
+                                session_id=st.session_state.qa_session_id,
+                                course_id=_selected_course,
+                            )
+                            st.session_state.qa_assessment_attempt = _attempt
+                            _answer = _attempt.question
+                            _sources = []
+                            _expanded = []
+                            _warnings = [
+                                f"Waiting for your answer. Target concept: {_attempt.target.concept_name}"
+                            ]
+                        else:
+                            _resp = _pipeline.ask(
+                                _qa_prompt,
+                                session_id=st.session_state.qa_session_id,
+                                course_id=_selected_course,
+                                teaching_mode=_teaching_mode,
+                            )
+                            _answer = _resp.answer
+                            _sources = [
+                                {
+                                    "topic": str(s.topic),
+                                    "file": str(s.source_file),
+                                    "score": s.score,
+                                }
+                                for s in _resp.sources
+                            ]
+                            _expanded = _resp.expanded_queries
+                            _warnings = _resp.warnings
                     except Exception as _exc:
                         _answer = f"⚠️ Error: {_exc}"
                         _sources = []
