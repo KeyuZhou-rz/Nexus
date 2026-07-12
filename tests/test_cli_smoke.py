@@ -35,6 +35,21 @@ def test_unified_cli_dispatches_db_check_help() -> None:
     assert "--json" in result.stdout
 
 
+def test_unified_cli_propagates_subcommand_failure(tmp_path) -> None:
+    result = _run(
+        "-m",
+        "nexus.cli.main",
+        "db-check",
+        "--sqlite-path",
+        str(tmp_path / "missing.db"),
+        "--db-dir",
+        str(tmp_path / "missing-chroma"),
+        "--json",
+    )
+    assert result.returncode == 1
+    assert '"ok": false' in result.stdout
+
+
 def test_unified_cli_dispatches_database_maintenance_help() -> None:
     expected = {
         "db-backup": "--output",

@@ -32,10 +32,10 @@ def _help() -> None:
         print(f"  {name:<16} {description}")
 
 
-def main() -> None:
+def main() -> int:
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
         _help()
-        return
+        return 0
     command = sys.argv[1]
     if command not in COMMANDS:
         print(f"Unknown command: {command}\n")
@@ -45,8 +45,9 @@ def main() -> None:
     module_name, _ = COMMANDS[command]
     module = __import__(module_name, fromlist=["main"])
     sys.argv = [f"nexus {command}", *sys.argv[2:]]
-    module.main()
+    result = module.main()
+    return int(result) if result is not None else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
