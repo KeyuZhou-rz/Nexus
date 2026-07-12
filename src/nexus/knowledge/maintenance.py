@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
+from .maintenance_lock import maintenance_lock
+
 
 BACKUP_FORMAT_VERSION = 1
 
@@ -54,18 +56,28 @@ def create_backup(
         raise FileExistsError(f"Backup already exists: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix="nexus-backup-") as temp_dir:
+    with maintenance_lock(
+        sqlite_path=sqlite_path, chroma_path=chroma_path,
+        exclusive=True,
+    ), tempfile.TemporaryDirectory(prefix="nexus-backup-") as temp_dir:
         temp_root = Path(temp_dir)
         snapshot = temp_root / "sqlite" / "nexus.db"
         _sqlite_snapshot(sqlite_path, snapshot)
 
         files: dict[str, str] = {"sqlite/nexus.db": _sha256(snapshot)}
+        staged_chroma = temp_root / "chroma"
         if chroma_path.is_dir():
+            shutil.copytree(
+                chroma_path,
+                staged_chroma,
+                symlinks=False,
+                ignore=shutil.ignore_patterns(".nexus-maintenance.lock"),
+            )
             for source in sorted(
-                path for path in chroma_path.rglob("*")
+                path for path in staged_chroma.rglob("*")
                 if path.is_file() and not path.is_symlink()
             ):
-                relative = PurePosixPath("chroma") / PurePosixPath(source.relative_to(chroma_path).as_posix())
+                relative = PurePosixPath("chroma") / PurePosixPath(source.relative_to(staged_chroma).as_posix())
                 files[str(relative)] = _sha256(source)
 
         manifest = {
@@ -80,7 +92,7 @@ def create_backup(
                 archive.write(snapshot, "sqlite/nexus.db")
                 if chroma_path.is_dir():
                     for relative in sorted(key for key in files if key.startswith("chroma/")):
-                        source = chroma_path / Path(PurePosixPath(relative).relative_to("chroma"))
+                        source = temp_root / Path(PurePosixPath(relative))
                         archive.write(source, relative)
                 archive.writestr("manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
             os.replace(staged_output, output_path)
@@ -139,7 +151,10 @@ def restore_backup(
     if not archive_path.is_file():
         raise FileNotFoundError(f"Backup not found: {archive_path}")
 
-    with tempfile.TemporaryDirectory(prefix="nexus-restore-") as temp_dir:
+    with maintenance_lock(
+        sqlite_path=sqlite_path, chroma_path=chroma_path,
+        exclusive=True,
+    ), tempfile.TemporaryDirectory(prefix="nexus-restore-") as temp_dir:
         extraction_root = Path(temp_dir)
         manifest = _validate_archive(archive_path, extraction_root)
         conflicts = [str(path) for path in (sqlite_path, chroma_path) if path.exists()]

@@ -30,6 +30,7 @@ from pathlib import Path
 
 from .concept_extractor import ConceptExtractor
 from .ingestion_service import chunk_id, document_id, file_content_hash
+from .maintenance_lock import maintenance_lock
 from .parser import parse_document, ParsedChunk
 from .store import ChromaKnowledgeStore
 from .sqlite_store import SQLiteStore
@@ -170,6 +171,20 @@ class CourseIngestor:
     # ────────────────────────────────────────────────
 
     def ingest_file(
+        self,
+        filepath: Path,
+        course_id: str,
+        *,
+        force: bool = False,
+    ) -> IngestResult:
+        with maintenance_lock(
+            sqlite_path=self._sqlite.db_path,
+            chroma_path=getattr(self._chroma, "persist_dir", None),
+            exclusive=False,
+        ):
+            return self._ingest_file_unlocked(filepath, course_id, force=force)
+
+    def _ingest_file_unlocked(
         self,
         filepath: Path,
         course_id: str,

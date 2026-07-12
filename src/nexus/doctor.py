@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import stat
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -22,10 +23,39 @@ def _module_available(name: str) -> bool:
     return bool(importlib.util.find_spec(name))
 
 
+def _check_secret_permissions(path: Path, label: str) -> tuple[str, str] | None:
+    """Return a redacted permission warning without reading secret contents."""
+    if not path.exists():
+        return None
+    if path.is_symlink():
+        return (label, f"{label} must not be a symlink: {path}")
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & 0o077:
+        return (label, f"{label} is readable by group/others ({mode:04o}); run chmod 600 {path}")
+    return None
+
+
 def run_doctor(config: AppConfig | None = None, include_google: bool = True) -> DoctorReport:
     config = config or default_config()
     failures: list[str] = []
     warnings: list[str] = []
+
+    secret_paths = {
+        ".env": Path(__file__).resolve().parents[2] / ".env",
+        "legacy_llm_key": Path(config.data_dir) / "QWEN_API_KEY.json",
+    }
+    if config.google_credentials_path:
+        secret_paths["google_credentials"] = Path(config.google_credentials_path)
+    if config.google_token_path:
+        secret_paths["google_token"] = Path(config.google_token_path)
+    secret_permissions: dict[str, str] = {}
+    for label, path in secret_paths.items():
+        if path.exists():
+            mode = stat.S_IMODE(path.stat().st_mode)
+            secret_permissions[label] = f"{mode:04o}"
+        warning = _check_secret_permissions(path, label)
+        if warning:
+            warnings.append(warning[1])
 
     core_deps = {
         "requests": _module_available("requests"),
@@ -117,6 +147,7 @@ def run_doctor(config: AppConfig | None = None, include_google: bool = True) -> 
             "base_url": bool(config.llm_base_url),
             "model": config.llm_model or "",
         },
+        "secret_permissions": secret_permissions,
     }
 
     return DoctorReport(

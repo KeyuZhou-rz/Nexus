@@ -63,3 +63,40 @@ def test_doctor_detects_sqlite_corruption(tmp_path):
     report = run_doctor(config=cfg, include_google=False)
     assert report.ok is False
     assert report.details["sqlite_status"] == "unreadable"
+
+
+def test_doctor_reports_secret_permissions_without_reading_contents(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    env_path = tmp_path / ".env"
+    env_path.write_text("NEXUS_LLM_API_KEY=do-not-print\n", encoding="utf-8")
+    token_path = data_dir / "google_token.json"
+    token_path.write_text('{"access_token":"do-not-print"}', encoding="utf-8")
+    legacy_key = data_dir / "QWEN_API_KEY.json"
+    legacy_key.write_text('{"QWEN_API_KEY":"do-not-print"}', encoding="utf-8")
+    env_path.chmod(0o644)
+    token_path.chmod(0o644)
+    legacy_key.chmod(0o644)
+    cfg = AppConfig(
+        data_dir=data_dir,
+        feeds_path=data_dir / "feeds.json",
+        google_token_path=token_path,
+        google_credentials_path=None,
+    )
+    # Doctor resolves .env from the project root, so assert the data-scoped
+    # checks here and keep the test independent of the developer's .env.
+    report = run_doctor(config=cfg, include_google=False)
+    assert any("google_token" in warning and "chmod 600" in warning for warning in report.warnings)
+    assert any("legacy_llm_key" in warning and "chmod 600" in warning for warning in report.warnings)
+    assert all("do-not-print" not in warning for warning in report.warnings)
+
+
+def test_doctor_records_owner_only_secret_permissions(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    key_path = data_dir / "QWEN_API_KEY.json"
+    key_path.write_text("{}", encoding="utf-8")
+    key_path.chmod(0o600)
+    report = run_doctor(config=AppConfig(data_dir=data_dir), include_google=False)
+    assert report.details["secret_permissions"]["legacy_llm_key"] == "0600"
+    assert not any("legacy_llm_key" in warning for warning in report.warnings)

@@ -45,6 +45,11 @@ To enable Gmail and Calendar integration:
    ```bash
    python -m nexus.google_auth
    ```
+6. Keep credentials owner-readable only:
+   ```bash
+   chmod 600 data/google_client_secret.json data/google_token.json
+   ```
+   Nexus writes refreshed OAuth tokens atomically with these permissions. `nexus doctor --strict` reports unsafe permissions without printing credential contents.
 
 ### 2. Brightspace (LMS) Feeds
 Create a file named `data/feeds.json` to configure your course feeds.

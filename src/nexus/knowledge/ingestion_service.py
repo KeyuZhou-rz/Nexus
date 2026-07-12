@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .chunking import chunk_text
+from .maintenance_lock import maintenance_lock
 from .store import ChromaKnowledgeStore
 
 
@@ -93,6 +94,27 @@ def ingest_text_documents(
     id_namespace: str = "chunk",
 ) -> IngestStats:
     """Chunk and upsert normalized text documents into Chroma."""
+    persist_dir = getattr(store, "persist_dir", None)
+    if persist_dir is None:
+        return _ingest_text_documents_unlocked(
+            documents, store, max_chars=max_chars, overlap=overlap,
+            id_namespace=id_namespace,
+        )
+    with maintenance_lock(chroma_path=Path(persist_dir), exclusive=False):
+        return _ingest_text_documents_unlocked(
+            documents, store, max_chars=max_chars, overlap=overlap,
+            id_namespace=id_namespace,
+        )
+
+
+def _ingest_text_documents_unlocked(
+    documents: list[TextDocument],
+    store: ChromaKnowledgeStore,
+    *,
+    max_chars: int,
+    overlap: int,
+    id_namespace: str,
+) -> IngestStats:
     stats = IngestStats()
 
     for document in documents:

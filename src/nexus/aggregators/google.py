@@ -5,7 +5,9 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -20,6 +22,23 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
+
+
+def _atomic_write_secret(path: Path, content: str) -> None:
+    """Write a credential file atomically with owner-only permissions."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_path, 0o600)
+        os.replace(temp_path, path)
+        os.chmod(path, 0o600)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def _ensure_google_deps() -> None:
@@ -52,7 +71,7 @@ def _load_credentials(token_path: Path, client_secret_path: Path):
         # If token expired but we have a refresh token, get a new access token.
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            token_path.write_text(creds.to_json(), encoding="utf-8")
+            _atomic_write_secret(token_path, creds.to_json())
             return creds
         raise RuntimeError(
             "Google token missing or invalid. Run `python -m nexus.google_auth` to authorize."

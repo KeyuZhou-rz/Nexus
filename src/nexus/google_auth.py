@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .config import default_config
-from .aggregators.google import SCOPES, _ensure_google_deps
+from .aggregators.google import SCOPES, _atomic_write_secret, _ensure_google_deps
 
 
 def authorize_google(credentials_path: Path, token_path: Path) -> None:
@@ -19,8 +19,7 @@ def authorize_google(credentials_path: Path, token_path: Path) -> None:
     flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), SCOPES)
     creds = flow.run_local_server(port=0)
 
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    token_path.write_text(creds.to_json(), encoding="utf-8")
+    _atomic_write_secret(token_path, creds.to_json())
     print(f"Token saved to {token_path}")
 
 
