@@ -93,7 +93,7 @@ nexus pipeline
 - `knowledge.chunking.chunk_text(text, max_chars=900, overlap=120)`
   - 职责：段落优先切分，超长文本滑窗切分
 - `knowledge.document_text.extract_text(path)`
-  - 职责：统一文档文本提取（`.md/.txt/.docx/.pdf`）；PDF 优先尝试 `updf4llm`，失败回退 `pypdf`
+  - 职责：统一文档文本提取（`.md/.txt/.docx/.pdf`）；PDF 优先尝试 `pymupdf4llm`，失败回退 `pypdf`
 - `knowledge.ingestion_service.ingest_text_documents(documents, store, ...)`
   - 职责：统一 `chunk/id/metadata/upsert` 实现（当前唯一核心入库路径）
 - `knowledge.ingest.ingest_files(paths, store, ...)`
@@ -138,11 +138,11 @@ nexus pipeline
 - 统一字段使查询过滤、调试、跨流程对接更稳定。
 
 ## 6.1 PDF 提取策略
-- 优先：`updf4llm`（markdown 友好，适合后续分块和阅读）
+- 优先：`pymupdf4llm`（markdown 友好，适合后续分块和阅读）
 - 回退：`pypdf`（基础文本提取）
 - 如需启用优先路径：
 ```bash
-pip install updf4llm
+pip install pymupdf4llm
 ```
 
 ## 7. 运行时数据文件约定

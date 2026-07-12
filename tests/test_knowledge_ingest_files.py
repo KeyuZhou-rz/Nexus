@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from nexus.knowledge import ingest as ingest_module
+from nexus.knowledge import document_text
 
 
 class _StoreStub:
@@ -69,3 +71,21 @@ def test_ingest_markdown_files_filters_non_markdown(tmp_path: Path, monkeypatch)
     )
 
     assert seen == [md_path]
+
+
+def test_pdf_extraction_uses_declared_pymupdf4llm_dependency(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pdf_path = tmp_path / "lecture.pdf"
+    pdf_path.write_bytes(b"%PDF")
+    imported: list[str] = []
+
+    def fake_import(name: str):
+        imported.append(name)
+        return SimpleNamespace(to_markdown=lambda path: "# Extracted lecture")
+
+    monkeypatch.setattr(document_text.importlib, "import_module", fake_import)
+
+    assert document_text.extract_text(pdf_path) == "# Extracted lecture"
+    assert imported == ["pymupdf4llm"]

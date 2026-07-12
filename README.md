@@ -134,7 +134,7 @@ Supported input suffixes: `.md`, `.txt`, `.docx`, `.pdf`.
 
 For PDF markdown-first extraction, install optional dependency:
 ```bash
-pip install updf4llm
+pip install pymupdf4llm
 ```
 
 

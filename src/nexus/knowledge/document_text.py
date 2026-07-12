@@ -23,10 +23,10 @@ def _normalize_text_result(value: Any) -> str:
     return ""
 
 
-def _extract_text_from_pdf_updf4llm(path: Path) -> str:
-    """Try updf4llm first for markdown-rich PDF extraction."""
+def _extract_text_from_pdf_pymupdf4llm(path: Path) -> str:
+    """Try pymupdf4llm first for markdown-rich PDF extraction."""
     try:
-        mod = importlib.import_module("updf4llm")
+        mod = importlib.import_module("pymupdf4llm")
     except Exception:
         return ""
 
@@ -84,8 +84,8 @@ def extract_text(path: Path) -> str:
     if suffix == ".docx":
         return _extract_text_from_docx(path)
     if suffix == ".pdf":
-        # Prefer markdown-friendly extraction if updf4llm is available.
-        text = _extract_text_from_pdf_updf4llm(path)
+        # Prefer markdown-friendly extraction if pymupdf4llm is available.
+        text = _extract_text_from_pdf_pymupdf4llm(path)
         if text.strip():
             return text
         return _extract_text_from_pdf_pypdf(path)
