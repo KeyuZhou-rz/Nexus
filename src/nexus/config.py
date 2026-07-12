@@ -48,7 +48,8 @@ class AppConfig:
 
 def default_config() -> AppConfig:
     """Loads configuration from environment variables or default paths."""
-    data_dir = Path(__file__).resolve().parents[2] / "data"
+    data_dir_env = os.getenv("NEXUS_DATA_DIR", "").strip()
+    data_dir = Path(data_dir_env).expanduser() if data_dir_env else Path(__file__).resolve().parents[2] / "data"
     credentials_env = os.getenv("NEXUS_GOOGLE_CREDENTIALS")
     token_env = os.getenv("NEXUS_GOOGLE_TOKEN")
     google_credentials_path = Path(credentials_env) if credentials_env else data_dir / "google_client_secret.json"

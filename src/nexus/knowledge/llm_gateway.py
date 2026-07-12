@@ -98,9 +98,19 @@ class LLMGateway:
     
 
     @property
+    def is_enabled(self) -> bool:
+        """Whether outbound LLM calls are explicitly enabled.
+
+        A configured API key is intentionally insufficient. This prevents a
+        developer environment with a lingering key from making requests until
+        ``NEXUS_LLM_ENABLED`` is set explicitly.
+        """
+        return os.getenv("NEXUS_LLM_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+    @property
     def is_configured(self) -> bool:
-        """是否有可用的 API key。"""
-        return bool(self.api_key)
+        """Whether calls may be made: enabled and an API key is available."""
+        return self.is_enabled and bool(self.api_key)
 
     def reset(self) -> None:
         """清除缓存，强制下一次访问重新读环境变量（仅测试用）。"""
@@ -116,8 +126,10 @@ class LLMGateway:
             max_tokens: int | None = None
     ) -> LLMResponse:
         
-        if not self.is_configured:
-            raise LLMGatewayError("LLMgateway Error occurred")
+        if not self.is_enabled:
+            raise LLMGatewayError("LLM is disabled. Set NEXUS_LLM_ENABLED=1 to enable requests.")
+        if not self.api_key:
+            raise LLMGatewayError("LLM is not configured. Set NEXUS_LLM_API_KEY.")
         
         # 构造请求头
         url = f"{self.base_url}/chat/completions"

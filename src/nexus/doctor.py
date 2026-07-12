@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,38 @@ def run_doctor(config: AppConfig | None = None, include_google: bool = True) -> 
         if not installed:
             failures.append(f"Missing dependency: {name}")
 
+    # Storage checks are deliberately read-only. A fresh checkout is allowed
+    # to have no database/vector index yet; corruption, however, is actionable.
+    data_dir = Path(config.data_dir).expanduser()
+    if not data_dir.exists():
+        warnings.append(f"Data directory does not exist yet: {data_dir} (run ingest/pipeline to initialize it).")
+    elif not data_dir.is_dir():
+        failures.append(f"Data directory is not a directory: {data_dir}")
+
+    sqlite_path = data_dir / "nexus.db"
+    sqlite_status = "missing"
+    sqlite_integrity: str | None = None
+    if sqlite_path.exists():
+        try:
+            with sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True, timeout=2) as conn:
+                sqlite_integrity = str(conn.execute("PRAGMA integrity_check").fetchone()[0])
+            sqlite_status = "ok" if sqlite_integrity == "ok" else "corrupt"
+            if sqlite_status == "corrupt":
+                failures.append(f"SQLite integrity check failed for {sqlite_path}: {sqlite_integrity}")
+        except (sqlite3.Error, OSError) as exc:
+            sqlite_status = "unreadable"
+            failures.append(f"SQLite database is unreadable ({sqlite_path}): {exc}")
+    else:
+        warnings.append(f"SQLite database not initialized: {sqlite_path}")
+
+    chroma_path = data_dir / "chroma"
+    chroma_status = "present" if chroma_path.exists() else "missing"
+    if not chroma_path.exists():
+        warnings.append(f"Chroma index not initialized: {chroma_path}")
+    elif not chroma_path.is_dir():
+        chroma_status = "invalid"
+        failures.append(f"Chroma path is not a directory: {chroma_path}")
+
     google_deps = {
         "googleapiclient": _module_available("googleapiclient"),
         "google_auth_oauthlib": _module_available("google_auth_oauthlib"),
@@ -52,7 +85,11 @@ def run_doctor(config: AppConfig | None = None, include_google: bool = True) -> 
         if not token_ok:
             warnings.append("Google token file missing.")
 
-    feeds = load_feeds(config.feeds_path) if config.feeds_path else []
+    try:
+        feeds = load_feeds(config.feeds_path) if config.feeds_path else []
+    except (OSError, ValueError, TypeError) as exc:
+        feeds = []
+        failures.append(f"Unable to read feeds configuration: {exc}")
     enabled_feeds = [f for f in feeds if f.enabled]
     if not enabled_feeds:
         warnings.append("No enabled Brightspace feeds found (data/feeds.json).")
@@ -62,12 +99,24 @@ def run_doctor(config: AppConfig | None = None, include_google: bool = True) -> 
         "python_executable": sys.executable,
         "python_version": sys.version,
         "data_dir": str(config.data_dir),
+        "data_dir_exists": data_dir.exists(),
+        "sqlite_path": str(sqlite_path),
+        "sqlite_status": sqlite_status,
+        "sqlite_integrity": sqlite_integrity,
+        "chroma_path": str(chroma_path),
+        "chroma_status": chroma_status,
         "tasks_path": str(tasks_path),
         "tasks_exists": tasks_path.exists(),
         "tasks_size": tasks_path.stat().st_size if tasks_path.exists() else 0,
         "feeds_path": str(config.feeds_path) if config.feeds_path else None,
         "feeds_enabled": len(enabled_feeds),
         "deps": {**core_deps, **google_deps},
+        "llm": {
+            "enabled": bool(config.llm_enabled),
+            "configured": bool(config.llm_api_key),
+            "base_url": bool(config.llm_base_url),
+            "model": config.llm_model or "",
+        },
     }
 
     return DoctorReport(
