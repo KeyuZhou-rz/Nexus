@@ -91,7 +91,7 @@ class GapScanner:
                 {"role": "system", "content": "You are a curriculum analyst. Return JSON only."},
                 {"role": "user", "content": prompt},
             ]
-            output = gateway.chat(messages, temperature=0.3)
+            output = gateway.chat(messages, temperature=0.3, call_site="gap_scanner")
             llm_concepts = json.loads(output.content)
         except Exception as exc:
             logger.warning(f"GapScanner LLM call failed: {exc}")

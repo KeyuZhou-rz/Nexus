@@ -1,41 +1,38 @@
+"""Compatibility client backed by the unified LLM gateway."""
 from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
 from typing import Any
 
-import requests
-
 from ..config import AppConfig
+from ..knowledge.llm_gateway import (
+    LLMGateway,
+    LLMGatewayError,
+    LLMResponse,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class LLMError(RuntimeError):
-    pass
-
-
-@dataclass
-class LLMResponse:
-    content: str
-    raw: dict[str, Any]
+class LLMError(LLMGatewayError):
+    """Backward-compatible briefing error type."""
 
 
 class LLMClient:
-    def __init__(
-        self,
-        config: AppConfig,
-        sqlite_store: Any | None = None,
-    ) -> None:
-        self.base_url = (config.llm_base_url or "").rstrip("/")
-        self.api_key = config.llm_api_key or ""
-        self.model = config.llm_model or ""
-        self.timeout = config.llm_timeout
+    def __init__(self, config: AppConfig, sqlite_store: Any | None = None) -> None:
         self._store = sqlite_store
+        self._gateway = LLMGateway(
+            timeout=config.llm_timeout,
+            enabled=config.llm_enabled,
+            api_key=config.llm_api_key,
+            base_url=config.llm_base_url,
+            model=config.llm_model,
+        )
+        self.model = config.llm_model or self._gateway.model
 
     def is_configured(self) -> bool:
-        return bool(self.base_url and self.model)
+        return self._gateway.is_configured
 
     def chat(
         self,
@@ -44,37 +41,16 @@ class LLMClient:
         response_format: dict[str, str] | None = None,
         max_tokens: int | None = None,
     ) -> LLMResponse:
-        if not self.is_configured():
-            raise LLMError("LLM not configured. Set NEXUS_LLM_BASE_URL and NEXUS_LLM_MODEL.")
-
-        url = f"{self.base_url}/chat/completions"
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-        }
-        if response_format:
-            payload["response_format"] = response_format
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
-
-        resp = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
         try:
-            resp.raise_for_status()
-        except requests.HTTPError as exc:
-            raise LLMError(f"LLM request failed: {exc}") from exc
-
-        data = resp.json()
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise LLMError("LLM response missing content.") from exc
-
-        return LLMResponse(content=content, raw=data)
+            return self._gateway.chat(
+                messages,
+                temperature=temperature,
+                response_format=response_format,
+                max_tokens=max_tokens,
+                call_site="briefing",
+            )
+        except LLMGatewayError as exc:
+            raise LLMError(str(exc)) from exc
 
     def log_interaction(
         self,
@@ -87,7 +63,6 @@ class LLMClient:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
     ) -> None:
-        """将简报 LLM 调用写入 SQLite interaction_logs。"""
         if self._store is None:
             return
         try:

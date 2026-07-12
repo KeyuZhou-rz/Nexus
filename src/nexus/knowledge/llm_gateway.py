@@ -1,176 +1,247 @@
-"""
-LLM Gateway — Nexus Phase L1
-
-单例模式 LLM 配置网关，收敛 7 处硬编码 LLM 配置。
-
-环境变量（优先级从高到低）：
-  NEXUS_LLM_MODEL     — 模型名（litellm 格式），默认 "openai/deepseek-chat"
-  NEXUS_LLM_API_KEY   — API key，默认读 .env NEXUS_LLM_API_KEY 或 QWEN_API_KEY 回退
-  NEXUS_LLM_BASE_URL  — API base URL，默认 https://api.deepseek.com/v1
-
-用法：
-  from nexus.knowledge.llm_gateway import gateway
-  model = gateway.model        # "openai/deepseek-chat"
-  kwargs = gateway.litellm_kwargs  # {"api_key": "...", "api_base": "..."}
-"""
+"""Unified OpenAI-compatible LLM gateway."""
 from __future__ import annotations
 
 import json
-import requests
 import logging
 import os
-from pathlib import Path
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from ..config import _load_dotenv as _load_env  # noqa: F401 — 触发 .env 加载，确保 gateway 读取到 NEXUS_LLM_* 配置
-_load_env()
+import requests
 
+from ..config import _load_dotenv as _load_env
+
+_load_env()
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "openai/deepseek-chat"
 _DEFAULT_BASE = "https://api.deepseek.com/v1"
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
 def _load_key_from_file() -> str | None:
-    """从 data/QWEN_API_KEY.json 加载 key（向后兼容）。"""
+    """Load the legacy key file for backward compatibility."""
     key_file = Path("data/QWEN_API_KEY.json")
     if not key_file.exists():
         return None
     try:
-        data = json.loads(key_file.read_text())
+        data = json.loads(key_file.read_text(encoding="utf-8"))
         return data.get("QWEN_API_KEY") or data.get("api_key") or data.get("key")
     except (json.JSONDecodeError, OSError):
         return None
 
+
 class LLMGatewayError(RuntimeError):
-    pass
+    """Normalized error raised by every OpenAI-compatible LLM call."""
+
+
+@dataclass
+class LLMResponse:
+    content: str
+    raw: dict[str, Any]
+    model_used: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    call_site: str = "unspecified"
+    retry_count: int = 0
+    latency_ms: int = 0
+
+
+@dataclass
+class LLMCallAudit:
+    call_site: str
+    model: str
+    success: bool
+    retry_count: int
+    latency_ms: int
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    error: str | None = None
+
 
 class LLMGateway:
-    """LLM 配置单例。"""
+    """Configuration, transport, retry, structured output, and call audit."""
 
-    def __init__(self, timeout: int = 60) -> None:
-        self._model: str | None = None
-        self._api_key: str | None = None
-        self._base_url: str | None = None
+    # Preserve the old ``gateway.LLMResponse(...)`` construction contract.
+    LLMResponse = LLMResponse
+
+    def __init__(
+        self,
+        timeout: int = 60,
+        *,
+        enabled: bool | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        max_retries: int = 2,
+        retry_backoff: float = 0.25,
+    ) -> None:
+        self._model = model
+        self._api_key = api_key
+        self._base_url = base_url
+        self._enabled = enabled
         self.timeout = timeout
-
-    @dataclass
-    class LLMResponse:
-        content: str
-        raw: dict[str, Any]
+        self.max_retries = max(0, max_retries)
+        self.retry_backoff = max(0.0, retry_backoff)
+        self._audit_log: list[LLMCallAudit] = []
 
     @property
     def model(self) -> str:
         if self._model is None:
-            dotenv_modelname = os.getenv("NEXUS_LLM_MODEL","").strip()
-            #auto-wrap bare model names in litellm "openai/" prefix
-            if dotenv_modelname and "/" not in dotenv_modelname:
-                dotenv_modelname = f"openai/{dotenv_modelname}"
-
-            self._model = dotenv_modelname or _DEFAULT_MODEL
-
+            model = os.getenv("NEXUS_LLM_MODEL", "").strip()
+            self._model = model or _DEFAULT_MODEL
         return self._model
-    
+
     @property
     def api_key(self) -> str | None:
         if self._api_key is None:
-            self._api_key = os.getenv("NEXUS_LLM_API_KEY") if os.getenv("NEXUS_LLM_API_KEY") else _load_key_from_file()
-
+            self._api_key = os.getenv("NEXUS_LLM_API_KEY") or _load_key_from_file()
         return self._api_key
-    
-
 
     @property
     def base_url(self) -> str:
         if self._base_url is None:
-            env_url = os.getenv("NEXUS_LLM_BASE_URL", "").strip()
-            # Auto-append /v1 if not present (DeepSeek and most OpenAI-compat APIs use it)
-            if env_url and not env_url.rstrip("/").endswith("/v1"):
-                env_url = env_url.rstrip("/") + "/v1"
-            self._base_url = env_url or _DEFAULT_BASE
-        return self._base_url
+            self._base_url = os.getenv("NEXUS_LLM_BASE_URL", "").strip() or _DEFAULT_BASE
+        url = self._base_url.rstrip("/")
+        return url if url.endswith("/v1") else f"{url}/v1"
 
     @property
     def litellm_kwargs(self) -> dict[str, str]:
-        """返回传给 litellm.completion(**kwargs) 的 extra 参数。"""
+        """Compatibility for non-OpenAI native provider fallbacks."""
         return {"api_key": self.api_key or "", "api_base": self.base_url}
-    
 
     @property
     def is_enabled(self) -> bool:
-        """Whether outbound LLM calls are explicitly enabled.
-
-        A configured API key is intentionally insufficient. This prevents a
-        developer environment with a lingering key from making requests until
-        ``NEXUS_LLM_ENABLED`` is set explicitly.
-        """
+        if self._enabled is not None:
+            return self._enabled
         return os.getenv("NEXUS_LLM_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 
     @property
     def is_configured(self) -> bool:
-        """Whether calls may be made: enabled and an API key is available."""
         return self.is_enabled and bool(self.api_key)
 
+    @property
+    def audit_log(self) -> tuple[LLMCallAudit, ...]:
+        return tuple(self._audit_log)
+
+    def clear_audit_log(self) -> None:
+        self._audit_log.clear()
+
     def reset(self) -> None:
-        """清除缓存，强制下一次访问重新读环境变量（仅测试用）。"""
+        """Clear environment-derived values and audit state (primarily for tests)."""
         self._model = None
         self._api_key = None
         self._base_url = None
+        self._enabled = None
+        self.clear_audit_log()
 
     def chat(
-            self,
-            messages: list[dict[str, str]],
-            temperature: float = 0.2,
-            response_format: dict[str, str] | None = None,
-            max_tokens: int | None = None
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.2,
+        response_format: dict[str, str] | None = None,
+        max_tokens: int | None = None,
+        *,
+        call_site: str = "unspecified",
+        model: str | None = None,
+        timeout: int | None = None,
     ) -> LLMResponse:
-        
         if not self.is_enabled:
             raise LLMGatewayError("LLM is disabled. Set NEXUS_LLM_ENABLED=1 to enable requests.")
         if not self.api_key:
             raise LLMGatewayError("LLM is not configured. Set NEXUS_LLM_API_KEY.")
-        
-        # 构造请求头
-        url = f"{self.base_url}/chat/completions"
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
 
-        # litellm 格式 "openai/deepseek-chat" → API 格式 "deepseek-chat"
-        api_model = self.model.split("/", 1)[1] if "/" in self.model else self.model
-
-        #组建请求体
+        effective_model = model or self.model
+        api_model = effective_model.split("/", 1)[1] if "/" in effective_model else effective_model
         payload: dict[str, Any] = {
             "model": api_model,
             "messages": messages,
             "temperature": temperature,
-
         }
-
         if response_format:
             payload["response_format"] = response_format
-        
-        if max_tokens:
+        if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
-        resp = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
-
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
+        started = time.monotonic()
+        retries = 0
         try:
-            resp.raise_for_status()
-        except requests.HTTPError as exc:
-            raise LLMGatewayError(f"LLM request failed: {exc}") from exc
-        
-        data = resp.json()
+            while True:
+                try:
+                    response = requests.post(
+                        f"{self.base_url}/chat/completions",
+                        json=payload,
+                        headers=headers,
+                        timeout=timeout or self.timeout,
+                    )
+                    if response.status_code in _RETRYABLE_STATUS and retries < self.max_retries:
+                        retries += 1
+                        time.sleep(self.retry_backoff * (2 ** (retries - 1)))
+                        continue
+                    response.raise_for_status()
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"]
+                    if not isinstance(content, str):
+                        raise TypeError("content is not a string")
+                    usage = data.get("usage") or {}
+                    latency = int((time.monotonic() - started) * 1000)
+                    result = LLMResponse(
+                        content=content,
+                        raw=data,
+                        model_used=effective_model,
+                        input_tokens=usage.get("prompt_tokens"),
+                        output_tokens=usage.get("completion_tokens"),
+                        call_site=call_site,
+                        retry_count=retries,
+                        latency_ms=latency,
+                    )
+                    self._audit_log.append(LLMCallAudit(
+                        call_site=call_site, model=effective_model, success=True,
+                        retry_count=retries, latency_ms=latency,
+                        input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+                    ))
+                    return result
+                except (requests.Timeout, requests.ConnectionError) as exc:
+                    if retries >= self.max_retries:
+                        raise exc
+                    retries += 1
+                    time.sleep(self.retry_backoff * (2 ** (retries - 1)))
+        except Exception as exc:
+            latency = int((time.monotonic() - started) * 1000)
+            error = exc if isinstance(exc, LLMGatewayError) else LLMGatewayError(f"LLM request failed: {exc}")
+            self._audit_log.append(LLMCallAudit(
+                call_site=call_site, model=effective_model, success=False,
+                retry_count=retries, latency_ms=latency, error=str(error),
+            ))
+            raise error from exc
+
+    def structured_output(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        call_site: str,
+        temperature: float = 0.1,
+        max_tokens: int | None = None,
+        model: str | None = None,
+        timeout: int | None = None,
+    ) -> Any:
+        """Return parsed JSON from a normalized JSON-mode chat call."""
+        response = self.chat(
+            messages,
+            temperature=temperature,
+            response_format={"type": "json_object"},
+            max_tokens=max_tokens,
+            call_site=call_site,
+            model=model,
+            timeout=timeout,
+        )
         try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise LLMGatewayError(f"LLM response missing out; {exc}") from exc
-        
-        return self.LLMResponse(content=content, raw=data)
-        
-        
+            return json.loads(response.content)
+        except json.JSONDecodeError as exc:
+            raise LLMGatewayError(f"LLM structured output is invalid JSON: {exc}") from exc
 
 
-# 全局单例
 gateway = LLMGateway()

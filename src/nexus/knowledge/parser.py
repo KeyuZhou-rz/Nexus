@@ -194,25 +194,15 @@ def _chunks_from_dicts(items: list[dict[str, Any]]) -> list[ParsedChunk]:
 
 def _parse_text_with_llm(text: str) -> list[dict[str, Any]]:
     """用 gateway.chat() 对一段文本做语义切块，返回原始 dict 列表。"""
-    resp = gateway.chat(
+    result = gateway.structured_output(
         messages=[
             {"role": "system", "content": PARSE_PROMPT},
             {"role": "user", "content": text},
         ],
+        call_site="document_parser",
         temperature=0.1,
-        response_format={"type": "json_object"},
         max_tokens=8192,
     )
-    raw = resp.content.strip()
-
-    # 去掉可能的 markdown 包装
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
-
-    result = json.loads(raw)
     if isinstance(result, list):
         return result
     return result.get("chunks") or result.get("items") or []

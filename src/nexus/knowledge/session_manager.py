@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from .llm_gateway import gateway
+from .llm_gateway import LLMGateway, gateway
 from .prompts import PROFILE_UPDATE_PROMPT
 from .sqlite_store import SQLiteStore
 from .user_profile import UserProfileManager
@@ -74,6 +74,12 @@ class SessionManager:
         self._store = sqlite_store
         self._profile = profile_manager
         self._api_key = gemini_api_key or gateway.api_key
+        self._llm_gateway = LLMGateway(
+            enabled=gateway.is_enabled,
+            api_key=self._api_key,
+            base_url=gateway.base_url,
+            model=gateway.model,
+        )
         self._idle_timeout = timedelta(minutes=idle_timeout_minutes)
 
     # ────────────────────────────────────────────────
@@ -252,7 +258,7 @@ class SessionManager:
             session_transcript=transcript,
         )
 
-        # 先尝试 litellm，再 fallback Gemini 直连
+        # 先尝试统一 OpenAI-compatible gateway，再 fallback Gemini 直连
         try:
             return self._call_llm_litellm(prompt)
         except ImportError:
@@ -267,21 +273,16 @@ class SessionManager:
             return None
 
     def _call_llm_litellm(self, prompt: str) -> dict[str, Any]:
-        """使用 litellm 调用 LLM（通过 gateway 配置）。"""
-        import litellm
-        extra = gateway.litellm_kwargs.copy()
-        if self._api_key:
-            extra["api_key"] = self._api_key
-        response = litellm.completion(
-            model=gateway.model,
-            messages=[{"role": "user", "content": prompt}],
+        """Compatibility name for the unified OpenAI-compatible gateway path."""
+        result = self._llm_gateway.structured_output(
+            [{"role": "user", "content": prompt}],
+            call_site="session_profile_analysis",
             temperature=0.1,
             max_tokens=1024,
-            response_format={"type": "json_object"},
-            **extra,
         )
-        raw = response.choices[0].message.content or ""
-        return _parse_llm_json(raw)
+        if not isinstance(result, dict):
+            raise ValueError("session profile analysis must return a JSON object")
+        return result
 
     def _call_llm_gemini(self, prompt: str) -> dict[str, Any]:
         """Gemini 直连 fallback。"""

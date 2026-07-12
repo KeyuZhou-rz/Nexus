@@ -30,7 +30,7 @@ from .parser import ParsedChunk
 from .prompts import CONCEPT_EXTRACT_PROMPT, CROSS_COURSE_RELATION_PROMPT
 from .sqlite_store import SQLiteStore
 
-from .llm_gateway import gateway
+from .llm_gateway import LLMGateway, gateway
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +134,12 @@ class ConceptExtractor:
     ) -> None:
         self._store = sqlite_store
         self._api_key = llm_api_key
+        self._llm_gateway = LLMGateway(
+            enabled=gateway.is_enabled,
+            api_key=llm_api_key or gateway.api_key,
+            base_url=gateway.base_url,
+            model=gateway.model,
+        )
 
     # ────────────────────────────────────────────────
     # Pass 1: 规则提取（零 LLM 成本）
@@ -257,8 +263,6 @@ class ConceptExtractor:
         course_id: str,
     ) -> tuple[list[ExtractedConcept], list[ExtractedRelation]]:
         """实际的 LLM 调用。"""
-        import litellm
-
         # 构建 prompt 输入
         candidate_text = "\n".join(
             f"- {c.name}" + (f" ({c.concept_type})" if c.concept_type else "")
@@ -275,20 +279,12 @@ class ConceptExtractor:
             chunk_summaries=chunk_summaries,
         )
 
-        extra = gateway.litellm_kwargs.copy()
-        if self._api_key:
-            extra["api_key"] = self._api_key
-
-        response = litellm.completion(
-            model=gateway.model,
-            messages=[{"role": "user", "content": prompt}],
+        result = self._llm_gateway.structured_output(
+            [{"role": "user", "content": prompt}],
+            call_site="concept_refinement",
             temperature=0.1,
             max_tokens=4096,
-            response_format={"type": "json_object"},
-            **extra,
         )
-
-        result = _parse_llm_json(response.choices[0].message.content)
 
         # 解析 LLM 输出为 ExtractedConcept 列表
         refined: list[ExtractedConcept] = []
@@ -389,8 +385,6 @@ class ConceptExtractor:
         course_id: str,
     ) -> list[ExtractedRelation]:
         """跨课程关系的 LLM 调用。"""
-        import litellm
-
         # 格式化新概念
         new_text = "\n".join(
             f"- {c.name}" + (f": {c.definition}" if c.definition else "")
@@ -415,20 +409,12 @@ class ConceptExtractor:
             existing_concepts=existing_text,
         )
 
-        extra = gateway.litellm_kwargs.copy()
-        if self._api_key:
-            extra["api_key"] = self._api_key
-
-        response = litellm.completion(
-            model=gateway.model,
-            messages=[{"role": "user", "content": prompt}],
+        raw = self._llm_gateway.structured_output(
+            [{"role": "user", "content": prompt}],
+            call_site="cross_course_relations",
             temperature=0.1,
             max_tokens=1024,
-            response_format={"type": "json_object"},
-            **extra,
         )
-
-        raw = _parse_llm_json(response.choices[0].message.content)
         items = raw if isinstance(raw, list) else raw.get("relations", [])
 
         # 构建 name→concept_id 查找表

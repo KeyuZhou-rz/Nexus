@@ -17,7 +17,6 @@ litellm 支持 OpenAI / Gemini / Anthropic / Azure 等，一套接口切换模�
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -54,6 +53,7 @@ class KnowledgeLLMClient:
         max_tokens: int = 1500,
     ) -> None:
         self._store = sqlite_store
+        import os
         self.model = model or os.getenv("NEXUS_QA_MODEL") or gateway.model
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -70,7 +70,19 @@ class KnowledgeLLMClient:
         """
         effective_model = model or self.model
 
-        return self._chat_litellm(messages, effective_model)
+        response = gateway.chat(
+            messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            call_site="qa",
+            model=effective_model,
+        )
+        return LLMOutput(
+            content=response.content,
+            model_used=response.model_used,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+        )
 
     def log_interaction(
         self,
@@ -102,39 +114,4 @@ class KnowledgeLLMClient:
         except Exception as exc:
             # 日志写入失败不应中断问答流程
             logger.warning(f"interaction_logs 写入失败: {exc}")
-
-    # ────────────────────────────────────────────────
-    # 内部实现
-    # ────────────────────────────────────────────────
-
-    def _chat_litellm(
-        self,
-        messages: list[dict[str, str]],
-        model: str,
-    ) -> LLMOutput:
-        """
-        使用 litellm.completion 调用 LLM。
-        litellm 自动处理不同 provider 的 API 格式差异。
-        API key 通过 LLMGateway 统一读取。
-        """
-        import litellm  # 延迟导入，安装检测
-
-        extra = gateway.litellm_kwargs if gateway.is_configured else {}
-        response = litellm.completion(
-            model=model,
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            **extra,
-        )
-
-        content = response.choices[0].message.content or ""
-        usage = getattr(response, "usage", None)
-
-        return LLMOutput(
-            content=content,
-            model_used=model,
-            input_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
-            output_tokens=getattr(usage, "completion_tokens", None) if usage else None,
-        )
 

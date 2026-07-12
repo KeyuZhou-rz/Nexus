@@ -437,6 +437,7 @@ class GoogleAggregator(Aggregator):
                 ],
                 temperature=0.1,
                 max_tokens=400,
+                call_site="gmail_extraction",
             )
             data = json.loads(response.content)
             if not isinstance(data, dict):

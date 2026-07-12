@@ -138,7 +138,7 @@ class ExamRetrospective:
                 {"role": "system", "content": "你是一个学习策略分析师。返回 JSON only。"},
                 {"role": "user", "content": prompt},
             ]
-            output = gateway.chat(messages, temperature=0.3)
+            output = gateway.chat(messages, temperature=0.3, call_site="retrospective")
             data = json.loads(output.content)
         except Exception as exc:
             logger.warning(f"Retrospective LLM call failed: {exc}")
