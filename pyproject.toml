@@ -31,6 +31,8 @@ nexus-pipeline = "nexus.cli.pipeline:main"
 nexus-briefing = "nexus.cli.briefing:main"
 nexus-ingest = "nexus.cli.ingest:main"
 nexus-query = "nexus.cli.query:main"
+nexus-db-check = "nexus.cli.db_check:main"
+nexus-ui = "nexus.cli.ui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
