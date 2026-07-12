@@ -2,7 +2,7 @@
 完整 Ingest Pipeline — Nexus Phase 3
 
 功能：
-- 幂等性：用 MD5 file_hash 检测文件是否已解析，跳过或增量更新
+- 幂等性：用 SHA-256 file_hash 检测文件是否已解析，跳过或增量更新
 - 双写：解析结果同时写入 ChromaDB（向量检索）和 SQLite（结构化元数据）
 - 课程隔离：每门课使用独立的 ChromaDB collection
 - Lecture 编号推断：从文件名 pattern 解析 lecture 编号（如 "Lecture07.pdf"→7）
@@ -23,13 +23,13 @@
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .concept_extractor import ConceptExtractor
+from .ingestion_service import chunk_id, document_id, file_content_hash
 from .parser import parse_document, ParsedChunk
 from .store import ChromaKnowledgeStore
 from .sqlite_store import SQLiteStore
@@ -41,13 +41,9 @@ logger = logging.getLogger(__name__)
 # 辅助函数
 # ────────────────────────────────────────────────
 
-def _md5(filepath: Path) -> str:
-    """计算文件 MD5，用于幂等性检测（文件内容变化时重新解析）。"""
-    h = hashlib.md5()
-    with open(filepath, "rb") as f:
-        for block in iter(lambda: f.read(65536), b""):
-            h.update(block)
-    return h.hexdigest()
+def _file_hash(filepath: Path) -> str:
+    """Compute the canonical SHA-256 content hash."""
+    return file_content_hash(filepath)
 
 
 def _infer_lecture_number(filename: str) -> int | None:
@@ -69,32 +65,33 @@ def _infer_lecture_number(filename: str) -> int | None:
     return None
 
 
-def _chunk_id(course_id: str, filename: str, idx: int) -> str:
-    """
-    生成 chunk ID，格式：{course_id}_{filename_stem}_{idx:03d}
-    与 ChromaDB document id 和 SQLite chunk_id 保持一致，方便交叉查询。
-    """
-    stem = Path(filename).stem[:40]          # 截断避免 ID 过长
-    safe_course = re.sub(r"[^a-zA-Z0-9_-]", "_", course_id)
-    safe_stem = re.sub(r"[^a-zA-Z0-9_-]", "_", stem)
-    return f"{safe_course}_{safe_stem}_{idx:03d}"
-
-
 def _chunk_to_metadata(
     chunk: ParsedChunk,
     course_id: str,
     filename: str,
     lecture_number: int | None,
+    file_hash: str,
+    chunk_index: int,
+    chunk_identifier: str,
 ) -> dict[str, str | int]:
     """
     将 ParsedChunk 转为 ChromaDB metadata 字典。
     ChromaDB 不支持 list 类型，keywords/prerequisites 转为逗号分隔字符串。
     """
+    doc_id = document_id(course_id, filename)
     return {
+        "schema_version": "1",
+        "document_id": doc_id,
+        "chunk_id": chunk_identifier,
         "course_id": course_id,
         "source_file": filename,
+        "file_name": filename,
+        "source_path": filename,
+        "file_hash": file_hash,
+        "chunk_index": chunk_index,
         "topic": chunk.topic,
         "type": chunk.type or "overview",
+        "doc_type": chunk.type or "overview",
         # list → 逗号分隔字符串（ChromaDB 限制）
         "keywords": ",".join(chunk.keywords),
         "prerequisites": ",".join(chunk.prerequisites),
@@ -199,22 +196,40 @@ class CourseIngestor:
                 status="failed", error="文件不存在"
             )
 
-        doc_id = f"{course_id}/{filepath.name}"
-        file_hash = _md5(filepath)
+        doc_id = document_id(course_id, filepath.name)
+        file_hash = _file_hash(filepath)
 
         # ── 幂等性检查 ──
         if not force:
             existing = self._sqlite.get_document(doc_id)
             if existing and existing["file_hash"] == file_hash and existing["parse_status"] == "done":
-                logger.debug(f"跳过未变更文件: {filepath.name}")
-                return IngestResult(
-                    filepath=filepath, course_id=course_id,
-                    status="skipped",
-                    chunks=existing.get("chunk_count", 0),
-                )
+                try:
+                    complete = self._document_is_complete(doc_id, course_id, existing)
+                except Exception as exc:
+                    return IngestResult(
+                        filepath=filepath,
+                        course_id=course_id,
+                        status="failed",
+                        error=f"索引一致性检查失败: {exc}",
+                    )
+                if complete:
+                    logger.debug(f"跳过未变更文件: {filepath.name}")
+                    return IngestResult(
+                        filepath=filepath, course_id=course_id,
+                        status="skipped",
+                        chunks=existing.get("chunk_count", 0),
+                    )
 
         # ── 清理旧数据（文件更新时） ──
-        self._cleanup_old_data(doc_id, course_id, filepath.name)
+        try:
+            self._cleanup_old_data(doc_id, course_id, filepath.name)
+        except Exception as exc:
+            return IngestResult(
+                filepath=filepath,
+                course_id=course_id,
+                status="failed",
+                error=f"旧索引清理失败: {exc}",
+            )
 
         # ── 注册文档，状态置为 parsing ──
         self._sqlite.upsert_document(
@@ -253,12 +268,12 @@ class CourseIngestor:
                 course_id=course_id,
                 filename=filepath.name,
                 lecture_number=lecture_number,
-                parse_model="deepseek-chat" if result.parse_method in ("deepseek", "deepseek_cached") else "text_fallback",
+                file_hash=file_hash,
             )
 
             # ── Phase 4A: 概念提取 ──
             chunk_ids_list = [
-                _chunk_id(course_id, filepath.name, i)
+                chunk_id(course_id, file_hash, i)
                 for i in range(len(result.chunks))
             ]
             self._extract_concepts(result.chunks, chunk_ids_list, course_id)
@@ -411,6 +426,22 @@ class CourseIngestor:
         # 再删 SQLite 记录（CASCADE 自动清理 chunks 表）
         self._sqlite.delete_document(doc_id)
 
+    def _document_is_complete(
+        self, doc_id: str, course_id: str, document: dict
+    ) -> bool:
+        """Verify both stores before treating an indexed document as complete."""
+        from .sqlite_store import connect
+
+        with connect(self._sqlite.db_path) as conn:
+            rows = conn.execute(
+                "SELECT chunk_id FROM chunks WHERE document_id=? ORDER BY chunk_id", (doc_id,)
+            ).fetchall()
+        ids = [str(row[0]) for row in rows]
+        expected_count = int(document.get("chunk_count") or 0)
+        return bool(ids) and len(ids) == expected_count and self._chroma.has_chunk_ids(
+            ids, course_id=course_id
+        )
+
     def _write_chunks(
         self,
         chunks: list[ParsedChunk],
@@ -418,7 +449,7 @@ class CourseIngestor:
         course_id: str,
         filename: str,
         lecture_number: int | None,
-        parse_model: str,
+        file_hash: str,
     ) -> None:
         """
         将 ParsedChunk 列表同时写入 ChromaDB（向量）和 SQLite（元数据）。
@@ -429,26 +460,42 @@ class CourseIngestor:
         chroma_metas: list[dict] = []
 
         for idx, chunk in enumerate(chunks):
-            cid = _chunk_id(course_id, filename, idx)
+            cid = chunk_id(course_id, file_hash, idx)
             ids.append(cid)
             texts.append(chunk.content)           # content 作为 embedding 输入
             chroma_metas.append(
-                _chunk_to_metadata(chunk, course_id, filename, lecture_number)
+                _chunk_to_metadata(
+                    chunk, course_id, filename, lecture_number,
+                    file_hash, idx, cid,
+                )
             )
 
-            # 写入 SQLite chunk 元数据
-            self._sqlite.upsert_chunk(
-                chunk_id=cid,
-                document_id=doc_id,
-                course_id=course_id,
-                topic=chunk.topic,
-                chunk_type=chunk.type,
-                keywords=chunk.keywords,
-                prerequisites=chunk.prerequisites,
-                page=chunk.page,
-                lecture_number=lecture_number,
-            )
-
-        # 批量写入 ChromaDB（embedding 在此发生）
-        self._chroma.upsert_chunks(ids, texts, chroma_metas, course_id=course_id)
+        try:
+            for cid, chunk in zip(ids, chunks):
+                self._sqlite.upsert_chunk(
+                    chunk_id=cid,
+                    document_id=doc_id,
+                    course_id=course_id,
+                    topic=chunk.topic,
+                    chunk_type=chunk.type,
+                    keywords=chunk.keywords,
+                    prerequisites=chunk.prerequisites,
+                    page=chunk.page,
+                    lecture_number=lecture_number,
+                )
+            self._chroma.upsert_chunks(ids, texts, chroma_metas, course_id=course_id)
+            if not self._chroma.has_chunk_ids(ids, course_id=course_id):
+                raise RuntimeError("Chroma write verification failed")
+        except Exception:
+            chroma_clean = False
+            try:
+                self._chroma.delete_chunks_by_ids(ids, course_id=course_id)
+                chroma_clean = True
+            except Exception as cleanup_exc:
+                logger.warning("Chroma 补偿清理失败: %s", cleanup_exc)
+            # If Chroma cleanup fails, keep SQLite IDs attached to the failed
+            # document so the next retry can reconcile the orphan vectors.
+            if chroma_clean:
+                self._sqlite.delete_chunks_by_document(doc_id)
+            raise
         logger.debug(f"写入 {len(ids)} chunks 到 ChromaDB + SQLite: {filename}")

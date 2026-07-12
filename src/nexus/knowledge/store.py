@@ -192,12 +192,29 @@ class ChromaKnowledgeStore:
         if not ids:
             return
         if self._per_course and course_id:
-            coll = self.get_course_collection(course_id)
+            try:
+                coll = self.get_course_collection(course_id)
+            except CourseCollectionNotFoundError:
+                return
         elif self._per_course:
             raise ValueError("course_id is required when deleting in per-course mode")
         else:
             coll = self.collection
         coll.delete(ids=ids)
+
+    def has_chunk_ids(self, ids: list[str], course_id: str | None = None) -> bool:
+        """Return whether all IDs exist in the selected collection without creating it."""
+        if not ids:
+            return True
+        try:
+            collections = self._collections_for_read(course_id)
+        except CourseCollectionNotFoundError:
+            return False
+        found: set[str] = set()
+        for collection in collections:
+            result = collection.get(ids=ids, include=[])
+            found.update(str(value) for value in (result.get("ids", []) or []))
+        return found == set(ids)
 
     # ────────────────────────────────────────────────
     # 查询

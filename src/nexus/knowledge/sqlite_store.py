@@ -168,10 +168,18 @@ class SQLiteStore:
         with connect(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO documents
+                INSERT INTO documents
                     (id, course_id, filename, file_hash, parse_status, chunk_count,
                      parse_model, status_updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    course_id=excluded.course_id,
+                    filename=excluded.filename,
+                    file_hash=excluded.file_hash,
+                    parse_status=excluded.parse_status,
+                    chunk_count=excluded.chunk_count,
+                    parse_model=excluded.parse_model,
+                    status_updated_at=CURRENT_TIMESTAMP
                 """,
                 (doc_id, course_id, filename, file_hash, parse_status, chunk_count, parse_model),
             )
