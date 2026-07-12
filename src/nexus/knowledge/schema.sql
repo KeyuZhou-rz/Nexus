@@ -166,6 +166,9 @@ CREATE TABLE IF NOT EXISTS learning_events (
     session_id      TEXT,
     context         TEXT,                    -- JSON: {question, confidence}
     timestamp       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    evidence_type   TEXT,                    -- assessment | direct | exposure | legacy
+    trust_status    TEXT,                    -- trusted | legacy; NULL = not classified yet
+    classified_at   TIMESTAMP,
     FOREIGN KEY (concept_id) REFERENCES concepts(concept_id) ON DELETE CASCADE
 );
 

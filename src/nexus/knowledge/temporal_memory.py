@@ -7,7 +7,7 @@ Temporal Memory — Nexus Phase 4B
 事件类型对参数的影响:
     correct_answer → initial_mastery += 0.15, decay_rate *= 0.85 (巩固)
     struggled      → initial_mastery += 0.05, decay_rate *= 1.1  (部分学习)
-    reviewed       → initial_mastery += 0.10, decay_rate *= 0.9  (被动复习)
+    reviewed       → 仅记录 exposure，不作为掌握证据
     forgot         → initial_mastery *= 0.5,  decay_rate *= 1.2  (显著衰减)
 """
 from __future__ import annotations
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 _EVENT_EFFECTS: dict[str, dict[str, float]] = {
     "correct_answer": {"mastery_add": 0.15, "decay_mult": 0.85, "streak_add": 1},
     "struggled":      {"mastery_add": 0.05, "decay_mult": 1.10, "streak_add": 0},
-    "reviewed":       {"mastery_add": 0.10, "decay_mult": 0.90, "streak_add": 0},
     "forgot":         {"mastery_mult": 0.50, "decay_mult": 1.20, "streak_add": -999},
 }
 
@@ -74,6 +73,7 @@ class TemporalMemory:
         event_type: str,
         session_id: str | None = None,
         context: dict[str, Any] | None = None,
+        evidence_type: str = "direct",
     ) -> MasterySnapshot | None:
         """
         记录一次学习事件，更新掌握度参数，返回更新后的快照。
@@ -81,6 +81,17 @@ class TemporalMemory:
         """
         concept = self._store.get_concept(concept_id)
         if not concept:
+            return None
+
+        if event_type == "reviewed":
+            self._store.record_learning_event(
+                concept_id=concept_id,
+                event_type=event_type,
+                session_id=session_id,
+                context=context,
+                evidence_type="exposure",
+                trust_status="legacy",
+            )
             return None
 
         effects = _EVENT_EFFECTS.get(event_type)
@@ -94,6 +105,8 @@ class TemporalMemory:
             event_type=event_type,
             session_id=session_id,
             context=context,
+            evidence_type=str((context or {}).get("evidence_type") or evidence_type),
+            trust_status="trusted",
         )
 
         # 读取当前 mastery 参数

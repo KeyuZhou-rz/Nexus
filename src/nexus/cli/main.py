@@ -16,6 +16,7 @@ COMMANDS = {
     "db-restore": ("nexus.cli.db_restore", "Validate or restore a backup"),
     "db-repair": ("nexus.cli.db_repair", "Preview or apply conservative repairs"),
     "cache": ("nexus.cli.cache", "List or clear parser cache entries"),
+    "mastery-migrate": ("nexus.cli.mastery_migrate", "Migrate legacy mastery evidence"),
     "sessions": ("nexus.cli.sessions", "Finalize idle learning sessions"),
     "ui": ("nexus.cli.ui", "Run the Streamlit application"),
     "memory-extract": ("nexus.cli.memory_extract", "Extract weak points from conversations"),

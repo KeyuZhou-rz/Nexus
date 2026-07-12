@@ -54,6 +54,12 @@ def test_unified_cli_dispatches_cache_help() -> None:
     assert "clear" in result.stdout
 
 
+def test_unified_cli_dispatches_mastery_migration_help() -> None:
+    result = _run("-m", "nexus.cli.main", "mastery-migrate", "--help")
+    assert result.returncode == 0
+    assert "--apply" in result.stdout
+
+
 def test_existing_module_entrypoints_have_help() -> None:
     for module in ("pipeline", "briefing", "ingest", "query"):
         result = _run("-m", f"nexus.cli.{module}", "--help")

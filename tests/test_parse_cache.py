@@ -88,7 +88,7 @@ def test_legacy_cache_schema_is_migrated_without_reuse(tmp_path):
         )
 
     store = SQLiteStore(db_path)
-    assert store.schema_version == 2
+    assert store.schema_version == 3
     entries = store.list_parse_cache()
     assert entries[0]["parser_version"] == "legacy"
     assert store.get_parse_cache(

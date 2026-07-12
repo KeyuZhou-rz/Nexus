@@ -236,3 +236,108 @@ def repair_consistency(
         result["after"] = after.get("summary", {})
         result["unresolved"] = after.get("issues", [])
     return result
+
+
+_TRUSTED_EVIDENCE_TYPES = {"assessment", "self_report", "human_feedback", "direct"}
+_MASTERY_EFFECTS: dict[str, dict[str, float]] = {
+    "correct_answer": {"mastery_add": 0.15, "decay_mult": 0.85, "streak_add": 1},
+    "struggled": {"mastery_add": 0.05, "decay_mult": 1.10, "streak_add": 0},
+    "forgot": {"mastery_mult": 0.50, "decay_mult": 1.20, "streak_add": -999},
+}
+
+
+def _classify_legacy_event(row: sqlite3.Row) -> tuple[str, str]:
+    """Return ``(evidence_type, trust_status)`` without changing raw evidence."""
+    if row["event_type"] == "reviewed":
+        return "exposure", "legacy"
+    try:
+        context = json.loads(row["context"]) if row["context"] else {}
+    except (json.JSONDecodeError, TypeError):
+        context = {}
+    evidence_type = str(context.get("evidence_type") or "").strip().casefold()
+    if row["event_type"] not in _MASTERY_EFFECTS or evidence_type not in _TRUSTED_EVIDENCE_TYPES:
+        return "legacy", "legacy"
+    confidence = context.get("confidence", 1.0)
+    try:
+        confidence_value = float(confidence)
+    except (TypeError, ValueError):
+        confidence_value = 0.0
+    if evidence_type in {"assessment", "self_report"} and confidence_value < 0.6:
+        return "legacy", "legacy"
+    return evidence_type, "trusted"
+
+
+def _rebuild_trusted_mastery(conn: sqlite3.Connection, concept_id: str) -> None:
+    rows = conn.execute(
+        """SELECT event_type, timestamp FROM learning_events
+           WHERE concept_id = ? AND trust_status = 'trusted'
+           ORDER BY timestamp, id""",
+        (concept_id,),
+    ).fetchall()
+    conn.execute("DELETE FROM concept_mastery WHERE concept_id = ?", (concept_id,))
+    initial, decay, count, streak = 0.0, 0.3, 0, 0
+    last_reviewed = None
+    for row in rows:
+        effects = _MASTERY_EFFECTS.get(row["event_type"])
+        if not effects:
+            continue
+        if "mastery_add" in effects:
+            initial = min(1.0, initial + effects["mastery_add"])
+        if "mastery_mult" in effects:
+            initial *= effects["mastery_mult"]
+        decay = max(0.01, min(1.0, decay * effects["decay_mult"]))
+        count += 1
+        streak_delta = int(effects.get("streak_add", 0))
+        streak = 0 if streak_delta == -999 else max(0, streak + streak_delta)
+        last_reviewed = row["timestamp"]
+    if count:
+        conn.execute(
+            """INSERT INTO concept_mastery
+                   (concept_id, initial_mastery, decay_rate, last_reviewed,
+                    review_count, streak)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (concept_id, initial, decay, last_reviewed, count, streak),
+        )
+
+
+def migrate_legacy_mastery(sqlite_path: Path, *, apply: bool = False) -> dict[str, Any]:
+    """Classify historical events and rebuild mastery from trusted evidence only."""
+    from .sqlite_store import SQLiteStore, connect
+
+    store = SQLiteStore(sqlite_path)
+    before = store.get_learning_event_stats()
+    with connect(sqlite_path) as conn:
+        candidates = conn.execute(
+            """SELECT id, concept_id, event_type, context, timestamp
+               FROM learning_events WHERE trust_status IS NULL ORDER BY id"""
+        ).fetchall()
+    classifications = [(*_classify_legacy_event(row), row) for row in candidates]
+    result: dict[str, Any] = {
+        "dry_run": not apply,
+        "applied": False,
+        "backup_recommended": True,
+        "backup_hint": f"nexus db-backup --sqlite-path {sqlite_path}",
+        "candidates": len(candidates),
+        "will_mark_trusted": sum(status == "trusted" for _, status, _ in classifications),
+        "will_mark_legacy": sum(status == "legacy" for _, status, _ in classifications),
+        "will_mark_exposure": sum(evidence == "exposure" for evidence, _, _ in classifications),
+        "affected_concepts": len({row["concept_id"] for _, _, row in classifications}),
+        "before": before,
+    }
+    if not apply or not candidates:
+        result["after"] = before
+        return result
+
+    with connect(sqlite_path) as conn:
+        for evidence_type, trust_status, row in classifications:
+            conn.execute(
+                """UPDATE learning_events
+                   SET evidence_type = ?, trust_status = ?, classified_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND trust_status IS NULL""",
+                (evidence_type, trust_status, row["id"]),
+            )
+        for concept_id in sorted({row["concept_id"] for _, _, row in classifications}):
+            _rebuild_trusted_mastery(conn, concept_id)
+    result["applied"] = True
+    result["after"] = store.get_learning_event_stats()
+    return result
