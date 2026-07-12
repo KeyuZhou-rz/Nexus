@@ -208,10 +208,14 @@ CREATE TABLE IF NOT EXISTS concept_aliases (
 CREATE TABLE IF NOT EXISTS parse_cache (
     file_hash   TEXT NOT NULL,           -- SHA-256 of file content
     course_id   TEXT NOT NULL DEFAULT '',
+    parser_version TEXT NOT NULL,
+    model_version  TEXT NOT NULL,
+    prompt_hash    TEXT NOT NULL,
+    parse_method   TEXT NOT NULL,
     chunks_json TEXT NOT NULL,           -- JSON-serialized ParsedChunk[]
     file_size   INTEGER,                 -- 审计用，不参与缓存键
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (file_hash, course_id)
+    PRIMARY KEY (file_hash, course_id, parser_version, model_version, prompt_hash)
 );
 
 -- Phase 4 索引

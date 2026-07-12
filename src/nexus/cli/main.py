@@ -12,6 +12,7 @@ COMMANDS = {
     "query": ("nexus.cli.query", "Query the knowledge store"),
     "read": ("nexus.cli.read", "Read stored knowledge chunks"),
     "db-check": ("nexus.cli.db_check", "Audit SQLite and Chroma consistency"),
+    "cache": ("nexus.cli.cache", "List or clear parser cache entries"),
     "ui": ("nexus.cli.ui", "Run the Streamlit application"),
     "memory-extract": ("nexus.cli.memory_extract", "Extract weak points from conversations"),
     "memory-feedback": ("nexus.cli.memory_feedback", "Apply feedback to a weak point"),

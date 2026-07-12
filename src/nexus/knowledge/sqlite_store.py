@@ -19,7 +19,7 @@ from typing import Any, Iterator
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_LATEST_SCHEMA_VERSION = 1
+_LATEST_SCHEMA_VERSION = 2
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -84,18 +84,52 @@ class SQLiteStore:
     @staticmethod
     def _apply_migration(conn: sqlite3.Connection, version: int) -> None:
         """Apply migrations that cannot be expressed with CREATE IF NOT EXISTS."""
-        if version != 1:
-            raise RuntimeError(f"Unsupported schema migration: {version}")
-
-        document_columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(documents)")
-        }
-        if "status_updated_at" not in document_columns:
-            conn.execute("ALTER TABLE documents ADD COLUMN status_updated_at TIMESTAMP")
-        conn.execute(
-            """UPDATE documents
-               SET status_updated_at = COALESCE(status_updated_at, parsed_at, CURRENT_TIMESTAMP)"""
-        )
+        if version == 1:
+            document_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(documents)")
+            }
+            if "status_updated_at" not in document_columns:
+                conn.execute("ALTER TABLE documents ADD COLUMN status_updated_at TIMESTAMP")
+            conn.execute(
+                """UPDATE documents
+                   SET status_updated_at = COALESCE(status_updated_at, parsed_at, CURRENT_TIMESTAMP)"""
+            )
+            return
+        if version == 2:
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(parse_cache)")
+            }
+            if "parser_version" in columns:
+                return
+            conn.execute("ALTER TABLE parse_cache RENAME TO parse_cache_legacy")
+            conn.execute(
+                """CREATE TABLE parse_cache (
+                       file_hash TEXT NOT NULL,
+                       course_id TEXT NOT NULL DEFAULT '',
+                       parser_version TEXT NOT NULL,
+                       model_version TEXT NOT NULL,
+                       prompt_hash TEXT NOT NULL,
+                       parse_method TEXT NOT NULL,
+                       chunks_json TEXT NOT NULL,
+                       file_size INTEGER,
+                       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                       PRIMARY KEY (
+                           file_hash, course_id, parser_version,
+                           model_version, prompt_hash
+                       )
+                   )"""
+            )
+            conn.execute(
+                """INSERT INTO parse_cache
+                       (file_hash, course_id, parser_version, model_version,
+                        prompt_hash, parse_method, chunks_json, file_size, created_at)
+                   SELECT file_hash, course_id, 'legacy', 'legacy', 'legacy',
+                          'deepseek', chunks_json, file_size, created_at
+                   FROM parse_cache_legacy"""
+            )
+            conn.execute("DROP TABLE parse_cache_legacy")
+            return
+        raise RuntimeError(f"Unsupported schema migration: {version}")
 
     @property
     def schema_version(self) -> int:
@@ -693,13 +727,21 @@ class SQLiteStore:
     # ════════════════════════════════════════════════
 
     def get_parse_cache(
-        self, file_hash: str, course_id: str = ""
+        self,
+        file_hash: str,
+        course_id: str = "",
+        *,
+        parser_version: str,
+        model_version: str,
+        prompt_hash: str,
     ) -> list[dict[str, Any]] | None:
         """查询缓存的解析结果，未命中返回 None。"""
         with connect(self.db_path) as conn:
             row = conn.execute(
-                "SELECT chunks_json FROM parse_cache WHERE file_hash = ? AND course_id = ?",
-                (file_hash, course_id),
+                """SELECT chunks_json FROM parse_cache
+                   WHERE file_hash = ? AND course_id = ? AND parser_version = ?
+                     AND model_version = ? AND prompt_hash = ?""",
+                (file_hash, course_id, parser_version, model_version, prompt_hash),
             ).fetchone()
             if not row:
                 return None
@@ -717,17 +759,47 @@ class SQLiteStore:
         course_id: str,
         chunks: list[dict[str, Any]],
         file_size: int = 0,
+        *,
+        parser_version: str,
+        model_version: str,
+        prompt_hash: str,
+        parse_method: str,
     ) -> None:
         """缓存解析结果（INSERT OR REPLACE，幂等）。"""
         with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO parse_cache
-                    (file_hash, course_id, chunks_json, file_size)
-                VALUES (?, ?, ?, ?)
+                    (file_hash, course_id, parser_version, model_version,
+                     prompt_hash, parse_method, chunks_json, file_size, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 """,
-                (file_hash, course_id, json.dumps(chunks, ensure_ascii=False), file_size),
+                (
+                    file_hash, course_id, parser_version, model_version,
+                    prompt_hash, parse_method,
+                    json.dumps(chunks, ensure_ascii=False), file_size,
+                ),
             )
+
+    def list_parse_cache(self, course_id: str | None = None) -> list[dict[str, Any]]:
+        """List cache metadata without loading potentially large chunk payloads."""
+        with connect(self.db_path) as conn:
+            if course_id:
+                rows = conn.execute(
+                    """SELECT file_hash, course_id, parser_version, model_version,
+                              prompt_hash, parse_method, file_size, created_at,
+                              json_array_length(chunks_json) AS chunk_count
+                       FROM parse_cache WHERE course_id = ? ORDER BY created_at DESC""",
+                    (course_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT file_hash, course_id, parser_version, model_version,
+                              prompt_hash, parse_method, file_size, created_at,
+                              json_array_length(chunks_json) AS chunk_count
+                       FROM parse_cache ORDER BY created_at DESC"""
+                ).fetchall()
+            return [dict(row) for row in rows]
 
     def clear_parse_cache(self, course_id: str | None = None) -> int:
         """清除解析缓存。不传 course_id 则全部清除。返回删除行数。"""

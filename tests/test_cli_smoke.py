@@ -19,6 +19,7 @@ def test_unified_cli_help() -> None:
     assert "pipeline" in result.stdout
     assert "doctor" in result.stdout
     assert "db-check" in result.stdout
+    assert "cache" in result.stdout
     assert "ui" in result.stdout
 
 
@@ -32,6 +33,13 @@ def test_unified_cli_dispatches_db_check_help() -> None:
     result = _run("-m", "nexus.cli.main", "db-check", "--help")
     assert result.returncode == 0
     assert "--json" in result.stdout
+
+
+def test_unified_cli_dispatches_cache_help() -> None:
+    result = _run("-m", "nexus.cli.main", "cache", "--help")
+    assert result.returncode == 0
+    assert "list" in result.stdout
+    assert "clear" in result.stdout
 
 
 def test_existing_module_entrypoints_have_help() -> None:

@@ -143,6 +143,9 @@ def _merge_continues(chunks: list[ParsedChunk]) -> list[ParsedChunk]:
 # ────────────────────────────────────────────────
 
 _MAX_CHARS_PER_BATCH = 8000  # 单次 LLM 调用的文本上限
+PARSER_VERSION = "2"
+FALLBACK_MODEL_VERSION = "text-fallback-v1"
+PARSE_PROMPT_HASH = hashlib.sha256(PARSE_PROMPT.encode("utf-8")).hexdigest()
 
 
 def _compute_file_hash(filepath: Path) -> str:
@@ -152,6 +155,41 @@ def _compute_file_hash(filepath: Path) -> str:
         while chunk := f.read(8192):
             sha.update(chunk)
     return sha.hexdigest()
+
+
+def _cache_model_version() -> str:
+    return gateway.model if gateway.is_configured else FALLBACK_MODEL_VERSION
+
+
+def _chunks_to_dicts(chunks: list[ParsedChunk]) -> list[dict[str, Any]]:
+    return [
+        {
+            "topic": chunk.topic,
+            "content": chunk.content,
+            "type": chunk.type,
+            "keywords": chunk.keywords,
+            "prerequisites": chunk.prerequisites,
+            "page": chunk.page,
+            "continues": chunk.continues,
+        }
+        for chunk in chunks
+    ]
+
+
+def _chunks_from_dicts(items: list[dict[str, Any]]) -> list[ParsedChunk]:
+    return [
+        ParsedChunk(
+            topic=item.get("topic", ""),
+            content=item.get("content", ""),
+            type=item.get("type", "overview"),
+            keywords=item.get("keywords") or [],
+            prerequisites=item.get("prerequisites") or [],
+            page=item.get("page"),
+            continues=bool(item.get("continues", False)),
+        )
+        for item in items
+        if isinstance(item, dict)
+    ]
 
 
 def _parse_text_with_llm(text: str) -> list[dict[str, Any]]:
@@ -258,7 +296,7 @@ def parse_document(
     """
     解析文档，返回 ParseResult（包含 chunks、解析方法、警告）。
 
-    缓存策略：SHA-256(file) + course_id 作为缓存键，命中直接返回。
+    缓存键：SHA-256(file) + course_id + parser/model/prompt version。
     参数：
     - course_id: 课程标识，用于缓存隔离
     - use_cache: 是否查写缓存（默认 True）
@@ -275,32 +313,32 @@ def parse_document(
     except Exception:
         pass
 
-    # ── 路径 0: 缓存命中 ──
-    if use_cache and gateway.is_configured:
+    model_version = _cache_model_version()
+
+    # ── 路径 0: 缓存命中（LLM 与 fallback 使用相同机制）──
+    if use_cache:
         try:
             from .sqlite_store import SQLiteStore, default_db_path
             store = SQLiteStore(default_db_path())
-            cached = store.get_parse_cache(file_hash, course_id)
+            cached = store.get_parse_cache(
+                file_hash,
+                course_id,
+                parser_version=PARSER_VERSION,
+                model_version=model_version,
+                prompt_hash=PARSE_PROMPT_HASH,
+            )
             if cached:
                 logger.info(f"缓存命中: {filepath.name} ({file_hash[:12]}...)")
-                chunks: list[ParsedChunk] = []
-                for item in cached:
-                    if not isinstance(item, dict):
-                        continue
-                    chunks.append(ParsedChunk(
-                        topic=item.get("topic", ""),
-                        content=item.get("content", ""),
-                        type=item.get("type", "overview"),
-                        keywords=item.get("keywords") or [],
-                        prerequisites=item.get("prerequisites") or [],
-                        page=item.get("page"),
-                        continues=bool(item.get("continues", False)),
-                    ))
+                chunks = _chunks_from_dicts(cached)
                 chunks = _merge_continues(chunks)
                 warnings = _check_quality(chunks, page_count)
                 return ParseResult(
                     chunks=chunks,
-                    parse_method="deepseek_cached",
+                    parse_method=(
+                        "deepseek_cached"
+                        if model_version != FALLBACK_MODEL_VERSION
+                        else "text_fallback_cached"
+                    ),
                     page_count=page_count,
                     warnings=warnings,
                 )
@@ -317,19 +355,7 @@ def parse_document(
 
             raw_chunks = _parse_with_deepseek(text)
 
-            chunks: list[ParsedChunk] = []
-            for item in raw_chunks:
-                if not isinstance(item, dict):
-                    continue
-                chunks.append(ParsedChunk(
-                    topic=item.get("topic", ""),
-                    content=item.get("content", ""),
-                    type=item.get("type", "overview"),
-                    keywords=item.get("keywords") or [],
-                    prerequisites=item.get("prerequisites") or [],
-                    page=item.get("page"),
-                    continues=bool(item.get("continues", False)),
-                ))
+            chunks = _chunks_from_dicts(raw_chunks)
 
             chunks = _merge_continues(chunks)
             warnings = _check_quality(chunks, page_count)
@@ -341,7 +367,16 @@ def parse_document(
                 try:
                     from .sqlite_store import SQLiteStore, default_db_path
                     store = SQLiteStore(default_db_path())
-                    store.set_parse_cache(file_hash, course_id, raw_chunks, file_size)
+                    store.set_parse_cache(
+                        file_hash,
+                        course_id,
+                        raw_chunks,
+                        file_size,
+                        parser_version=PARSER_VERSION,
+                        model_version=model_version,
+                        prompt_hash=PARSE_PROMPT_HASH,
+                        parse_method="deepseek",
+                    )
                     logger.info(f"缓存已写入: {filepath.name} ({file_hash[:12]}...)")
                 except Exception as exc:
                     logger.debug(f"缓存写入跳过: {exc}")
@@ -360,6 +395,23 @@ def parse_document(
     logger.info(f"使用文本提取 fallback 解析 {filepath.name}")
     fallback_chunks = _parse_text_fallback(filepath)
     warnings = _check_quality(fallback_chunks, page_count)
+
+    if use_cache and fallback_chunks:
+        try:
+            from .sqlite_store import SQLiteStore, default_db_path
+            store = SQLiteStore(default_db_path())
+            store.set_parse_cache(
+                file_hash,
+                course_id,
+                _chunks_to_dicts(fallback_chunks),
+                file_size,
+                parser_version=PARSER_VERSION,
+                model_version=FALLBACK_MODEL_VERSION,
+                prompt_hash=PARSE_PROMPT_HASH,
+                parse_method="text_fallback",
+            )
+        except Exception as exc:
+            logger.debug(f"fallback 缓存写入跳过: {exc}")
 
     return ParseResult(
         chunks=fallback_chunks,
