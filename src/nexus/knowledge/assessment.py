@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+import uuid
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class AssessmentAttempt:
     grade: AssessmentGrade | None = None
     recorded: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    attempt_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def complete(self, student_answer: str, grade: AssessmentGrade, *, recorded: bool) -> None:
         if self.status != "awaiting_answer":

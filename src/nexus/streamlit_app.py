@@ -1198,7 +1198,15 @@ with tab_study:
     # ── 初始化 session state ──
     if "qa_session_id" not in st.session_state:
         import uuid as _uuid
-        st.session_state.qa_session_id = _uuid.uuid4().hex[:8]
+        try:
+            _url_session = st.query_params.get("qa_session")
+        except Exception:
+            _url_session = None
+        st.session_state.qa_session_id = _url_session or _uuid.uuid4().hex[:8]
+        try:
+            st.query_params["qa_session"] = st.session_state.qa_session_id
+        except Exception:
+            pass
     if "qa_messages" not in st.session_state:
         st.session_state.qa_messages = []  # list of {role, content, sources, expanded_queries}
     if "qa_assessment_attempt" not in st.session_state:
@@ -1208,6 +1216,10 @@ with tab_study:
     try:
         _pipeline, _api_key = _get_qa_pipeline()
         _pipeline_ok = bool(_api_key)
+        if _pipeline_ok and st.session_state.qa_assessment_attempt is None:
+            st.session_state.qa_assessment_attempt = _pipeline.get_pending_assessment(
+                st.session_state.qa_session_id
+            )
     except Exception as _e:
         _pipeline_ok = False
         _pipeline = None

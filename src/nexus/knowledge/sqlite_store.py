@@ -22,7 +22,7 @@ from .connection_registry import register_connection, unregister_connection
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_LATEST_SCHEMA_VERSION = 4
+_LATEST_SCHEMA_VERSION = 5
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -168,6 +168,34 @@ class SQLiteStore:
             conn.execute(
                 """CREATE INDEX IF NOT EXISTS idx_active_sessions_finalize
                    ON active_sessions(ended, finalize_status, finalize_next_retry)"""
+            )
+            return
+        if version == 5:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS assessment_attempts (
+                    attempt_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    course_id TEXT,
+                    concept_id TEXT NOT NULL,
+                    concept_name TEXT NOT NULL,
+                    question TEXT NOT NULL,
+                    source_refs TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'awaiting_answer',
+                    student_answer TEXT,
+                    event_type TEXT,
+                    confidence REAL,
+                    feedback TEXT,
+                    recorded INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    submitted_at TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    FOREIGN KEY (concept_id) REFERENCES concepts(concept_id) ON DELETE CASCADE
+                )"""
+            )
+            conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_assessment_session_status
+                   ON assessment_attempts(session_id, status, created_at DESC)"""
             )
             return
         raise RuntimeError(f"Unsupported schema migration: {version}")
@@ -522,6 +550,99 @@ class SQLiteStore:
                 "SELECT * FROM active_sessions WHERE ended=0"
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ────────────────────────────────────────────────
+    # assessment_attempts 表操作
+    # ────────────────────────────────────────────────
+
+    def create_assessment_attempt(
+        self,
+        *,
+        attempt_id: str,
+        session_id: str,
+        course_id: str | None,
+        concept_id: str,
+        concept_name: str,
+        question: str,
+        source_refs: list[str],
+        metadata: dict[str, Any],
+    ) -> None:
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO assessment_attempts
+                   (attempt_id, session_id, course_id, concept_id, concept_name,
+                    question, source_refs, metadata, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_answer')""",
+                (
+                    attempt_id,
+                    session_id,
+                    course_id,
+                    concept_id,
+                    concept_name,
+                    question,
+                    json.dumps(source_refs, ensure_ascii=False),
+                    json.dumps(metadata, ensure_ascii=False),
+                ),
+            )
+
+    def get_assessment_attempt(self, attempt_id: str) -> dict[str, Any] | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT * FROM assessment_attempts WHERE attempt_id=?", (attempt_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_pending_assessment(self, session_id: str) -> dict[str, Any] | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT * FROM assessment_attempts
+                   WHERE session_id=? AND status='awaiting_answer'
+                   ORDER BY created_at DESC, attempt_id DESC LIMIT 1""",
+                (session_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def claim_assessment_attempt(self, attempt_id: str, student_answer: str) -> bool:
+        """Atomically allow exactly one submitter to grade an awaiting attempt."""
+        with connect(self.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """UPDATE assessment_attempts
+                   SET status='grading', student_answer=?, submitted_at=CURRENT_TIMESTAMP
+                   WHERE attempt_id=? AND status='awaiting_answer'""",
+                (student_answer, attempt_id),
+            )
+            return cursor.rowcount == 1
+
+    def release_assessment_attempt(self, attempt_id: str) -> bool:
+        """Return a failed grading claim to the answerable state."""
+        with connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """UPDATE assessment_attempts
+                   SET status='awaiting_answer', student_answer=NULL, submitted_at=NULL
+                   WHERE attempt_id=? AND status='grading'""",
+                (attempt_id,),
+            )
+            return cursor.rowcount == 1
+
+    def complete_assessment_attempt(
+        self,
+        attempt_id: str,
+        *,
+        event_type: str,
+        confidence: float,
+        feedback: str,
+        recorded: bool,
+    ) -> bool:
+        with connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """UPDATE assessment_attempts
+                   SET status='completed', event_type=?, confidence=?, feedback=?,
+                       recorded=?, completed_at=CURRENT_TIMESTAMP
+                   WHERE attempt_id=? AND status='grading'""",
+                (event_type, confidence, feedback, int(recorded), attempt_id),
+            )
+            return cursor.rowcount == 1
 
     # ────────────────────────────────────────────────
     # interaction_logs 表操作

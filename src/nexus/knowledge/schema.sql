@@ -99,6 +99,29 @@ CREATE TABLE IF NOT EXISTS active_sessions (
     finalize_claimed_at TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS assessment_attempts (
+    attempt_id        TEXT PRIMARY KEY,
+    session_id        TEXT NOT NULL,
+    course_id         TEXT,
+    concept_id        TEXT NOT NULL,
+    concept_name      TEXT NOT NULL,
+    question          TEXT NOT NULL,
+    source_refs       TEXT NOT NULL,
+    metadata          TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'awaiting_answer',
+    student_answer    TEXT,
+    event_type        TEXT,
+    confidence        REAL,
+    feedback          TEXT,
+    recorded          INTEGER NOT NULL DEFAULT 0,
+    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    submitted_at      TIMESTAMP,
+    completed_at      TIMESTAMP,
+    FOREIGN KEY (concept_id) REFERENCES concepts(concept_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_assessment_session_status
+    ON assessment_attempts(session_id, status, created_at DESC);
+
 -- ────────────────────────────────────────────────
 -- 索引：加速常用查询路径
 -- ────────────────────────────────────────────────

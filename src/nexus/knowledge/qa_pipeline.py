@@ -590,7 +590,7 @@ class QAPipeline:
             concept_name=str(target_row.get("name") or target_row["concept_id"]),
             source_evidence=bound_evidence,
         )
-        return AssessmentAttempt(
+        attempt = AssessmentAttempt(
             session_id=response.session_id,
             course_id=response.course_id,
             question=material["question"],
@@ -606,6 +606,22 @@ class QAPipeline:
                 "source_evidence": bound_evidence,
             },
         )
+        self._sqlite.create_assessment_attempt(
+            attempt_id=attempt.attempt_id,
+            session_id=attempt.session_id,
+            course_id=attempt.course_id,
+            concept_id=attempt.target.concept_id,
+            concept_name=attempt.target.concept_name,
+            question=attempt.question,
+            source_refs=list(attempt.target.source_refs),
+            metadata=attempt.metadata,
+        )
+        return attempt
+
+    def get_pending_assessment(self, session_id: str) -> AssessmentAttempt | None:
+        """Restore the newest unanswered assessment for a persisted session."""
+        row = self._sqlite.get_pending_assessment(session_id)
+        return _assessment_from_row(row) if row else None
 
     def _build_assessment_material(
         self,
@@ -658,28 +674,48 @@ class QAPipeline:
         answer = student_answer.strip()
         if not answer:
             raise ValueError("Student answer must not be empty")
-        _validated_assessment_material(attempt)
-        grade = self._grade_assessment(attempt, answer)
-        detail = json.dumps(
-            {
-                "concept": attempt.target.concept_name,
-                "question": attempt.question,
-                "student_answer": answer,
-                "feedback": grade.feedback,
-                "source_refs": list(attempt.target.source_refs),
-            },
-            ensure_ascii=False,
-        )
-        recorded = self.record_assessment(
-            attempt.target.concept_id,
-            grade.event_type,
-            session_id=attempt.session_id,
-            source="assessment",
-            confidence=grade.confidence,
-            detail=detail,
-        )
-        attempt.complete(answer, grade, recorded=recorded)
-        return attempt
+        if not self._sqlite.claim_assessment_attempt(attempt.attempt_id, answer):
+            raise ValueError("Assessment has already been submitted")
+        mastery_recorded = False
+        try:
+            _validated_assessment_material(attempt)
+            grade = self._grade_assessment(attempt, answer)
+            detail = json.dumps(
+                {
+                    "concept": attempt.target.concept_name,
+                    "question": attempt.question,
+                    "student_answer": answer,
+                    "feedback": grade.feedback,
+                    "source_refs": list(attempt.target.source_refs),
+                    "attempt_id": attempt.attempt_id,
+                },
+                ensure_ascii=False,
+            )
+            recorded = self.record_assessment(
+                attempt.target.concept_id,
+                grade.event_type,
+                session_id=attempt.session_id,
+                source="assessment",
+                confidence=grade.confidence,
+                detail=detail,
+            )
+            mastery_recorded = recorded
+            if not self._sqlite.complete_assessment_attempt(
+                attempt.attempt_id,
+                event_type=grade.event_type,
+                confidence=grade.confidence,
+                feedback=grade.feedback,
+                recorded=recorded,
+            ):
+                raise RuntimeError("Assessment completion state was lost")
+            attempt.complete(answer, grade, recorded=recorded)
+            return attempt
+        except Exception:
+            # Once mastery was written, retaining the grading claim is safer
+            # than reopening the attempt and risking a duplicate event.
+            if not mastery_recorded:
+                self._sqlite.release_assessment_attempt(attempt.attempt_id)
+            raise
 
     def _grade_assessment(
         self,
@@ -1007,6 +1043,37 @@ def _validated_assessment_material(attempt: AssessmentAttempt) -> dict[str, Any]
         "reference_answer": reference_answer,
         "source_evidence": source_evidence,
     }
+
+
+def _assessment_from_row(row: dict[str, Any]) -> AssessmentAttempt:
+    try:
+        source_refs = tuple(json.loads(row["source_refs"]))
+        metadata = json.loads(row["metadata"])
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("Persisted assessment data is invalid") from exc
+    grade = None
+    if row.get("event_type") and row.get("confidence") is not None:
+        grade = AssessmentGrade(
+            event_type=str(row["event_type"]),
+            confidence=float(row["confidence"]),
+            feedback=str(row.get("feedback") or ""),
+        )
+    return AssessmentAttempt(
+        session_id=str(row["session_id"]),
+        course_id=row.get("course_id"),
+        question=str(row["question"]),
+        target=AssessmentTarget(
+            concept_id=str(row["concept_id"]),
+            concept_name=str(row["concept_name"]),
+            source_refs=source_refs,
+        ),
+        status=str(row["status"]),
+        student_answer=row.get("student_answer"),
+        grade=grade,
+        recorded=bool(row.get("recorded")),
+        metadata=metadata,
+        attempt_id=str(row["attempt_id"]),
+    )
 
 
 def _build_sources(chunks: list[RetrievedChunk]) -> list[ChunkSource]:
