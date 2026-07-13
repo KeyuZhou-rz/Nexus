@@ -9,8 +9,7 @@ litellm 支持 OpenAI / Gemini / Anthropic / Azure 等，一套接口切换模�
 - 自动记录 interaction_logs（token 用量、使用模型、chunks 引用）
 
 依赖：litellm 必须已安装（requirements.txt 中的 litellm>=1.40）。
-未安装时 chat() 抛 ModuleNotFoundError，由 QAPipeline.ask() 捕获并降级为
-用户友好的错误消息——没有静默 fallback。
+不可用时由 QAPipeline.ask() 明确降级为带来源标记的课件摘录。
 
 模型配置：通过 LLMGateway 单例读取 (NEXUS_LLM_MODEL / API_KEY / BASE_URL)
 """
@@ -114,4 +113,3 @@ class KnowledgeLLMClient:
         except Exception as exc:
             # 日志写入失败不应中断问答流程
             logger.warning(f"interaction_logs 写入失败: {exc}")
-

@@ -11,8 +11,10 @@ from nexus.knowledge.qa_pipeline import (
     QAPipeline,
     QAResponse,
     _parse_assessment_grade,
+    _retrieval_only_answer,
     _select_assessment_target,
 )
+from nexus.knowledge.query_engine import RetrievedChunk
 
 
 def _response() -> QAResponse:
@@ -83,6 +85,16 @@ def test_create_assessment_waits_for_answer_and_does_not_record_mastery() -> Non
     assert attempt.metadata["rubric"] == ["Names all four conditions"]
     assert "reference_answer" in attempt.metadata
     assert calls[0]["teaching_mode"] == "assessment"
+
+
+def test_create_assessment_rejects_retrieval_only_fallback() -> None:
+    pipeline = QAPipeline.__new__(QAPipeline)
+    response = _response()
+    response.model_used = "retrieval-only"
+    pipeline.ask = lambda *args, **kwargs: response
+
+    with pytest.raises(ValueError, match="requires an enabled"):
+        pipeline.create_assessment("Deadlock")
 
 
 def test_submit_assessment_grades_then_records_auditable_evidence() -> None:
@@ -165,6 +177,26 @@ def test_grader_accepts_json_markdown_fence() -> None:
         '```json\n{"event_type":"struggled","confidence":0.75,"feedback":"Review it."}\n```'
     )
     assert grade == AssessmentGrade("struggled", 0.75, "Review it.")
+
+
+def test_retrieval_only_answer_is_bounded_and_cited() -> None:
+    chunks = [
+        RetrievedChunk(
+            chunk_id=f"chunk-{index}",
+            content=(f"source text {index} " * 100),
+            metadata={"topic": f"Topic {index}"},
+            score=0.1,
+            retrieval_path="both",
+        )
+        for index in range(1, 5)
+    ]
+
+    answer = _retrieval_only_answer(chunks)
+
+    assert "[S1] Topic 1" in answer
+    assert "[S3] Topic 3" in answer
+    assert "[S4]" not in answer
+    assert len(answer) < 2600
 
 
 def test_course_evidence_overrides_conflicting_common_answer() -> None:

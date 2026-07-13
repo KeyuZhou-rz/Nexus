@@ -497,16 +497,14 @@ class QAPipeline:
             output: LLMOutput = self._llm.chat(messages)
         except Exception as exc:
             logger.error(f"LLM 生成失败: {exc}")
-            return QAResponse(
-                answer="抱歉，生成回答时出错，请稍后重试。",
-                sources=[],
-                session_id=session_id,
-                course_id=course_id,
-                course_inferred=course_inferred,
-                model_used="none",
-                expanded_queries=retrieval.expanded_queries,
-                estimated_input_tokens=estimated_tokens,
-                warnings=warnings + ["LLM 生成失败，请稍后重试。"],
+            output = LLMOutput(
+                content=_retrieval_only_answer(retrieval.chunks),
+                model_used="retrieval-only",
+                input_tokens=0,
+                output_tokens=0,
+            )
+            warnings.append(
+                "LLM 未启用或暂时不可用；当前结果仅展示检索到的课件原文。"
             )
 
         # ── Step 6: 记录日志 + 更新 session 活动 ──
@@ -566,6 +564,8 @@ class QAPipeline:
             course_id=course_id,
             teaching_mode="assessment",
         )
+        if response.model_used == "retrieval-only":
+            raise ValueError("Assessment requires an enabled and available LLM")
         chunk_ids = [source.chunk_id for source in response.sources]
         concept_rows = self._sqlite.get_concepts_for_chunks(chunk_ids) if chunk_ids else []
         target_row = _select_assessment_target(
@@ -959,6 +959,18 @@ def _parse_assessment_grade(content: str) -> AssessmentGrade:
         confidence=float(payload["confidence"]),
         feedback=str(payload.get("feedback") or ""),
     )
+
+
+def _retrieval_only_answer(chunks: list[RetrievedChunk]) -> str:
+    """Render bounded source excerpts when answer generation is unavailable."""
+    if not chunks:
+        return "LLM 当前不可用，且知识库中没有检索到相关课件内容。"
+    sections = ["LLM 当前不可用。以下是知识库中最相关的课件原文："]
+    for index, chunk in enumerate(chunks[:3], start=1):
+        topic = str(chunk.metadata.get("topic") or "相关内容")
+        excerpt = " ".join(chunk.content.split())[:800]
+        sections.append(f"[S{index}] {topic}\n{excerpt}")
+    return "\n\n".join(sections)
 
 
 def _format_assessment_evidence(evidence: list[dict[str, str]]) -> str:
