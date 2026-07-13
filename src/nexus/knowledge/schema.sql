@@ -91,7 +91,12 @@ CREATE TABLE IF NOT EXISTS active_sessions (
     last_active        TIMESTAMP NOT NULL,
     course_id          TEXT,
     interaction_count  INTEGER DEFAULT 0,
-    ended              INTEGER DEFAULT 0      -- 0/1，见 session_manager.py 说明
+    ended              INTEGER DEFAULT 0,     -- 0/1，见 session_manager.py 说明
+    finalize_status    TEXT NOT NULL DEFAULT 'active',
+    finalize_attempts  INTEGER NOT NULL DEFAULT 0,
+    finalize_last_error TEXT,
+    finalize_next_retry TIMESTAMP,
+    finalize_claimed_at TIMESTAMP
 );
 
 -- ────────────────────────────────────────────────

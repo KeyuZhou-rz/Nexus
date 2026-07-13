@@ -13,6 +13,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     finalize = subparsers.add_parser("finalize-idle", help="Finalize sessions past idle timeout")
     finalize.add_argument("--idle-minutes", type=int, default=5)
     finalize.add_argument("--json", action="store_true", dest="as_json")
+    abandon = subparsers.add_parser("abandon", help="Permanently stop retrying one session")
+    abandon.add_argument("--session-id", required=True)
+    abandon.add_argument("--reason", required=True)
+    abandon.add_argument("--json", action="store_true", dest="as_json")
     return parser.parse_args(argv)
 
 
@@ -30,6 +34,14 @@ def main(argv: list[str] | None = None) -> int:
         profile_manager=UserProfileManager(store),
         idle_timeout_minutes=args.idle_minutes,
     )
+    if args.action == "abandon":
+        payload = manager.abandon_session(args.session_id, args.reason)
+        if args.as_json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print(f"Session {args.session_id}: {payload['status']}")
+        return 0 if payload["status"] != "not_found" else 1
+
     ended = manager.check_and_end_idle_sessions()
     payload = {"status": "ok", "finalized": ended, "count": len(ended)}
     if args.as_json:

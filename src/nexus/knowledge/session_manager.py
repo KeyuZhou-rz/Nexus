@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 IDLE_TIMEOUT_MINUTES = 5
 
 
+class TransientSessionFinalizeError(RuntimeError):
+    """A finalization error that should be retried without losing evidence."""
+
+
 @dataclass
 class SessionState:
     """单个 session 的内存状态。"""
@@ -51,6 +55,10 @@ class SessionState:
     course_id: str | None = None        # 本 session 主要使用的课程
     interaction_count: int = 0          # 本 session 累计问答次数
     ended: bool = False                 # 是否已结束（防止重复分析）
+    finalize_status: str = "active"
+    finalize_attempts: int = 0
+    finalize_last_error: str | None = None
+    finalize_next_retry: datetime | None = None
 
 
 class SessionManager:
@@ -70,6 +78,7 @@ class SessionManager:
         profile_manager: UserProfileManager,
         gemini_api_key: str | None = None,
         idle_timeout_minutes: int = IDLE_TIMEOUT_MINUTES,
+        retry_delay_seconds: int = 60,
     ) -> None:
         self._store = sqlite_store
         self._profile = profile_manager
@@ -81,6 +90,7 @@ class SessionManager:
             model=gateway.model,
         )
         self._idle_timeout = timedelta(minutes=idle_timeout_minutes)
+        self._retry_delay_seconds = max(0, retry_delay_seconds)
 
     # ────────────────────────────────────────────────
     # 内部：SQLite <-> SessionState 转换
@@ -97,6 +107,13 @@ class SessionManager:
             course_id=row["course_id"],
             interaction_count=row["interaction_count"] or 0,
             ended=bool(row["ended"]),
+            finalize_status=row.get("finalize_status") or "active",
+            finalize_attempts=row.get("finalize_attempts") or 0,
+            finalize_last_error=row.get("finalize_last_error"),
+            finalize_next_retry=(
+                datetime.fromisoformat(row["finalize_next_retry"])
+                if row.get("finalize_next_retry") else None
+            ),
         )
 
     def _save_state(self, state: SessionState) -> None:
@@ -185,12 +202,19 @@ class SessionManager:
         if state is None:
             return {"status": "not_found", "session_id": session_id}
         if state.ended:
-            return {"status": "already_ended", "session_id": session_id}
+            return {
+                "status": "abandoned" if state.finalize_status == "abandoned" else "already_ended",
+                "session_id": session_id,
+            }
 
         # Claim atomically so explicit end and scheduler finalization cannot
         # both analyze/apply the same session.
         if not self._store.claim_session_end(session_id):
-            return {"status": "already_ended", "session_id": session_id}
+            current = self._load_state(session_id)
+            return {
+                "status": "retry_wait" if current and current.finalize_status == "retry" else "already_ended",
+                "session_id": session_id,
+            }
 
         try:
             logs = self._store.get_session_logs(session_id)
@@ -198,6 +222,7 @@ class SessionManager:
             # 少于 2 轮问答时不分析（数据太少，LLM 分析价值低）
             if len(logs) < 2:
                 logger.info(f"Session {session_id} 交互太少（{len(logs)} 条），跳过 profile 更新")
+                self._store.delete_session(session_id)
                 return {"status": "skipped", "reason": "too_few_interactions", "count": len(logs)}
 
             logger.info(f"Session {session_id} 结束，开始分析 {len(logs)} 条交互记录")
@@ -217,16 +242,42 @@ class SessionManager:
             else:
                 result = {"applied": "0 changes", "details": [], "notes": "LLM 分析跳过"}
 
+            self._store.delete_session(session_id)
             return {
                 "status": "completed",
                 "session_id": session_id,
                 "interactions": len(logs),
                 "patch_result": result,
             }
-        finally:
-            # Interaction logs are immutable evidence and remain available;
-            # only the active-session marker is removed.
-            self._store.delete_session(session_id)
+        except Exception as exc:
+            claimed = self._load_state(session_id)
+            attempts = claimed.finalize_attempts if claimed else 1
+            delay = self._retry_delay_seconds * (2 ** max(0, attempts - 1))
+            next_retry = datetime.now() + timedelta(
+                seconds=min(delay, 3600) if delay else -1
+            )
+            self._store.release_session_retry(session_id, str(exc), next_retry.isoformat())
+            logger.warning("Session %s finalization deferred for retry: %s", session_id, exc)
+            return {
+                "status": "retry",
+                "session_id": session_id,
+                "retry_count": attempts,
+                "next_retry": next_retry.isoformat(),
+                "error": str(exc),
+            }
+
+    def abandon_session(self, session_id: str, reason: str) -> dict[str, Any]:
+        """Explicitly abandon profile analysis while retaining audit state and logs."""
+        if not reason.strip():
+            raise ValueError("An abandonment reason is required")
+        if self._load_state(session_id) is None:
+            return {"status": "not_found", "session_id": session_id}
+        changed = self._store.abandon_session(session_id, reason)
+        return {
+            "status": "abandoned" if changed else "already_abandoned",
+            "session_id": session_id,
+            "reason": reason,
+        }
 
     def check_and_end_idle_sessions(self) -> list[str]:
         """
@@ -263,19 +314,21 @@ class SessionManager:
             session_transcript=transcript,
         )
 
-        # 先尝试统一 OpenAI-compatible gateway，再 fallback Gemini 直连
+        # 先尝试统一 OpenAI-compatible gateway，再 fallback Gemini 直连。
+        gateway_error: Exception | None = None
         try:
             return self._call_llm_litellm(prompt)
-        except ImportError:
-            pass
         except Exception as exc:
-            logger.warning(f"litellm session 分析失败: {exc}")
+            gateway_error = exc
+            logger.warning(f"gateway session 分析失败: {exc}")
 
         try:
             return self._call_llm_gemini(prompt)
         except Exception as exc:
             logger.warning(f"Gemini session 分析失败: {exc}")
-            return None
+            raise TransientSessionFinalizeError(
+                f"gateway failed: {gateway_error}; Gemini fallback failed: {exc}"
+            ) from exc
 
     def _call_llm_litellm(self, prompt: str) -> dict[str, Any]:
         """Compatibility name for the unified OpenAI-compatible gateway path."""

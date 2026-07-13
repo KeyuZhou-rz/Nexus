@@ -30,13 +30,18 @@ def store(tmp_path):
     return SQLiteStore(tmp_path / "nexus.db")
 
 
-def _make_manager(store: SQLiteStore, idle_timeout_minutes: int = 5) -> SessionManager:
+def _make_manager(
+    store: SQLiteStore,
+    idle_timeout_minutes: int = 5,
+    retry_delay_seconds: int = 60,
+) -> SessionManager:
     """Fresh SessionManager instance — simulates a process restart when
     called again against the same store."""
     return SessionManager(
         sqlite_store=store,
         profile_manager=UserProfileManager(store),
         idle_timeout_minutes=idle_timeout_minutes,
+        retry_delay_seconds=retry_delay_seconds,
     )
 
 
@@ -191,3 +196,77 @@ class TestEndSessionCleansUpRow:
         assert sessions_main(["--db-path", str(store.db_path), "finalize-idle", "--json"]) == 0
         assert '"count": 1' in capsys.readouterr().out
         assert store.get_session(SESSION) is None
+
+
+class TestRetryableFinalization:
+    def test_first_timeout_then_second_attempt_succeeds_once(self, store, monkeypatch):
+        mgr = _make_manager(store, retry_delay_seconds=0)
+        mgr.start_session(SESSION, course_id=COURSE)
+        store.log_interaction(SESSION, "q1", "a1", course_id=COURSE)
+        store.log_interaction(SESSION, "q2", "a2", course_id=COURSE)
+        attempts = iter([TimeoutError("gateway timeout"), {"notes": "ok"}])
+
+        def analyze(_transcript):
+            value = next(attempts)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        applied = []
+        monkeypatch.setattr(mgr, "_analyze_session", analyze)
+        monkeypatch.setattr(
+            mgr._profile,
+            "apply_patch",
+            lambda patch, **kwargs: applied.append(patch) or {"applied": "1 changes"},
+        )
+
+        first = mgr.end_session(SESSION)
+        row = store.get_session(SESSION)
+        assert first["status"] == "retry"
+        assert row["ended"] == 0
+        assert row["finalize_status"] == "retry"
+        assert row["finalize_attempts"] == 1
+        assert "gateway timeout" in row["finalize_last_error"]
+
+        second = mgr.end_session(SESSION)
+        assert second["status"] == "completed"
+        assert applied == [{"notes": "ok"}]
+        assert store.get_session(SESSION) is None
+
+    def test_concurrent_claim_allows_only_one_finalizer(self, store):
+        mgr1 = _make_manager(store)
+        mgr2 = _make_manager(store)
+        mgr1.start_session(SESSION)
+        assert store.claim_session_end(SESSION) is True
+        assert store.claim_session_end(SESSION) is False
+        assert mgr2.end_session(SESSION)["status"] == "already_ended"
+
+    def test_disabled_llm_finishes_without_retry(self, store, monkeypatch):
+        from nexus.knowledge.session_manager import gateway
+
+        mgr = _make_manager(store)
+        mgr.start_session(SESSION)
+        store.log_interaction(SESSION, "q1", "a1")
+        store.log_interaction(SESSION, "q2", "a2")
+        mgr._api_key = "configured-but-disabled"
+        monkeypatch.setattr(gateway, "_enabled", False)
+        monkeypatch.setattr(
+            mgr,
+            "_call_llm_litellm",
+            lambda prompt: (_ for _ in ()).throw(AssertionError("must not call LLM")),
+        )
+        result = mgr.end_session(SESSION)
+        assert result["status"] == "completed"
+        assert store.get_session(SESSION) is None
+        assert len(store.get_session_logs(SESSION)) == 2
+
+    def test_abandon_is_explicit_and_retains_logs(self, store):
+        mgr = _make_manager(store)
+        mgr.start_session(SESSION)
+        store.log_interaction(SESSION, "q1", "a1")
+        result = mgr.abandon_session(SESSION, "operator decision")
+        assert result["status"] == "abandoned"
+        row = store.get_session(SESSION)
+        assert row["finalize_status"] == "abandoned"
+        assert row["ended"] == 1
+        assert len(store.get_session_logs(SESSION)) == 1

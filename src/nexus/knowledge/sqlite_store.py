@@ -17,10 +17,12 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
+from .connection_registry import register_connection, unregister_connection
+
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_LATEST_SCHEMA_VERSION = 3
+_LATEST_SCHEMA_VERSION = 4
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -57,11 +59,13 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     """Yield a configured connection and always close it after the operation."""
     conn = _connect(db_path)
+    token = register_connection("sqlite", db_path)
     try:
         with conn:
             yield conn
     finally:
         conn.close()
+        unregister_connection("sqlite", db_path, token)
 
 
 def default_db_path() -> Path:
@@ -143,6 +147,27 @@ class SQLiteStore:
             conn.execute(
                 """CREATE INDEX IF NOT EXISTS idx_learning_events_trust
                    ON learning_events(trust_status, concept_id, timestamp)"""
+            )
+            return
+        if version == 4:
+            columns = SQLiteStore._table_columns(conn, "active_sessions")
+            for name, definition in (
+                ("finalize_status", "TEXT NOT NULL DEFAULT 'active'"),
+                ("finalize_attempts", "INTEGER NOT NULL DEFAULT 0"),
+                ("finalize_last_error", "TEXT"),
+                ("finalize_next_retry", "TIMESTAMP"),
+                ("finalize_claimed_at", "TIMESTAMP"),
+            ):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE active_sessions ADD COLUMN {name} {definition}")
+            conn.execute(
+                """UPDATE active_sessions SET finalize_status = CASE
+                       WHEN ended=1 THEN 'processing' ELSE 'active' END
+                   WHERE finalize_status IS NULL OR finalize_status=''"""
+            )
+            conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_active_sessions_finalize
+                   ON active_sessions(ended, finalize_status, finalize_next_retry)"""
             )
             return
         raise RuntimeError(f"Unsupported schema migration: {version}")
@@ -450,8 +475,43 @@ class SQLiteStore:
         """
         with connect(self.db_path) as conn:
             cursor = conn.execute(
-                "UPDATE active_sessions SET ended=1 WHERE session_id=? AND ended=0",
+                """UPDATE active_sessions
+                   SET ended=1, finalize_status='processing',
+                       finalize_attempts=finalize_attempts+1,
+                       finalize_claimed_at=CURRENT_TIMESTAMP,
+                       finalize_last_error=NULL
+                   WHERE session_id=? AND ended=0
+                     AND (finalize_next_retry IS NULL
+                          OR datetime(finalize_next_retry) <= datetime('now', 'localtime'))""",
                 (session_id,),
+            )
+            return cursor.rowcount == 1
+
+    def release_session_retry(
+        self,
+        session_id: str,
+        error: str,
+        next_retry: str,
+    ) -> None:
+        """Release a finalize claim after a transient failure."""
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """UPDATE active_sessions
+                   SET ended=0, finalize_status='retry', finalize_last_error=?,
+                       finalize_next_retry=?, finalize_claimed_at=NULL
+                   WHERE session_id=? AND finalize_status='processing'""",
+                (error[:1000], next_retry, session_id),
+            )
+
+    def abandon_session(self, session_id: str, reason: str) -> bool:
+        """Permanently stop retries while retaining finalization audit state."""
+        with connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """UPDATE active_sessions
+                   SET ended=1, finalize_status='abandoned', finalize_last_error=?,
+                       finalize_next_retry=NULL, finalize_claimed_at=NULL
+                   WHERE session_id=? AND finalize_status != 'abandoned'""",
+                (reason[:1000], session_id),
             )
             return cursor.rowcount == 1
 
