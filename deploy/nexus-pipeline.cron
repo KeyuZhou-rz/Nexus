@@ -1,0 +1,6 @@
+# Nexus Pipeline — daily at 06:00
+# Runs: archive_sync → aggregation → briefing
+# Edit PROJECT_DIR to point at your checkout.
+
+PROJECT_DIR=/path/to/Nexus
+0 6 * * * cd $PROJECT_DIR && PYTHONPATH=src python -m nexus.cli.pipeline >> data/pipeline_cron.log 2>&1

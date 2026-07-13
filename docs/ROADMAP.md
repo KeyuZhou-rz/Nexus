@@ -127,6 +127,190 @@
 
 ---
 
+---
+
+## Phase 4 — 生产可用性与 Progress 精度收口
+
+> 基线：schema v5、542 passed、DB consistency 0 issues。
+> 不做前端视觉设计。每个子项单独提交；每完成一个阶段跑定向测试、全量测试、CLI smoke 和 db-check。
+> 数据库、Chroma、凭据和 pycache 不进入提交。
+
+### 4A：P0 安装与启动闭环
+
+目标：新环境按文档安装后，可以可靠启动和诊断。
+
+- [ ] **4A-1 重构依赖为 optional extras**
+  - 拆分 pyproject.toml：`core`(streamlit/chromadb/litellm/sqlite3)、`google`(google-api-client/google-auth)、`archive`(playwright/pypdf/pymupdf4llm)、`pdf`(pypdf/pymupdf4llm)、`llm`(litellm)
+  - 消灭 requirements.txt（pyproject.toml extras 替代）
+  - 验收：`pip install -e .[core]` 可运行离线 QA、数据库命令和 pipeline
+
+- [ ] **4A-2 CI 增加真实 pip install + 矩阵构建**
+  - Python 3.10-3.13 矩阵
+  - `pip install -e .[core,google,archive,pdf,llm]` + `pip check`
+  - CLI smoke: doctor/db-check/query --help + 无 import crash
+  - 验收：矩阵全绿
+
+- [ ] **4A-3 统一 Doctor 的 enabled/configured/available 语义**
+  - 当前 Doctor 只有二元 ok/failed；补充三级诊断：
+    - `enabled`: 用户是否启用该功能（env/config）
+    - `configured`: 凭据/路径是否就绪（文件存在、权限正确）
+    - `available`: 运行时依赖是否可用（import 成功、API 连通）
+  - 扩展检查：ChromaDB embedding model、Python 版本、WAL 模式确认、Playwright browser binary、LLM API 连通性
+  - 验收：`nexus doctor` 输出三级状态；缺少可选依赖时明确诊断，不产生 import crash
+
+- [ ] **4A-4 补齐 .env.example 和首次启动检查**
+  - 补：archive/chroma/pdf 相关环境变量说明
+  - 首次启动向导：检测 data/ 是否初始化，提示运行 ingest
+  - 验收：新环境按 .env.example 配置后可启动
+
+- [ ] **4A-5 scheduler 示例**
+  - pipeline: 每日 cron/systemd timer 示例
+  - session finalize: 定期清理过期 session
+  - backup: 每周备份 cron 示例
+  - 验收：示例可复制粘贴使用
+
+### 4B：P0 索引与历史数据治理
+
+目标：把当前可用但仍带旧契约的数据升级到统一索引格式。
+
+- [ ] **4B-1 只读索引审计**
+  - 扩展 `KnowledgeConsistencyAudit`：metadata、collection/course、document、分页完整性
+  - 输出精确的待修复数量和分布
+
+- [ ] **4B-2 metadata/hash 迁移**
+  - 为旧向量补齐 `schema_version`/`document_id`/`chunk_id`/`file_hash`/`chunk_index`
+  - 将旧 MD5 document hash 迁移到 SHA-256
+  - SQLite chunks 表加 `chunk_index` 列（如缺失）
+
+- [ ] **4B-3 concept quarantine/cleanup**
+  - 识别并隔离无 chunk 证据的孤立 concept
+  - 清理 Berkshire/投资主题及"如何、区别"等伪概念
+  - 默认 dry-run；确认后执行
+
+- [ ] **4B-4 Chroma 版本兼容**
+  - 固定经过验证的 Chroma 版本范围
+  - 检查内部 foreign key 一致性
+
+- [ ] **4B-5 迁移安全保障**
+  - 每次 apply 前自动备份
+  - 迁移后执行 db-check 和检索 golden set
+
+### 4C：P1 入库路径统一
+
+目标：所有入口写入同一双写管线，避免"导入成功但 Progress 不可见"。
+
+- [ ] **4C-1 legacy Markdown/Text ingest 接入双写**
+  - 将 `ingestion_service.ingest_text_documents` 路径接入 SQLite documents/chunks 表
+  - 验收：.md/.txt 导入后能被 query、assessment、progress 消费
+
+- [ ] **4C-2 archive post-ingest 接入 CourseIngestor**
+  - `post_ingest.py` 统一走 `CourseIngestor` 双写管线
+  - 验收：archive 导入的文件在 SQLite 中可见
+
+- [ ] **4C-3 跨进程并发保护**
+  - 为同一 document 增加 lease/generation token
+  - 两个进程并发导入同一文件不互删、不留半成品
+
+- [ ] **4C-4 批量写入 SQLite**
+  - 避免逐 chunk 事务，改为批量 commit
+
+- [ ] **4C-5 aggregation source-level snapshot**
+  - 每个来源独立 snapshot，单个来源失败时保留该来源旧数据
+  - 验收：任一外部源失败不清除其他来源或该来源的上次快照
+
+- [ ] **4C-6 Canvas 接入 aggregation 和 Doctor**
+  - Canvas connector 接入 `run_aggregation` 主流程
+  - Doctor 检查 Canvas 凭据和连通性
+
+### 4D：P1 Progress 后端收敛
+
+目标：减少低价值模块，让 Progress 输出更准确、可解释。
+
+- [ ] **4D-1 建立单一 ProgressService**
+  - 统一读取 mastery、assessment、review queue
+  - 替代分散的 TemporalMemory/MemoryAPI/UserProfileManager 直接调用
+
+- [ ] **4D-2 模块分级**
+  - 核心：Mastery、Assessment、Review Queue
+  - 条件启用：Study/Sprint Plan
+  - Experimental：Gap Scanner、Retrospective
+  - Experimental 模块不影响核心 mastery
+
+- [ ] **4D-3 无可信 assessment 数据时不输出伪精确 mastery**
+  - 检查 `learning_events.trust_status` 过滤
+  - 普通 QA、被动阅读和模型推断不修改 mastery
+
+- [ ] **4D-4 Sprint 时间预算**
+  - 根据概念数量、难度和可用时间计算时间预算
+  - 非简单线性分配
+
+- [ ] **4D-5 Gap Scanner 批量统计**
+  - 消除 N+1 查询
+
+- [ ] **4D-6 Retrospective 命中率**
+  - 只比较考前持久化快照与用户确认结果
+  - 不允许 LLM 自由生成后自我评分
+
+- [ ] **4D-7 离线校准集**
+  - 为 mastery 阈值、衰减参数和评分置信度建立校准数据
+
+### 4E：P1 运维与可观测性
+
+- [ ] **4E-1 结构化日志**
+  - JSON 格式、call site、错误分类、敏感信息脱敏
+  - 统一 `logging` 配置入口
+
+- [ ] **4E-2 运行状态查询**
+  - pipeline/session/backup 最近运行状态
+
+- [ ] **4E-3 备份策略**
+  - 保留、验证、导出和清理策略
+  - 扩展 `nexus db-backup`
+
+- [ ] **4E-4 失败队列**
+  - 重试上限及人工处理命令
+  - 从 archive-only 扩展到 aggregation + ingest
+
+- [ ] **4E-5 并发 soak tests**
+  - 长时间运行、并发 ingest/QA/backup 测试
+
+### 4F：P2 质量门禁与发布
+
+- [ ] **4F-1 扩展 retrieval golden set**
+  - 多课程、中英文、无答案、跨课程
+
+- [ ] **4F-2 QA citation gate**
+  - 验证引用确实支持结论
+
+- [ ] **4F-3 Assessment 案例扩展**
+  - 正确、部分正确、错误、提示注入和课件冲突案例
+
+- [ ] **4F-4 数据库迁移与备份恢复兼容测试**
+
+- [ ] **4F-5 文档更新**
+  - README、Reference、Testing、迁移指南
+
+- [ ] **4F-6 发布 0.2.0 候选版本**
+  - 全新目录验收
+
+---
+
+### 执行顺序
+
+```
+4A → 4B → 4C → 4D → 4E → 4F
+```
+
+- 4A 不阻塞其他但最先做（后续 CI 验收依赖）
+- 4B 在 4C 前（先清旧数据再统一写入路径）
+- 4C 在 4D 前（Progress 输入来自入库管线）
+- 4D 和 4E 可部分并行（Progress 重构和日志/备份互不依赖）
+- 4E-1（结构化日志）提前到 4A 作为 Doctor 增强的一部分
+- 4D-7（离线校准集）移到 4F 与 golden set 一起
+- 4F 串行最后
+
+---
+
 ## 约定（所有 agent 必读）
 
 - 运行：`PYTHONPATH=src` 前缀（无 pyproject.toml 安装）；`make test` / `make ui` 已就绪。
@@ -135,4 +319,4 @@
 - `Task.from_dict` 期望 `due_at` 为 ISO 字符串；scraper 返回 datetime 须先转换。
 - LLM 后端：Qwen via DashScope；key 在 `data/QWEN_API_KEY.json`，env `QWEN_API_KEY`。
 - 不在未触碰代码上加多余注释/docstring；方案最小聚焦。
-- 提交：每轮开 `nexus/<task-id>-<slug>` 分支，commit message 末尾加 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`。
+- 提交：每轮开 `nexus/<task-id>-<slug>` 分支，commit message 末尾加 `Co-Authored-By: Claude <noreply@anthropic.com>`。

@@ -44,6 +44,11 @@ class AppConfig:
     llm_model: str | None = None
     llm_timeout: int = 20
     llm_json_output: bool = True
+    brightspace_url: str | None = None
+    brightspace_username: str | None = None
+    brightspace_password: str | None = None
+    canvas_url: str | None = None
+    canvas_token: str | None = None
 
 
 def default_config() -> AppConfig:
@@ -83,4 +88,9 @@ def default_config() -> AppConfig:
         llm_model=llm_model,
         llm_timeout=llm_timeout,
         llm_json_output=llm_json_output,
+        brightspace_url=os.getenv("NEXUS_BRIGHTSPACE_URL"),
+        brightspace_username=os.getenv("NEXUS_BRIGHTSPACE_USERNAME"),
+        brightspace_password=os.getenv("NEXUS_BRIGHTSPACE_PASSWORD"),
+        canvas_url=os.getenv("NEXUS_CANVAS_URL"),
+        canvas_token=os.getenv("NEXUS_CANVAS_TOKEN"),
     )

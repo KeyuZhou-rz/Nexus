@@ -10,6 +10,10 @@ from pathlib import Path
 def test_archive_sync_missing_env_contract():
     repo_root = Path(__file__).resolve().parents[1]
     env = {k: v for k, v in os.environ.items() if not k.startswith("NEXUS_BRIGHTSPACE_")}
+    # Prevent config._load_dotenv() from re-injecting .env values in the subprocess
+    env["NEXUS_BRIGHTSPACE_URL"] = ""
+    env["NEXUS_BRIGHTSPACE_USERNAME"] = ""
+    env["NEXUS_BRIGHTSPACE_PASSWORD"] = ""
     env["PYTHONPATH"] = "src"
     proc = subprocess.run(
         [sys.executable, "-m", "nexus.archive_sync"],

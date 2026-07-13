@@ -1,0 +1,5 @@
+# Nexus Backup — weekly at 03:00 on Sunday
+# Edit PROJECT_DIR to point at your checkout.
+
+PROJECT_DIR=/path/to/Nexus
+0 3 * * 0 cd $PROJECT_DIR && PYTHONPATH=src python -m nexus.cli.db_backup >> data/backup_cron.log 2>&1

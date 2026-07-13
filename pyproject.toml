@@ -10,18 +10,31 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "streamlit>=1.31",
-  "google-api-python-client>=2.100",
-  "google-auth-httplib2>=0.1",
-  "google-auth-oauthlib>=1.0",
   "requests>=2.31",
   "feedparser>=6.0",
   "icalendar>=5.0",
-  "playwright>=1.40",
   "chromadb>=0.5",
-  "google-generativeai>=0.7.0",
+]
+
+[project.optional-dependencies]
+google = [
+  "google-api-python-client>=2.100",
+  "google-auth-httplib2>=0.1",
+  "google-auth-oauthlib>=1.0",
+]
+archive = [
+  "playwright>=1.40",
+]
+pdf = [
   "pypdf>=4.0.0",
   "pymupdf4llm>=0.0.17",
+]
+llm = [
   "litellm>=1.40.0",
+]
+# Convenience: install everything
+all = [
+  "nexus-dashboard[google,archive,pdf,llm]",
 ]
 
 [project.scripts]

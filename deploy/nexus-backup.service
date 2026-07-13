@@ -1,0 +1,12 @@
+[Unit]
+Description=Nexus Database & Chroma Backup
+After=nexus-pipeline.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/Nexus
+Environment=PYTHONPATH=src
+ExecStart=python -m nexus.cli.db_backup
+StandardOutput=append:/path/to/Nexus/data/backup.log
+StandardError=append:/path/to/Nexus/data/backup.log
+User=nexus
