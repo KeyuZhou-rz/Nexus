@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .connection_registry import register_connection, unregister_connection
+
 
 class CourseCollectionNotFoundError(LookupError):
     """Raised when a requested course has no indexed Chroma collection."""
@@ -81,6 +83,7 @@ class ChromaKnowledgeStore:
             )
         else:
             self.collection = None  # per_course 模式下按需创建
+        self._connection_token = register_connection("chroma", self.persist_dir)
 
     def close(self) -> None:
         """Release the underlying Chroma system and file handles."""
@@ -88,11 +91,17 @@ class ChromaKnowledgeStore:
         if client is None:
             return
         self._client = None
+        token = getattr(self, "_connection_token", None)
+        self._connection_token = None
         try:
             client.close()
         except Exception:
             # Cleanup must not mask the original operation/test failure.
             pass
+        finally:
+            persist_dir = getattr(self, "persist_dir", None)
+            if persist_dir is not None:
+                unregister_connection("chroma", persist_dir, token)
 
     def __enter__(self) -> "ChromaKnowledgeStore":
         return self

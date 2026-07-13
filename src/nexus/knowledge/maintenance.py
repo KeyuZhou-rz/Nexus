@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from .maintenance_lock import maintenance_lock
+from .connection_registry import active_connection_counts
 
 
 BACKUP_FORMAT_VERSION = 1
@@ -143,6 +144,7 @@ def restore_backup(
     *,
     apply: bool = False,
     force: bool = False,
+    audit_factory: Callable[[Path, Path], Any] | None = None,
 ) -> dict[str, Any]:
     """Validate a backup, and replace target stores only when ``apply`` is explicit."""
     archive_path = archive_path.expanduser().resolve()
@@ -168,6 +170,16 @@ def restore_backup(
         }
         if not apply:
             return plan
+        active = active_connection_counts(
+            sqlite_path=sqlite_path, chroma_path=chroma_path
+        )
+        if any(active.values()):
+            raise RuntimeError(
+                "Restore refused while target storage handles are active: "
+                + ", ".join(
+                    f"{kind}={count}" for kind, count in active.items() if count
+                )
+            )
         if conflicts and not force:
             raise FileExistsError("Restore targets exist; rerun with --force to replace them")
 
@@ -189,6 +201,18 @@ def restore_backup(
             os.replace(staged_sqlite_target, sqlite_path)
             if manifest.get("chroma_present"):
                 os.replace(staged_chroma_target, chroma_path)
+            if audit_factory is None:
+                from .chunk_backfill import KnowledgeConsistencyAudit
+
+                current_audit_factory = KnowledgeConsistencyAudit
+            else:
+                current_audit_factory = audit_factory
+            audit = current_audit_factory(sqlite_path, chroma_path).run()
+            plan["consistency_audit"] = audit
+            if not audit.get("ok", False):
+                raise RuntimeError(
+                    f"Restored storage failed consistency audit: {audit.get('issues', [])}"
+                )
         except Exception:
             if sqlite_path.exists():
                 sqlite_path.unlink()

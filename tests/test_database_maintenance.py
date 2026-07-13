@@ -14,6 +14,28 @@ import pytest
 
 from nexus.knowledge import maintenance as maintenance_module
 from nexus.knowledge.maintenance import create_backup, repair_consistency, restore_backup
+from nexus.knowledge.sqlite_store import connect
+from nexus.knowledge.store import ChromaKnowledgeStore
+
+
+class _AuditOK:
+    def __init__(self, _sqlite_path: Path, _chroma_path: Path) -> None:
+        pass
+
+    def run(self) -> dict:
+        return {"ok": True, "summary": {"issues": 0}, "issues": []}
+
+
+class _AuditFail:
+    def __init__(self, _sqlite_path: Path, _chroma_path: Path) -> None:
+        pass
+
+    def run(self) -> dict:
+        return {
+            "ok": False,
+            "summary": {"issues": 1},
+            "issues": [{"code": "forced_failure", "message": "test"}],
+        }
 
 
 def _database(path: Path, value: str = "original") -> None:
@@ -40,8 +62,12 @@ def test_backup_and_restore_round_trip_with_dry_run(tmp_path: Path) -> None:
     assert not preview["applied"]
     assert not target_db.exists()
 
-    restored = restore_backup(archive, target_db, target_chroma, apply=True)
+    restored = restore_backup(
+        archive, target_db, target_chroma, apply=True,
+        audit_factory=_AuditOK,
+    )
     assert restored["applied"]
+    assert restored["consistency_audit"]["ok"]
     with sqlite3.connect(target_db) as conn:
         assert conn.execute("SELECT value FROM sample").fetchone()[0] == "original"
     assert (target_chroma / "index.bin").read_bytes() == b"vector-data"
@@ -56,11 +82,17 @@ def test_restore_requires_force_to_replace_existing_targets(tmp_path: Path) -> N
     target_db = tmp_path / "target.db"
     _database(target_db, "keep")
     with pytest.raises(FileExistsError):
-        restore_backup(archive, target_db, tmp_path / "chroma", apply=True)
+        restore_backup(
+            archive, target_db, tmp_path / "chroma", apply=True,
+            audit_factory=_AuditOK,
+        )
     with sqlite3.connect(target_db) as conn:
         assert conn.execute("SELECT value FROM sample").fetchone()[0] == "keep"
 
-    restore_backup(archive, target_db, tmp_path / "chroma", apply=True, force=True)
+    restore_backup(
+        archive, target_db, tmp_path / "chroma", apply=True, force=True,
+        audit_factory=_AuditOK,
+    )
     with sqlite3.connect(target_db) as conn:
         assert conn.execute("SELECT value FROM sample").fetchone()[0] == "original"
 
@@ -168,6 +200,93 @@ with maintenance_lock(sqlite_path=db, chroma_path=chroma, exclusive=False):
     assert writer.returncode == 0, (stdout, stderr)
     with zipfile.ZipFile(archive) as result:
         assert result.read("chroma/payload.bin") == b"stable"
+
+
+def test_restore_refuses_active_sqlite_connection(tmp_path: Path) -> None:
+    source_db = tmp_path / "source.db"
+    _database(source_db, "replacement")
+    archive = tmp_path / "backup.zip"
+    create_backup(source_db, tmp_path / "source-chroma", archive)
+    target_db = tmp_path / "target.db"
+    _database(target_db, "keep")
+
+    with connect(target_db):
+        with pytest.raises(RuntimeError, match="sqlite=1"):
+            restore_backup(
+                archive, target_db, tmp_path / "target-chroma",
+                apply=True, force=True, audit_factory=_AuditOK,
+            )
+    with sqlite3.connect(target_db) as conn:
+        assert conn.execute("SELECT value FROM sample").fetchone()[0] == "keep"
+
+
+def test_restore_refuses_active_chroma_client(tmp_path: Path) -> None:
+    source_db = tmp_path / "source.db"
+    _database(source_db)
+    archive = tmp_path / "backup.zip"
+    create_backup(source_db, tmp_path / "source-chroma", archive)
+    target_db = tmp_path / "target.db"
+    target_chroma = tmp_path / "target-chroma"
+
+    with ChromaKnowledgeStore(target_chroma, per_course=True):
+        with pytest.raises(RuntimeError, match="chroma=1"):
+            restore_backup(
+                archive, target_db, target_chroma,
+                apply=True, force=True, audit_factory=_AuditOK,
+            )
+
+
+def test_post_restore_audit_failure_rolls_back_existing_targets(
+    tmp_path: Path,
+) -> None:
+    source_db = tmp_path / "source.db"
+    _database(source_db, "replacement")
+    source_chroma = tmp_path / "source-chroma"
+    source_chroma.mkdir()
+    (source_chroma / "index.bin").write_bytes(b"replacement-index")
+    archive = tmp_path / "backup.zip"
+    create_backup(source_db, source_chroma, archive)
+
+    target_db = tmp_path / "target.db"
+    _database(target_db, "keep")
+    target_chroma = tmp_path / "target-chroma"
+    target_chroma.mkdir()
+    (target_chroma / "index.bin").write_bytes(b"keep-index")
+
+    with pytest.raises(RuntimeError, match="consistency audit"):
+        restore_backup(
+            archive, target_db, target_chroma,
+            apply=True, force=True, audit_factory=_AuditFail,
+        )
+
+    with sqlite3.connect(target_db) as conn:
+        assert conn.execute("SELECT value FROM sample").fetchone()[0] == "keep"
+    assert (target_chroma / "index.bin").read_bytes() == b"keep-index"
+    assert not list(tmp_path.glob(".*.restore-*"))
+    assert not list(tmp_path.glob(".*.pre-restore-*"))
+
+
+def test_post_restore_audit_failure_removes_new_partial_targets(
+    tmp_path: Path,
+) -> None:
+    source_db = tmp_path / "source.db"
+    _database(source_db)
+    source_chroma = tmp_path / "source-chroma"
+    source_chroma.mkdir()
+    (source_chroma / "index.bin").write_bytes(b"index")
+    archive = tmp_path / "backup.zip"
+    create_backup(source_db, source_chroma, archive)
+    target_db = tmp_path / "new" / "target.db"
+    target_chroma = tmp_path / "new" / "chroma"
+
+    with pytest.raises(RuntimeError, match="consistency audit"):
+        restore_backup(
+            archive, target_db, target_chroma,
+            apply=True, audit_factory=_AuditFail,
+        )
+
+    assert not target_db.exists()
+    assert not target_chroma.exists()
 
 
 def test_repair_is_dry_run_and_only_updates_document_counts(tmp_path: Path) -> None:
