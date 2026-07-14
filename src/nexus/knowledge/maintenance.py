@@ -103,6 +103,53 @@ def create_backup(
     return {"ok": True, "archive": str(output_path), "files": len(files), "manifest": manifest}
 
 
+def verify_backup(archive_path: Path) -> dict[str, Any]:
+    """Read-only: verify a backup archive's checksums without restoring.
+
+    Phase 4E-3: validation-only check for periodic integrity verification.
+    """
+    import tempfile
+    import zipfile
+
+    archive_path = archive_path.expanduser().resolve()
+    if not archive_path.exists():
+        return {"ok": False, "error": f"Archive not found: {archive_path}"}
+
+    with tempfile.TemporaryDirectory(prefix="nexus-verify-") as tmp:
+        root = Path(tmp)
+        try:
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                zf.extractall(root)
+        except (zipfile.BadZipFile, OSError) as exc:
+            return {"ok": False, "error": f"Unable to open archive: {exc}"}
+
+        manifest_path = root / "manifest.json"
+        if not manifest_path.exists():
+            return {"ok": False, "error": "Archive missing manifest.json"}
+
+        manifest = json.loads(manifest_path.read_text())
+        failed = []
+        verified = 0
+        for entry in manifest.get("files", []):
+            fpath = root / entry["path"]
+            if not fpath.exists():
+                failed.append({"path": entry["path"], "error": "missing"})
+                continue
+            actual = _sha256(fpath)
+            if actual != entry.get("hash"):
+                failed.append({"path": entry["path"], "hash_mismatch": True})
+            else:
+                verified += 1
+
+        return {
+            "ok": not failed,
+            "archive": str(archive_path),
+            "files": manifest.get("files", 0),
+            "verified": verified,
+            "failed": failed,
+        }
+
+
 def _validate_archive(archive_path: Path, extraction_root: Path) -> dict[str, Any]:
     with zipfile.ZipFile(archive_path) as archive:
         names = archive.namelist()
