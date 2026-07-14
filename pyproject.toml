@@ -13,7 +13,7 @@ dependencies = [
   "requests>=2.31",
   "feedparser>=6.0",
   "icalendar>=5.0",
-  "chromadb>=0.5",
+  "chromadb>=1.0",
 ]
 
 [project.optional-dependencies]

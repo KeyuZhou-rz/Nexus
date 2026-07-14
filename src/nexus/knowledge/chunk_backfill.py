@@ -534,6 +534,82 @@ class ChunkBackfill:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Phase 4B-5: SafeMigration — 迁移安全基类
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class SafeMigration:
+    """Base class for migration operations with automatic pre-backup + post-verify.
+
+    Subclasses implement ``plan()`` and ``apply()``. The safe-migration
+    wrapper (``safe_apply``) takes a backup before writing and runs
+    ``KnowledgeConsistencyAudit`` after.
+    """
+
+    def __init__(self, sqlite_path: Path, chroma_path: Path, data_dir: Path | None = None) -> None:
+        self.sqlite_path = sqlite_path
+        self.chroma_path = chroma_path
+        self.data_dir = data_dir or Path("data")
+
+    def pre_backup(self) -> Path | None:
+        """Create a migration-backup. Returns the backup path or None on failure."""
+        try:
+            from datetime import datetime
+            from nexus.knowledge.maintenance import create_backup
+
+            backup_dir = self.data_dir / "backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+            backup_path = backup_dir / f"nexus-pre-migration-{ts}.zip"
+
+            create_backup(
+                sqlite_path=self.sqlite_path,
+                chroma_path=self.chroma_path,
+                output_path=backup_path,
+                force=True,
+            )["path"]
+            logger.info("Migration backup created: %s", backup_path)
+            return backup_path
+        except Exception as exc:
+            logger.error("Pre-migration backup failed: %s", exc)
+            return None
+
+    def post_verify(self) -> dict:
+        """Run consistency audit after migration. Returns audit report."""
+        auditor = KnowledgeConsistencyAudit(self.sqlite_path, self.chroma_path)
+        return auditor.run()
+
+    def safe_apply(self) -> dict:
+        """Apply migration with backup + verify. Returns combined report."""
+        backup_path = self.pre_backup()
+        result = self.apply()
+        audit = self.post_verify()
+
+        return {
+            "ok": result.get("ok", False) and audit.get("ok", False),
+            "applied": result.get("applied", False),
+            "backup_path": str(backup_path) if backup_path else None,
+            "migration_result": result,
+            "post_audit": {
+                "ok": audit.get("ok"),
+                "issues": len(audit.get("issues", [])),
+                "summary": audit.get("summary", {}),
+            },
+            "rollback_hint": (
+                f"nexus db-restore {backup_path}"
+                if backup_path and not audit.get("ok")
+                else None
+            ),
+        }
+
+    def plan(self) -> dict:
+        raise NotImplementedError("subclass must implement plan()")
+
+    def apply(self) -> dict:
+        raise NotImplementedError("subclass must implement apply()")
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Phase 4B-2: Metadata Migration — 将旧向量升级到新元数据契约
 # ═══════════════════════════════════════════════════════════════════════
 

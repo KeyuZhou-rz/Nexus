@@ -176,6 +176,18 @@ def _check_chroma(config: AppConfig) -> ComponentStatus:
     # Check embedding model availability
     if _module_available("chromadb"):
         try:
+            import chromadb
+
+            comp.details["chromadb_version"] = chromadb.__version__
+            # Warn if below recommended version (0.6.x has known data compat issues)
+            version_parts = chromadb.__version__.split(".")
+            major = int(version_parts[0]) if version_parts else 0
+            if major < 1:
+                comp.warnings.append(
+                    f"ChromaDB {chromadb.__version__} is below recommended 1.0; "
+                    "upgrade with: pip install 'chromadb>=1.0'"
+                )
+
             from chromadb.utils import embedding_functions
 
             ef = embedding_functions.DefaultEmbeddingFunction()
