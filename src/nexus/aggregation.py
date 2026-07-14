@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .aggregators.brightspace import BrightspaceAggregator, FeedConfig
+from .aggregators.canvas import CanvasLMSConnector
 from .aggregators.google import GoogleAggregator
 from .config import AppConfig, default_config
 from .models import FeedSource, Task
@@ -93,20 +94,26 @@ def _google_configured(config: AppConfig) -> bool:
     )
 
 
+def _canvas_configured(config: AppConfig) -> bool:
+    return bool(config.canvas_url and config.canvas_token)
+
+
 def run_aggregation(
     include_google: bool = True,
+    include_canvas: bool = True,
     data_dir: Path | None = None,
     config: AppConfig | None = None,
 ) -> AggregationResult:
     """
     执行完整的数据聚合流程。
-    
+
     流程：
     1. 加载并分类订阅源。
-    2. 调用 BrightspaceAggregator 获取课程/作业数据。
-    3. (可选) 调用 GoogleAggregator 获取邮件/日历数据。
-    4. 合并所有数据并去重。
-    5. 保存到磁盘 (tasks.json)。
+    2. Brightspace (iCal/RSS) → 课程/作业数据。
+    3. (可选) Google Calendar/Gmail。
+    4. (可选) Canvas LMS REST API。
+    5. 合并 + 去重 + 按来源合入旧快照（单个源失败不丢失该源历史数据）。
+    6. 保存到磁盘 (tasks.json)。
     """
     config = config or default_config()
     data_dir = data_dir or config.data_dir
@@ -118,14 +125,20 @@ def run_aggregation(
     source_status: dict[str, str] = {}
     existing_tasks = load_tasks(tasks_path)
 
+    # Pre-compute per-source old tasks for snapshot preservation (Phase 4C-5)
+    old_by_source: dict[str, list[Task]] = {}
+    for t in existing_tasks:
+        src = getattr(t, "source", None) or "unknown"
+        old_by_source.setdefault(src, []).append(t)
+
     feeds = load_feeds(feeds_path)
     ical_feeds, rss_feeds = _split_feeds(feeds)
     brightspace_enabled = bool(ical_feeds or rss_feeds)
     if not brightspace_enabled:
         warnings.append("Brightspace feeds not configured or disabled.")
         source_status["brightspace"] = "skipped"
-    
-    # 1. 处理 Brightspace 数据源
+
+    # 1. Brightspace
     if brightspace_enabled:
         try:
             tasks.extend(BrightspaceAggregator(ical_feeds, rss_feeds).fetch_tasks())
@@ -133,8 +146,13 @@ def run_aggregation(
         except Exception as exc:
             errors.append(f"Brightspace error: {exc}")
             source_status["brightspace"] = "failed"
+            # Preserve old Brightspace tasks
+            old = old_by_source.get("brightspace", [])
+            if old:
+                warnings.append(f"Brightspace failed; preserving {len(old)} old tasks.")
+                tasks.extend(old)
 
-    # 2. 处理 Google 数据源
+    # 2. Google
     if not include_google:
         warnings.append("Google aggregation disabled.")
         source_status["google"] = "disabled"
@@ -148,18 +166,37 @@ def run_aggregation(
         except Exception as exc:
             errors.append(f"Google error: {exc}")
             source_status["google"] = "failed"
+            for src_key in ("gcal", "gmail", "google"):
+                old = old_by_source.get(src_key, [])
+                if old:
+                    warnings.append(f"Google failed; preserving {len(old)} old tasks (source={src_key}).")
+                    tasks.extend(old)
 
-    # 3. 数据清洗与持久化
+    # 3. Canvas (Phase 4C-6)
+    if not include_canvas:
+        warnings.append("Canvas aggregation disabled.")
+        source_status["canvas"] = "disabled"
+    elif not _canvas_configured(config):
+        source_status["canvas"] = "skipped"
+    else:
+        try:
+            connector = CanvasLMSConnector(config.canvas_url or "", config.canvas_token or "")
+            canvas_tasks = connector.to_tasks()
+            tasks.extend(canvas_tasks)
+            source_status["canvas"] = f"succeeded ({len(canvas_tasks)} tasks)"
+        except Exception as exc:
+            errors.append(f"Canvas error: {exc}")
+            source_status["canvas"] = "failed"
+            old = old_by_source.get("canvas", [])
+            if old:
+                warnings.append(f"Canvas failed; preserving {len(old)} old tasks.")
+                tasks.extend(old)
+
+    # 4. 去重 + 持久化
     tasks = _dedupe(tasks)
-    # Guardrail: if fetching failed and would wipe existing tasks, keep previous snapshot.
-    should_preserve_existing = (
-        not tasks
-        and bool(existing_tasks)
-        and any(err.startswith("Google error:") or err.startswith("Brightspace error:") for err in errors)
-    )
-    if should_preserve_existing:
+    if not tasks and existing_tasks:
         errors.append(
-            "Aggregation produced no new tasks due to source errors; preserving existing tasks.json."
+            "Aggregation produced no new tasks; preserving existing tasks.json."
         )
         save_tasks(existing_tasks, tasks_path)
         return AggregationResult(

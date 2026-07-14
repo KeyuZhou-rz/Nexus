@@ -8,6 +8,7 @@ from typing import Any
 from nexus.knowledge.document_text import extract_text
 from nexus.knowledge.ingestion_service import TextDocument, ingest_text_documents
 from nexus.knowledge.sqlite_store import SQLiteStore
+from nexus.knowledge.store import ChromaKnowledgeStore
 from nexus.knowledge.concept_resolver import ConceptResolver
 from nexus.knowledge.user_profile import UserProfileManager
 from nexus.knowledge.temporal_memory import TemporalMemory
@@ -68,6 +69,11 @@ def run_archive_post_ingest(
     if store is None:
         store = ChromaKnowledgeStore(db_dir, collection_name=collection_name)
 
+    # Phase 4C-2: Initialize SQLiteStore for dual-write
+    _sqlite_store: SQLiteStore | None = None
+    if sqlite_path is not None:
+        _sqlite_store = SQLiteStore(sqlite_path)
+
     for item in archives:
         archived_path = Path(str(item.get("archived_path", "")).strip())
         if not archived_path.exists() or not archived_path.is_file():
@@ -94,6 +100,7 @@ def run_archive_post_ingest(
                 max_chars=max_chars,
                 overlap=overlap,
                 id_namespace="archive_chunk",
+                sqlite_store=_sqlite_store,
             )
             if stats.files == 0:
                 continue

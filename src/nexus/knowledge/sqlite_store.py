@@ -410,6 +410,7 @@ class SQLiteStore:
         prerequisites: list[str] | None = None,
         page: int | None = None,
         lecture_number: int | None = None,
+        chunk_index: int | None = None,
     ) -> None:
         """
         插入或替换 chunk 元数据。
@@ -421,8 +422,8 @@ class SQLiteStore:
                 """
                 INSERT OR REPLACE INTO chunks
                     (chunk_id, document_id, course_id, topic, type,
-                     keywords, prerequisites, page, lecture_number)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     keywords, prerequisites, page, lecture_number, chunk_index)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     chunk_id,
@@ -434,6 +435,7 @@ class SQLiteStore:
                     json.dumps(prerequisites or [], ensure_ascii=False),
                     page,
                     lecture_number,
+                    chunk_index,
                 ),
             )
 

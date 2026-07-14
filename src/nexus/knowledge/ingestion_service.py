@@ -7,6 +7,7 @@ from pathlib import Path
 from .chunking import chunk_text
 from .maintenance_lock import maintenance_lock
 from .store import ChromaKnowledgeStore
+from .sqlite_store import SQLiteStore
 
 
 @dataclass
@@ -92,18 +93,23 @@ def ingest_text_documents(
     max_chars: int = 900,
     overlap: int = 120,
     id_namespace: str = "chunk",
+    sqlite_store: SQLiteStore | None = None,
 ) -> IngestStats:
-    """Chunk and upsert normalized text documents into Chroma."""
+    """Chunk and upsert normalized text documents into Chroma (and optionally SQLite).
+
+    When ``sqlite_store`` is provided, performs dual-write:
+    documents + chunks tables alongside the Chroma vectors.
+    """
     persist_dir = getattr(store, "persist_dir", None)
     if persist_dir is None:
         return _ingest_text_documents_unlocked(
             documents, store, max_chars=max_chars, overlap=overlap,
-            id_namespace=id_namespace,
+            id_namespace=id_namespace, sqlite_store=sqlite_store,
         )
     with maintenance_lock(chroma_path=Path(persist_dir), exclusive=False):
         return _ingest_text_documents_unlocked(
             documents, store, max_chars=max_chars, overlap=overlap,
-            id_namespace=id_namespace,
+            id_namespace=id_namespace, sqlite_store=sqlite_store,
         )
 
 
@@ -114,6 +120,7 @@ def _ingest_text_documents_unlocked(
     max_chars: int,
     overlap: int,
     id_namespace: str,
+    sqlite_store: SQLiteStore | None = None,
 ) -> IngestStats:
     stats = IngestStats()
 
@@ -127,19 +134,41 @@ def _ingest_text_documents_unlocked(
             continue
 
         file_hash = content_hash(content)
+        source_file = document.source_path.name
+        doc_id = document_id(document.course_id, source_file)
         ids: list[str] = []
         docs: list[str] = []
         metas: list[dict[str, str | int]] = []
+
         for idx, chunk in enumerate(chunks):
             identifier = chunk_id(document.course_id, file_hash, idx, namespace=id_namespace)
             ids.append(identifier)
             docs.append(chunk)
             metas.append(_build_metadata(document, idx, file_hash, identifier))
 
-        # Legacy stores use a fixed collection; course identity remains explicit
-        # in the canonical metadata contract.
+        # ChromaDB write
         store.upsert_chunks(ids, docs, metas)
         stats.files += 1
         stats.chunks += len(chunks)
+
+        # SQLite dual-write (Phase 4C-1)
+        if sqlite_store is not None:
+            sqlite_store.upsert_document(
+                doc_id=doc_id,
+                course_id=document.course_id,
+                filename=source_file,
+                file_hash=file_hash,
+                parse_status="done",
+                chunk_count=len(chunks),
+            )
+            for idx, chunk_text_val in enumerate(chunks):
+                sqlite_store.upsert_chunk(
+                    chunk_id=ids[idx],
+                    document_id=doc_id,
+                    course_id=document.course_id,
+                    topic=chunk_text_val[:200],
+                    chunk_type=document.doc_type,
+                    chunk_index=idx,
+                )
 
     return stats

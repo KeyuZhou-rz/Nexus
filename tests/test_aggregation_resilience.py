@@ -65,11 +65,12 @@ def test_preserve_existing_tasks_when_sources_fail(monkeypatch):
     monkeypatch.setattr(aggregation, "_google_configured", lambda config: True)
     monkeypatch.setattr(aggregation, "save_tasks", lambda tasks, path=None: saved.setdefault("tasks", list(tasks)))
 
-    result = aggregation.run_aggregation(include_google=True)
+    result = aggregation.run_aggregation(include_google=True, include_canvas=False)
 
-    assert result.tasks == existing
-    assert any("preserving existing tasks.json" in err for err in result.errors)
-    assert saved["tasks"] == existing
+    # Per-source snapshot: old tasks preserved individually from each source
+    assert len(result.tasks) == 1  # old Brightspace task preserved
+    assert result.tasks[0].id == "old-1"
+    assert any("preserving 1 old tasks" in w for w in result.warnings)
 
 
 def test_no_feed_config_reports_warning(monkeypatch):
@@ -83,7 +84,7 @@ def test_no_feed_config_reports_warning(monkeypatch):
     assert result.tasks == []
     assert result.errors == []
     assert any("Brightspace feeds not configured" in warning for warning in result.warnings)
-    assert result.source_status == {"brightspace": "skipped", "google": "disabled"}
+    assert result.source_status == {"brightspace": "skipped", "google": "disabled", "canvas": "skipped"}
     assert saved["tasks"] == []
 
 
@@ -107,5 +108,5 @@ def test_partial_configuration_succeeds_with_warning(monkeypatch):
     result = aggregation.run_aggregation(include_google=True)
     assert result.errors == []
     assert len(result.tasks) == 1
-    assert result.source_status == {"brightspace": "succeeded", "google": "skipped"}
+    assert result.source_status == {"brightspace": "succeeded", "google": "skipped", "canvas": "skipped"}
     assert any("Google credentials" in warning for warning in result.warnings)
