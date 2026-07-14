@@ -22,7 +22,7 @@ from .connection_registry import register_connection, unregister_connection
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_LATEST_SCHEMA_VERSION = 5
+_LATEST_SCHEMA_VERSION = 6
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -197,6 +197,11 @@ class SQLiteStore:
                 """CREATE INDEX IF NOT EXISTS idx_assessment_session_status
                    ON assessment_attempts(session_id, status, created_at DESC)"""
             )
+            return
+        if version == 6:
+            columns = SQLiteStore._table_columns(conn, "chunks")
+            if "chunk_index" not in columns:
+                conn.execute("ALTER TABLE chunks ADD COLUMN chunk_index INTEGER")
             return
         raise RuntimeError(f"Unsupported schema migration: {version}")
 

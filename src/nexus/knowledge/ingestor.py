@@ -195,7 +195,7 @@ class CourseIngestor:
         将单个文件 ingest 到知识库。
 
         幂等性流程：
-        1. 计算文件 MD5
+        1. 计算文件 SHA-256
         2. 查询 SQLite documents 表
            - hash 匹配 + status=done → 跳过（文件未变更）
            - hash 不匹配 → 删除旧数据，重新解析

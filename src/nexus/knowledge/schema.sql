@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS documents (
     id              TEXT PRIMARY KEY,      -- "{course_id}/{filename}"，全局唯一标识
     course_id       TEXT NOT NULL,         -- 课程代码，如 "CS202_OS"
     filename        TEXT NOT NULL,         -- 原始文件名
-    file_hash       TEXT NOT NULL,         -- 文件 MD5，用于检测文件是否更新
+    file_hash       TEXT NOT NULL,         -- 文件 SHA-256，用于检测文件是否更新
     parsed_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     chunk_count     INTEGER DEFAULT 0,     -- 成功入库的 chunk 数量
     parse_model     TEXT,                  -- 解析用模型，如 "gemini-2.0-flash"
@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     chunk_id        TEXT PRIMARY KEY,      -- 与 ChromaDB document id 保持一致
     document_id     TEXT NOT NULL,         -- 对应 documents.id
     course_id       TEXT NOT NULL,
+    chunk_index     INTEGER,               -- 在源文档中的 chunk 序号（0-based）
     topic           TEXT NOT NULL,         -- 知识点标题
     type            TEXT,                  -- definition | algorithm | example | theorem | overview | code | exercise
     keywords        TEXT,                  -- JSON 数组，["kw1", "kw2"]

@@ -125,16 +125,20 @@ class KnowledgeConsistencyAudit:
             if not hasattr(collection, "get"):
                 collection = client.get_collection(name)
 
-            # 4B-1: collection metadata audit
+            # 4B-1: collection metadata audit (skip empty collections)
             coll_meta = getattr(collection, "metadata", None) or {}
             coll_course = coll_meta.get("course_id")
-            if not coll_course:
+            try:
+                coll_count = collection.count()
+            except Exception:
+                coll_count = -1
+            if not coll_course and coll_count > 0:
                 issues.append(ConsistencyIssue(
                     "collection_missing_course_metadata",
                     f"collection '{name}' has no course_id in metadata",
                     course_id=name,
                 ))
-            elif coll_course != name:
+            elif coll_course and coll_course != name:
                 issues.append(ConsistencyIssue(
                     "collection_course_id_mismatch",
                     f"collection '{name}' metadata.course_id='{coll_course}'",
@@ -170,7 +174,15 @@ class KnowledgeConsistencyAudit:
                 # 4B-1: metadata completeness per canonical field
                 for field in _CANONICAL_CHROMA_FIELDS:
                     val = meta.get(field)
-                    if val is None or (isinstance(val, str) and not val.strip()) or val == 0:
+                    # chunk_index=0 is a valid value; only flag if truly missing
+                    if field == "chunk_index":
+                        if val is None or val == "":
+                            issues.append(ConsistencyIssue(
+                                "chroma_metadata_missing_field",
+                                f"Chroma metadata missing field '{field}'",
+                                course_id, chunk_id,
+                            ))
+                    elif val is None or (isinstance(val, str) and not val.strip()):
                         issues.append(ConsistencyIssue(
                             "chroma_metadata_missing_field",
                             f"Chroma metadata missing field '{field}'",
@@ -381,7 +393,7 @@ class ChunkBackfill:
                     doc_id=doc_id,
                     course_id=meta.get("course_id", collection_name),
                     filename=meta.get("source_file", "unknown"),
-                    file_hash="backfill",
+                    file_hash="backfill-legacy",
                     parse_status="done",
                     chunk_count=0,
                 )
@@ -519,3 +531,250 @@ class ChunkBackfill:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 4B-2: Metadata Migration — 将旧向量升级到新元数据契约
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class MetadataMigration:
+    """Upgrade legacy Chroma vectors to canonical metadata contract.
+
+    Chroma-side:
+      - schema_version → "1"
+      - document_id   → f"{course_id}/{source_file}"
+      - chunk_id      → from Chroma id or generated
+      - file_hash     → from SQLite documents table; "unknown" if missing
+      - chunk_index   → parsed from Chroma id suffix
+
+    SQLite-side:
+      - Re-hashes documents with 32-char hashes (MD5) to SHA-256.
+      - Backfills chunks.chunk_index from Chroma id suffix.
+
+    All operations are dry-run by default; pass ``apply=True`` to write.
+    """
+
+    def __init__(self, sqlite_path: Path, chroma_path: Path) -> None:
+        self.sqlite_path = sqlite_path
+        self.chroma_path = chroma_path
+
+    # ── public API ────────────────────────────────────────────────────
+
+    def plan(self) -> dict[str, Any]:
+        """Dry-run: return what *would* change without touching data."""
+        return self._run(dry_run=True)
+
+    def apply(self) -> dict[str, Any]:
+        """Execute migration and return what changed."""
+        return self._run(dry_run=False)
+
+    # ── internal ──────────────────────────────────────────────────────
+
+    def _run(self, dry_run: bool) -> dict[str, Any]:
+        chroma_updates: list[dict[str, object]] = []
+        doc_hash_updates: list[dict[str, object]] = []
+        chunk_index_updates: int = 0
+        errors: list[dict[str, object]] = []
+
+        documents, chunks, has_chunk_index = KnowledgeConsistencyAudit(
+            self.sqlite_path, self.chroma_path
+        )._read_sqlite()
+
+        try:
+            client = chromadb.PersistentClient(path=str(self.chroma_path))
+            collections = client.list_collections()
+        except Exception as exc:
+            return {"ok": False, "errors": [{"message": str(exc)}]}
+
+        for listed in collections:
+            name = getattr(listed, "name", str(listed))
+            if not hasattr(listed, "get"):
+                collection = client.get_collection(name)
+            else:
+                collection = listed
+
+            coll_result = collection.get(limit=100_000, include=["metadatas"])
+            ids = coll_result.get("ids", []) or []
+            metadatas = coll_result.get("metadatas", []) or []
+
+            updated_metas: list[dict[str, str | int]] = []
+            updated_ids: list[str] = []
+
+            for chunk_id, meta in zip(ids, metadatas):
+                chunk_id = str(chunk_id)
+                meta = meta or {}
+                source_file = meta.get("source_file") or meta.get("file_name") or ""
+                course_id = meta.get("course_id") or name
+                doc_id = f"{course_id}/{source_file}" if source_file else ""
+
+                new_meta = dict(meta)
+                changed = False
+
+                if not new_meta.get("schema_version"):
+                    new_meta["schema_version"] = "1"
+                    changed = True
+                if not new_meta.get("document_id") and doc_id:
+                    new_meta["document_id"] = doc_id
+                    changed = True
+                if not new_meta.get("chunk_id"):
+                    new_meta["chunk_id"] = chunk_id
+                    changed = True
+                if not new_meta.get("file_hash"):
+                    # Try SQLite document for hash
+                    doc = documents.get(doc_id)
+                    fh = (doc["file_hash"] or "") if doc else ""
+                    fh = str(fh) if fh else ""
+                    new_meta["file_hash"] = fh if len(str(fh)) in (32, 64) else ""
+                    changed = True
+                if not new_meta.get("chunk_index") and new_meta.get("chunk_index") != 0:
+                    idx = _parse_chunk_index(chunk_id)
+                    if idx is not None:
+                        new_meta["chunk_index"] = idx
+                        changed = True
+
+                if changed:
+                    updated_ids.append(chunk_id)
+                    updated_metas.append(new_meta)
+                    chroma_updates.append({
+                        "chunk_id": chunk_id,
+                        "collection": name,
+                        "added_fields": sorted(set(new_meta) - set(meta)),
+                    })
+
+            if updated_ids and not dry_run:
+                try:
+                    collection.update(ids=updated_ids, metadatas=updated_metas)
+                except Exception as exc:
+                    errors.append({
+                        "collection": name,
+                        "count": len(updated_ids),
+                        "error": str(exc),
+                    })
+
+        # ── SQLite-side: document hash migration ────────────────────
+        for doc_id, doc in documents.items():
+            fh = doc["file_hash"] or ""
+            if len(fh) != 32:
+                continue
+            new_hash = self._rehash_document(doc_id, doc)
+            if new_hash and new_hash != fh:
+                doc_hash_updates.append({
+                    "document_id": doc_id,
+                    "old_hash": fh,
+                    "new_hash": new_hash,
+                })
+                if not dry_run:
+                    try:
+                        self._update_document_hash(doc_id, fh, new_hash)
+                    except Exception as exc:
+                        errors.append({
+                            "document_id": doc_id,
+                            "error": str(exc),
+                        })
+
+        # ── SQLite-side: chunk_index backfill ─────────────────────────
+        # chunk_index column may not exist yet (added by schema v6)
+        for chunk_id_str, row in chunks.items():
+            existing_idx = row["chunk_index"] if has_chunk_index else None
+            if existing_idx is not None:
+                continue
+            idx = _parse_chunk_index(chunk_id_str)
+            if idx is not None:
+                chunk_index_updates += 1
+                if not dry_run:
+                    try:
+                        self._update_chunk_index(chunk_id_str, idx)
+                    except Exception as exc:
+                        errors.append({
+                            "chunk_id": chunk_id_str,
+                            "error": str(exc),
+                        })
+
+        plan = {
+            "chroma_metadata_updates": len(chroma_updates),
+            "document_hash_updates": len(doc_hash_updates),
+            "sqlite_chunk_index_updates": chunk_index_updates,
+        }
+        if not dry_run:
+            plan["applied"] = True
+            plan["errors"] = errors
+
+        return {
+            "ok": len(errors) == 0 if not dry_run else True,
+            "dry_run": dry_run,
+            "plan": plan,
+            "details": {
+                "chroma_updates": chroma_updates[:10] if dry_run else [],
+                "doc_hash_updates": doc_hash_updates[:10] if dry_run else [],
+            } if dry_run else {},
+            "errors": errors if not dry_run else [],
+        }
+
+    def _rehash_document(
+        self, doc_id: str, doc: sqlite3.Row
+    ) -> str | None:
+        """Attempt to compute SHA-256 for a document by locating its file."""
+        from .ingestion_service import file_content_hash
+
+        filename = doc["filename"]
+        course_id = doc["course_id"]
+
+        # Search paths (ordered by likelihood)
+        search_dirs = [
+            Path("data/testDataFile"),
+            Path("data/archives"),
+            Path("data"),
+        ]
+        for base in search_dirs:
+            candidate = base / course_id / filename if course_id else base / filename
+            if candidate.exists():
+                return file_content_hash(candidate)
+            # Also try flat structure
+            flat = base / filename
+            if flat.exists() and flat != candidate:
+                return file_content_hash(flat)
+
+        return None  # file not found — can't rehash
+
+    def _update_document_hash(
+        self, doc_id: str, old_hash: str, new_hash: str
+    ) -> None:
+        with sqlite3.connect(f"file:{quote(str(self.sqlite_path.absolute()))}", uri=True) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute(
+                "UPDATE documents SET file_hash=? WHERE id=? AND file_hash=?",
+                (new_hash, doc_id, old_hash),
+            )
+            conn.commit()
+
+    def _update_chunk_index(self, chunk_id_str: str, idx: int) -> None:
+        with sqlite3.connect(f"file:{quote(str(self.sqlite_path.absolute()))}", uri=True) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute(
+                "UPDATE chunks SET chunk_index=? WHERE chunk_id=?",
+                (idx, chunk_id_str),
+            )
+            conn.commit()
+
+
+def _parse_chunk_index(chunk_id: str) -> int | None:
+    """Extract chunk index from chunk-id suffix.
+
+    Supported formats:
+      "CS202_OS_04-processes_000" → 0
+      "chunk:CS202_OS:7bcb3a0f:0002"  → 2
+    """
+    if not chunk_id:
+        return None
+    # Try colon-separated (canonical format)
+    parts = chunk_id.rsplit(":", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return int(parts[1])
+    # Try underscore-separated (legacy format)
+    parts = chunk_id.rsplit("_", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return int(parts[1])
+    return None
