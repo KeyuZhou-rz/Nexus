@@ -73,15 +73,25 @@ class TemporalMemory:
         event_type: str,
         session_id: str | None = None,
         context: dict[str, Any] | None = None,
-        evidence_type: str = "direct",
+        evidence_type: str = "exposure",
     ) -> MasterySnapshot | None:
         """
         记录一次学习事件，更新掌握度参数，返回更新后的快照。
+
+        信任层级 (Phase 4D-3):
+          - assessment → 更新 mastery (经可信评估验证)
+          - direct     → 更新 mastery (用户明确反馈)
+          - exposure   → 仅记录，不修改 mastery
+          - legacy     → 仅记录，不修改 mastery
+
         如果 concept_id 不存在于 concepts 表则跳过。
         """
         concept = self._store.get_concept(concept_id)
         if not concept:
             return None
+
+        trust = str((context or {}).get("trust_status") or "legacy")
+        ev_type = str((context or {}).get("evidence_type") or evidence_type)
 
         if event_type == "reviewed":
             self._store.record_learning_event(
@@ -90,6 +100,20 @@ class TemporalMemory:
                 session_id=session_id,
                 context=context,
                 evidence_type="exposure",
+                trust_status="legacy",
+            )
+            return None
+
+        # Phase 4D-3: only trusted evidence modifies mastery.
+        # Passive QA, reading, and model inference do not alter mastery.
+        _TRUSTED_EVIDENCE = {"assessment", "direct", "user_self_report", "instructor_feedback"}
+        if ev_type not in _TRUSTED_EVIDENCE:
+            self._store.record_learning_event(
+                concept_id=concept_id,
+                event_type=event_type,
+                session_id=session_id,
+                context=context,
+                evidence_type=ev_type,
                 trust_status="legacy",
             )
             return None
@@ -104,7 +128,7 @@ class TemporalMemory:
             event_type=event_type,
             session_id=session_id,
             context=context,
-            evidence_type=str((context or {}).get("evidence_type") or evidence_type),
+            evidence_type=ev_type,
             mastery_add=effects.get("mastery_add", 0.0),
             mastery_mult=effects.get("mastery_mult", 1.0),
             decay_mult=effects["decay_mult"],
@@ -119,7 +143,7 @@ class TemporalMemory:
             concept_id=concept_id,
             concept_name=concept["name"],
             course_id=concept["course_id"],
-            current_mastery=initial,  # 刚复习过，mastery = initial
+            current_mastery=initial,
             days_since_review=0.0,
             decay_rate=decay,
             review_count=count,

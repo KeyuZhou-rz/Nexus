@@ -55,7 +55,7 @@ class TestDerivedGet:
         assert profile["mastered"] == []
 
     def test_struggled_event_surfaces_as_weak_point(self, wired_profile_mgr, temporal):
-        temporal.record_event(CONCEPT_ID, "struggled")
+        temporal.record_event(CONCEPT_ID, "struggled", evidence_type="assessment")
 
         profile = wired_profile_mgr.get()
         assert any(wp["concept"] == "Deadlock" for wp in profile["weak_points"])
@@ -65,7 +65,7 @@ class TestDerivedGet:
         self, wired_profile_mgr, temporal
     ):
         for _ in range(6):  # push past the 0.8 "mastered" threshold
-            temporal.record_event(CONCEPT_ID, "correct_answer")
+            temporal.record_event(CONCEPT_ID, "correct_answer", evidence_type="assessment")
 
         profile = wired_profile_mgr.get()
         assert any(m["concept"] == "Deadlock" for m in profile["mastered"])
@@ -136,7 +136,7 @@ class TestApplyPatchResolution:
     def test_remove_weak_points_resolves_and_records_correct_answer(
         self, wired_profile_mgr, temporal
     ):
-        temporal.record_event(CONCEPT_ID, "struggled")
+        temporal.record_event(CONCEPT_ID, "struggled", evidence_type="assessment")
         assert any(
             wp["concept"] == "Deadlock" for wp in wired_profile_mgr.get()["weak_points"]
         )

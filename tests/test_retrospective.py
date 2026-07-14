@@ -71,8 +71,8 @@ def hit_rate_store(tmp_path):
 
     temporal = TemporalMemory(store)
     for _ in range(6):
-        temporal.record_event("cs202_os__deadlock", "correct_answer")  # -> mastered
-    temporal.record_event("cs202_os__virtual_memory", "struggled")  # -> critical
+        temporal.record_event("cs202_os__deadlock", "correct_answer", evidence_type="assessment")  # -> mastered
+    temporal.record_event("cs202_os__virtual_memory", "struggled", evidence_type="assessment")  # -> critical
 
     return store
 

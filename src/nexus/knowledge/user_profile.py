@@ -259,7 +259,8 @@ class UserProfileManager:
                 resolution = self._resolver.resolve(concept, course_id)
                 if resolution:
                     self._temporal.record_event(
-                        resolution.concept_id, "struggled", session_id
+                        resolution.concept_id, "struggled", session_id,
+                        evidence_type="direct",
                     )
                     changes.append(f"+weak_point:{resolution.name}")
                 else:
@@ -278,7 +279,8 @@ class UserProfileManager:
                 resolution = self._resolver.resolve(concept, course_id)
                 if resolution:
                     self._temporal.record_event(
-                        resolution.concept_id, "correct_answer", session_id
+                        resolution.concept_id, "correct_answer", session_id,
+                        evidence_type="direct",
                     )
                     changes.append(f"-weak_point:{resolution.name}")
                 else:
@@ -298,7 +300,8 @@ class UserProfileManager:
                 resolution = self._resolver.resolve(concept, course_id)
                 if resolution:
                     self._temporal.record_event(
-                        resolution.concept_id, "correct_answer", session_id
+                        resolution.concept_id, "correct_answer", session_id,
+                        evidence_type="direct",
                     )
                     changes.append(f"+mastered:{resolution.name}")
                 else:

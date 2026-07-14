@@ -27,7 +27,7 @@ def _setup(tmp_path: Path) -> tuple[SQLiteStore, TemporalMemory]:
 def test_record_event_correct_answer(tmp_path):
     store, mem = _setup(tmp_path)
 
-    snap = mem.record_event("os__deadlock", "correct_answer", session_id="s1")
+    snap = mem.record_event("os__deadlock", "correct_answer", session_id="s1", evidence_type="assessment")
 
     assert snap is not None
     assert snap.concept_id == "os__deadlock"
@@ -39,7 +39,7 @@ def test_record_event_correct_answer(tmp_path):
 def test_record_event_struggled(tmp_path):
     store, mem = _setup(tmp_path)
 
-    snap = mem.record_event("os__deadlock", "struggled", session_id="s1")
+    snap = mem.record_event("os__deadlock", "struggled", session_id="s1", evidence_type="assessment")
 
     assert snap is not None
     assert snap.current_mastery == 0.05  # 0.0 + 0.05
@@ -50,9 +50,9 @@ def test_record_event_forgot_resets_streak(tmp_path):
     store, mem = _setup(tmp_path)
 
     # Build up a streak
-    mem.record_event("os__deadlock", "correct_answer")
-    mem.record_event("os__deadlock", "correct_answer")
-    snap = mem.record_event("os__deadlock", "forgot")
+    mem.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
+    mem.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
+    snap = mem.record_event("os__deadlock", "forgot", evidence_type="assessment")
 
     assert snap.streak == 0
 
@@ -60,9 +60,9 @@ def test_record_event_forgot_resets_streak(tmp_path):
 def test_multiple_events_accumulate(tmp_path):
     store, mem = _setup(tmp_path)
 
-    mem.record_event("os__deadlock", "correct_answer")
-    mem.record_event("os__deadlock", "correct_answer")
-    snap = mem.record_event("os__deadlock", "correct_answer")
+    mem.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
+    mem.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
+    snap = mem.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
 
     # 3 correct answers: mastery should be ~0.45 (3 * 0.15)
     assert snap.current_mastery > 0.4
@@ -80,7 +80,7 @@ def test_get_mastery_for_unknown_concept(tmp_path):
 def test_get_mastery_after_event(tmp_path):
     store, mem = _setup(tmp_path)
 
-    mem.record_event("os__deadlock", "correct_answer")
+    mem.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
     mastery = mem.get_mastery("os__deadlock")
 
     # Just reviewed → mastery ≈ initial_mastery (very little decay)
@@ -90,8 +90,8 @@ def test_get_mastery_after_event(tmp_path):
 def test_get_all_mastery(tmp_path):
     store, mem = _setup(tmp_path)
 
-    mem.record_event("os__deadlock", "correct_answer")
-    mem.record_event("os__mutex", "struggled")
+    mem.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
+    mem.record_event("os__mutex", "struggled", evidence_type="assessment")
 
     snapshots = mem.get_all_mastery()
     assert len(snapshots) == 2
@@ -106,7 +106,7 @@ def test_get_all_mastery_exposes_initial_mastery(tmp_path):
     an already-decayed current_mastery."""
     store, mem = _setup(tmp_path)
 
-    mem.record_event("os__deadlock", "correct_answer")
+    mem.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
     snap = mem.get_all_mastery()[0]
 
     assert snap.initial_mastery == 0.15
@@ -117,8 +117,8 @@ def test_get_all_mastery_filter_by_course(tmp_path):
     store, mem = _setup(tmp_path)
     store.upsert_concept("db__txn", "Transaction", "DB")
 
-    mem.record_event("os__deadlock", "correct_answer")
-    mem.record_event("db__txn", "correct_answer")
+    mem.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
+    mem.record_event("db__txn", "correct_answer", evidence_type="assessment")
 
     os_snaps = mem.get_all_mastery(course_id="OS")
     assert len(os_snaps) == 1
@@ -135,14 +135,14 @@ def test_classify_urgency():
 def test_record_event_nonexistent_concept(tmp_path):
     store, mem = _setup(tmp_path)
 
-    snap = mem.record_event("nonexistent", "correct_answer")
+    snap = mem.record_event("nonexistent", "correct_answer", evidence_type="assessment")
     assert snap is None
 
 
 def test_record_event_unknown_type(tmp_path):
     store, mem = _setup(tmp_path)
 
-    snap = mem.record_event("os__deadlock", "invalid_type")
+    snap = mem.record_event("os__deadlock", "invalid_type", evidence_type="assessment")
     assert snap is None
 
 
@@ -158,7 +158,7 @@ def test_concurrent_correct_answers_are_accumulated_atomically(tmp_path):
 
     def record(memory: TemporalMemory):
         barrier.wait(timeout=5)
-        return memory.record_event("os__deadlock", "correct_answer")
+        return memory.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         snapshots = list(executor.map(record, memories))
@@ -186,7 +186,7 @@ def test_mastery_failure_rolls_back_learning_event(tmp_path):
         )
 
     with pytest.raises(sqlite3.IntegrityError, match="mastery rejected"):
-        memory.record_event("os__deadlock", "correct_answer")
+        memory.record_event("os__deadlock", "correct_answer", evidence_type="assessment")
 
     assert store.get_learning_events("os__deadlock") == []
     assert store.get_mastery("os__deadlock") is None
