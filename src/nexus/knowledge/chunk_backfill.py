@@ -45,11 +45,32 @@ class ConsistencyIssue:
         }
 
 
+# ChromaDB metadata fields expected on every vector chunk
+_CANONICAL_CHROMA_FIELDS = [
+    "schema_version", "document_id", "chunk_id",
+    "file_hash", "chunk_index",
+]
+
+
 class KnowledgeConsistencyAudit:
     """Read-only SQLite/Chroma cross-store audit.
 
     The auditor never instantiates ``SQLiteStore`` (which may migrate a DB) and
     only uses Chroma ``get``/``list_collections`` calls.
+
+    Checks (14 rules):
+      1. chroma_chunk_missing_sqlite
+      2. course_id_mismatch
+      3. missing_source_file
+      4. chroma_document_missing_sqlite
+      5. sqlite_chunk_missing_chroma
+      6. document_chunk_count_mismatch
+      7. chroma_metadata_missing_field
+      8. collection_missing_course_metadata
+      9. sqlite_chunks_missing_chunk_index_column
+      10. document_non_sha256_hash
+      11. chroma_pagination_gap
+      12. collection_course_id_mismatch
     """
 
     def __init__(self, sqlite_path: Path, chroma_path: Path) -> None:
@@ -63,7 +84,31 @@ class KnowledgeConsistencyAudit:
         except (OSError, sqlite3.Error) as exc:
             return {"ok": False, "issues": [{"code": "sqlite_unreadable", "message": str(exc)}]}
 
-        documents, chunks = sqlite_data
+        documents, chunks, has_chunk_index = sqlite_data
+
+        # ── SQLite-side structural checks ────────────────────────────
+        if not has_chunk_index:
+            issues.append(ConsistencyIssue(
+                "sqlite_chunks_missing_chunk_index_column",
+                "chunks table is missing chunk_index column",
+            ))
+
+        # 4B-1: document hash audit (SHA-256 = 64 hex chars)
+        for doc_id, doc in documents.items():
+            fh = doc["file_hash"] or ""
+            if len(fh) == 32:
+                issues.append(ConsistencyIssue(
+                    "document_non_sha256_hash",
+                    f"document file_hash is MD5 (32 chars), expected SHA-256 (64 chars)",
+                    doc["course_id"], document_id=doc_id,
+                ))
+            elif len(fh) not in (64, 0) and fh != "backfill":
+                issues.append(ConsistencyIssue(
+                    "document_non_sha256_hash",
+                    f"document file_hash has unexpected length {len(fh)}",
+                    doc["course_id"], document_id=doc_id,
+                ))
+
         sqlite_ids = set(chunks)
         chroma_ids: set[str] = set()
         try:
@@ -73,54 +118,134 @@ class KnowledgeConsistencyAudit:
         except Exception as exc:
             return {"ok": False, "issues": [{"code": "chroma_unreadable", "message": str(exc)}]}
 
+        # ── Per-collection checks ─────────────────────────────────────
         for listed in collections:
             collection = listed
             name = getattr(listed, "name", str(listed))
             if not hasattr(collection, "get"):
                 collection = client.get_collection(name)
+
+            # 4B-1: collection metadata audit
+            coll_meta = getattr(collection, "metadata", None) or {}
+            coll_course = coll_meta.get("course_id")
+            if not coll_course:
+                issues.append(ConsistencyIssue(
+                    "collection_missing_course_metadata",
+                    f"collection '{name}' has no course_id in metadata",
+                    course_id=name,
+                ))
+            elif coll_course != name:
+                issues.append(ConsistencyIssue(
+                    "collection_course_id_mismatch",
+                    f"collection '{name}' metadata.course_id='{coll_course}'",
+                    course_id=name,
+                ))
+
+            # 4B-1: pagination audit
+            try:
+                declared_count = collection.count()
+            except Exception:
+                declared_count = -1
+
             result = collection.get(limit=100_000, include=["metadatas"])
             ids = result.get("ids", []) or []
             metadatas = result.get("metadatas", []) or []
-            collection_course = (getattr(collection, "metadata", None) or {}).get("course_id") or name
+
+            if declared_count >= 0 and len(ids) != declared_count:
+                issues.append(ConsistencyIssue(
+                    "chroma_pagination_gap",
+                    f"collection '{name}': count()={declared_count}, get() returned {len(ids)}",
+                    course_id=name,
+                ))
+
+            collection_course = coll_course or name
+
+            # ── Per-chunk checks ────────────────────────────────────
             for chunk_id, metadata in zip(ids, metadatas):
                 chunk_id = str(chunk_id)
                 chroma_ids.add(chunk_id)
                 meta = metadata or {}
                 course_id = str(meta.get("course_id") or collection_course)
+
+                # 4B-1: metadata completeness per canonical field
+                for field in _CANONICAL_CHROMA_FIELDS:
+                    val = meta.get(field)
+                    if val is None or (isinstance(val, str) and not val.strip()) or val == 0:
+                        issues.append(ConsistencyIssue(
+                            "chroma_metadata_missing_field",
+                            f"Chroma metadata missing field '{field}'",
+                            course_id, chunk_id,
+                        ))
+
                 if chunk_id not in chunks:
-                    issues.append(ConsistencyIssue("chroma_chunk_missing_sqlite", "Chroma chunk has no SQLite row", course_id, chunk_id))
+                    issues.append(ConsistencyIssue(
+                        "chroma_chunk_missing_sqlite",
+                        "Chroma chunk has no SQLite row", course_id, chunk_id,
+                    ))
                     continue
                 row = chunks[chunk_id]
                 if row["course_id"] != course_id:
-                    issues.append(ConsistencyIssue("course_id_mismatch", "Chroma and SQLite course_id differ", course_id, chunk_id))
+                    issues.append(ConsistencyIssue(
+                        "course_id_mismatch",
+                        "Chroma and SQLite course_id differ", course_id, chunk_id,
+                    ))
                 source_file = meta.get("source_file") or meta.get("file_name")
                 expected_doc = f"{course_id}/{source_file}" if source_file else None
                 if not source_file:
-                    issues.append(ConsistencyIssue("missing_source_file", "Chroma metadata has no source_file", course_id, chunk_id))
+                    issues.append(ConsistencyIssue(
+                        "missing_source_file",
+                        "Chroma metadata has no source_file", course_id, chunk_id,
+                    ))
                 elif expected_doc not in documents:
-                    issues.append(ConsistencyIssue("chroma_document_missing_sqlite", "Chroma source document has no SQLite row", course_id, chunk_id, expected_doc))
+                    issues.append(ConsistencyIssue(
+                        "chroma_document_missing_sqlite",
+                        "Chroma source document has no SQLite row",
+                        course_id, chunk_id, expected_doc,
+                    ))
 
         for chunk_id, row in chunks.items():
             if chunk_id not in chroma_ids:
-                issues.append(ConsistencyIssue("sqlite_chunk_missing_chroma", "SQLite chunk has no Chroma vector", row["course_id"], chunk_id, row["document_id"]))
+                issues.append(ConsistencyIssue(
+                    "sqlite_chunk_missing_chroma",
+                    "SQLite chunk has no Chroma vector",
+                    row["course_id"], chunk_id, row["document_id"],
+                ))
         for doc_id, doc in documents.items():
             actual = sum(1 for row in chunks.values() if row["document_id"] == doc_id)
             if int(doc["chunk_count"] or 0) != actual:
-                issues.append(ConsistencyIssue("document_chunk_count_mismatch", f"document declares {doc['chunk_count']} chunks, found {actual}", doc["course_id"], document_id=doc_id))
+                issues.append(ConsistencyIssue(
+                    "document_chunk_count_mismatch",
+                    f"document declares {doc['chunk_count']} chunks, found {actual}",
+                    doc["course_id"], document_id=doc_id,
+                ))
+
+        # Build per-issue-code summary for audit reports
+        issue_counts: dict[str, int] = {}
+        for issue in issues:
+            issue_counts[issue.code] = issue_counts.get(issue.code, 0) + 1
 
         return {
             "ok": not issues,
-            "summary": {"documents": len(documents), "sqlite_chunks": len(chunks), "chroma_chunks": len(chroma_ids), "issues": len(issues)},
+            "summary": {
+                "documents": len(documents),
+                "sqlite_chunks": len(chunks),
+                "chroma_chunks": len(chroma_ids),
+                "issues": len(issues),
+                "issue_counts": issue_counts,
+            },
             "issues": [issue.as_dict() for issue in issues],
         }
 
-    def _read_sqlite(self) -> tuple[dict[str, sqlite3.Row], dict[str, sqlite3.Row]]:
+    def _read_sqlite(self) -> tuple[dict[str, sqlite3.Row], dict[str, sqlite3.Row], bool]:
         uri = f"file:{quote(str(self.sqlite_path.absolute()))}?mode=ro"
         with sqlite3.connect(uri, uri=True) as conn:
             conn.row_factory = sqlite3.Row
             documents = {row["id"]: row for row in conn.execute("SELECT * FROM documents")}
             chunks = {row["chunk_id"]: row for row in conn.execute("SELECT * FROM chunks")}
-        return documents, chunks
+            # Check if chunk_index column exists
+            cols = conn.execute("PRAGMA table_info('chunks')").fetchall()
+            has_chunk_index = any(col["name"] == "chunk_index" for col in cols)
+        return documents, chunks, has_chunk_index
 
 
 def _split_csv(value: Any) -> list[str]:
