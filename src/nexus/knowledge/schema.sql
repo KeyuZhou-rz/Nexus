@@ -333,6 +333,20 @@ CREATE TABLE IF NOT EXISTS exam_retrospectives (
     FOREIGN KEY (exam_id) REFERENCES exam_records(exam_id)
 );
 
+-- ════════════════════════════════════════════════
+-- Phase 4B-3: 概念隔离表（软删除，可恢复）
+-- ════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS concept_quarantine (
+    concept_id      TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    course_id       TEXT NOT NULL,
+    definition      TEXT,
+    concept_type    TEXT,
+    quarantine_reason TEXT NOT NULL,  -- "pseudo_concept" | "orphan_no_definition"
+    original_data   TEXT,             -- JSON: 原 concepts 行 + relations + aliases
+    quarantined_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Phase N 索引
 CREATE INDEX IF NOT EXISTS idx_checkpoints_course     ON concept_checkpoints(course_id);
 CREATE INDEX IF NOT EXISTS idx_checkpoint_concepts_ck ON checkpoint_concepts(checkpoint_id);

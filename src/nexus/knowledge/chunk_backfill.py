@@ -778,3 +778,288 @@ def _parse_chunk_index(chunk_id: str) -> int | None:
     if len(parts) == 2 and parts[1].isdigit():
         return int(parts[1])
     return None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 4B-3: Concept Quarantine — 伪概念和孤立概念隔离
+# ═══════════════════════════════════════════════════════════════════════
+
+_PSEUDO_INVESTMENT_KEYWORDS = [
+    "Berkshire", "berkshire", "伯克希尔", "巴菲特", "芒格",
+    "投资", "股东", "股东大会", "慈善捐赠", "Pilot",
+]
+
+_PSEUDO_QUESTION_WORDS = {"如何", "为什么", "区别", "什么", "怎么", "哪里", "何时"}
+
+_PSEUDO_OUTLINE_PATTERNS = [
+    "章", "节",
+]
+
+
+class ConceptQuarantine:
+    """Detect and isolate pseudo-concepts and orphan concepts.
+
+    Classification rules (deterministic, no LLM):
+      A. Pseudo-concepts — investment/Berkshire keywords, pure question words
+      B. Orphan + no definition — no chunk_concepts link AND no LLM definition
+      C. Orphan + has definition — has chunk_concepts evidence, kept but marked
+
+    Default dry-run; pass ``apply=True`` to write.
+    """
+
+    def __init__(self, sqlite_path: Path) -> None:
+        self.sqlite_path = sqlite_path
+
+    def plan(self) -> dict:
+        """Dry-run: return categorized lists without writing."""
+        return self._run(dry_run=True)
+
+    def apply(self, categories: list[str] | None = None) -> dict:
+        """Execute quarantine. categories: ['pseudo', 'orphan_no_def']"""
+        if categories is None:
+            categories = ["pseudo", "orphan_no_def"]
+        return self._run(dry_run=False, categories=categories)
+
+    def restore(self, concept_id: str) -> dict:
+        """Restore a quarantined concept back to the concepts table."""
+        with sqlite3.connect(f"file:{quote(str(self.sqlite_path.absolute()))}", uri=True) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            row = conn.execute(
+                "SELECT concept_id, name, course_id, definition, concept_type, original_data "
+                "FROM concept_quarantine WHERE concept_id=?",
+                (concept_id,),
+            ).fetchone()
+            if not row:
+                return {"ok": False, "message": f"concept '{concept_id}' not in quarantine"}
+
+            # Restore from original_data JSON
+            import json as _json
+            original = _json.loads(row[5]) if row[5] else None
+            if original:
+                conn.execute(
+                    "INSERT OR REPLACE INTO concepts(concept_id, name, course_id, definition, concept_type) "
+                    "VALUES (?,?,?,?,?)",
+                    (original["concept_id"], original["name"], original["course_id"],
+                     original.get("definition"), original.get("concept_type")),
+                )
+                for rel in original.get("relations", []):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO concept_relations(source_id, target_id, relation_type, confidence, evidence) "
+                        "VALUES (?,?,?,?,?)",
+                        (rel["source_id"], rel["target_id"], rel["relation_type"],
+                         rel.get("confidence", 1.0), rel.get("evidence")),
+                    )
+                for alias in original.get("aliases", []):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO concept_aliases(alias, course_id, concept_id, source, confidence) "
+                        "VALUES (?,?,?,?,?)",
+                        (alias["alias"], alias["course_id"], alias["concept_id"],
+                         alias.get("source", "manual"), alias.get("confidence", 1.0)),
+                    )
+            else:
+                conn.execute(
+                    "INSERT OR REPLACE INTO concepts(concept_id, name, course_id, definition, concept_type) "
+                    "VALUES (?,?,?,?,?)",
+                    (row[0], row[1], row[2], row[3], row[4]),
+                )
+
+            conn.execute("DELETE FROM concept_quarantine WHERE concept_id=?", (concept_id,))
+            conn.commit()
+
+        return {"ok": True, "restored": concept_id}
+
+    def _run(self, dry_run: bool, categories: list[str] | None = None) -> dict:
+        pseudo: list[dict] = []
+        orphan_no_def: list[dict] = []
+        orphan_with_def: list[dict] = []
+
+        with sqlite3.connect(f"file:{quote(str(self.sqlite_path.absolute()))}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+
+            # Get all concepts with their chunk_concepts status
+            rows = conn.execute(
+                """SELECT c.concept_id, c.name, c.course_id, c.definition, c.concept_type,
+                          CASE WHEN cc.chunk_count IS NULL THEN 0 ELSE cc.chunk_count END as cc_count
+                   FROM concepts c
+                   LEFT JOIN (
+                       SELECT concept_id, COUNT(*) as chunk_count
+                       FROM chunk_concepts GROUP BY concept_id
+                   ) cc ON c.concept_id = cc.concept_id"""
+            ).fetchall()
+
+            for row in rows:
+                cid = row["concept_id"]
+                name = row["name"]
+                definition = row["definition"]
+                ctype = row["concept_type"]
+                cc_count = row["cc_count"]
+                is_orphan = cc_count == 0
+                has_def = bool(definition and definition.strip())
+
+                # Rule A: pseudo-concept by name pattern
+                pseudo_reason = self._classify_pseudo(name)
+                if pseudo_reason:
+                    pseudo.append({
+                        "concept_id": cid, "name": name,
+                        "course_id": row["course_id"],
+                        "reason": pseudo_reason,
+                        "orphan": is_orphan,
+                    })
+                elif is_orphan and not has_def:
+                    # Rule B: orphan + no definition
+                    orphan_no_def.append({
+                        "concept_id": cid, "name": name,
+                        "course_id": row["course_id"],
+                        "type": ctype,
+                    })
+                elif is_orphan and has_def:
+                    # Rule C: orphan + has definition — flag but keep
+                    orphan_with_def.append({
+                        "concept_id": cid, "name": name,
+                        "course_id": row["course_id"],
+                        "type": ctype,
+                    })
+
+        plan = {
+            "pseudo_concepts": len(pseudo),
+            "orphan_no_definition": len(orphan_no_def),
+            "orphan_with_definition": len(orphan_with_def),
+        }
+
+        if dry_run:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "plan": plan,
+                "pseudo": pseudo,
+                "orphan_no_definition": [o["concept_id"] for o in orphan_no_def],
+                "orphan_with_definition": [o["concept_id"] for o in orphan_with_def],
+            }
+
+        # ── Apply ────────────────────────────────────────────────
+        quarantined = 0
+        marked_orphan = 0
+        errors: list[dict] = []
+
+        import json as _json
+
+        with sqlite3.connect(f"file:{quote(str(self.sqlite_path.absolute()))}", uri=True) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+
+            # Quarantine pseudo-concepts
+            if "pseudo" in (categories or []):
+                for item in pseudo:
+                    cid = item["concept_id"]
+                    try:
+                        original = self._capture_concept(conn, cid)
+                        conn.execute(
+                            """INSERT OR REPLACE INTO concept_quarantine
+                               (concept_id, name, course_id, definition, concept_type,
+                                quarantine_reason, original_data)
+                               VALUES (?,?,?,?,?,?,?)""",
+                            (cid, item["name"], item["course_id"],
+                             None, None,
+                             f"pseudo_concept:{item['reason']}",
+                             _json.dumps(original, ensure_ascii=False)),
+                        )
+                        conn.execute("DELETE FROM concepts WHERE concept_id=?", (cid,))
+                        quarantined += 1
+                    except Exception as exc:
+                        errors.append({"concept_id": cid, "error": str(exc)})
+
+            # Quarantine orphan + no definition
+            if "orphan_no_def" in (categories or []):
+                for item in orphan_no_def:
+                    cid = item["concept_id"]
+                    try:
+                        original = self._capture_concept(conn, cid)
+                        conn.execute(
+                            """INSERT OR REPLACE INTO concept_quarantine
+                               (concept_id, name, course_id, definition, concept_type,
+                                quarantine_reason, original_data)
+                               VALUES (?,?,?,?,?,?,?)""",
+                            (cid, item["name"], item["course_id"],
+                             None, item["type"],
+                             "orphan_no_definition",
+                             _json.dumps(original, ensure_ascii=False)),
+                        )
+                        conn.execute("DELETE FROM concepts WHERE concept_id=?", (cid,))
+                        quarantined += 1
+                    except Exception as exc:
+                        errors.append({"concept_id": cid, "error": str(exc)})
+
+            # Mark orphan + has definition (soft — just set type)
+            if "orphan_with_def" in (categories or []):
+                for item in orphan_with_def:
+                    cid = item["concept_id"]
+                    try:
+                        conn.execute(
+                            "UPDATE concepts SET concept_type='orphan' WHERE concept_id=?",
+                            (cid,),
+                        )
+                        marked_orphan += 1
+                    except Exception as exc:
+                        errors.append({"concept_id": cid, "error": str(exc)})
+
+            conn.commit()
+
+        return {
+            "ok": len(errors) == 0,
+            "dry_run": False,
+            "applied": True,
+            "plan": plan,
+            "quarantined": quarantined,
+            "marked_orphan": marked_orphan,
+            "errors": errors,
+        }
+
+    @staticmethod
+    def _classify_pseudo(name: str) -> str | None:
+        """Return reason string if name is a pseudo-concept, else None."""
+        if not name or not name.strip():
+            return None
+
+        # Pure question words (short CJK)
+        if name in _PSEUDO_QUESTION_WORDS:
+            return "question_word"
+
+        # Investment/Berkshire content
+        for kw in _PSEUDO_INVESTMENT_KEYWORDS:
+            if kw in name:
+                return f"investment:{kw}"
+
+        return None
+
+    @staticmethod
+    def _capture_concept(conn: sqlite3.Connection, concept_id: str) -> dict:
+        """Capture all concept data before deletion for recovery."""
+        row = conn.execute(
+            "SELECT concept_id, name, course_id, definition, concept_type "
+            "FROM concepts WHERE concept_id=?",
+            (concept_id,),
+        ).fetchone()
+        relations = [
+            {"source_id": r[0], "target_id": r[1], "relation_type": r[2],
+             "confidence": r[3], "evidence": r[4]}
+            for r in conn.execute(
+                "SELECT source_id, target_id, relation_type, confidence, evidence "
+                "FROM concept_relations WHERE source_id=? OR target_id=?",
+                (concept_id, concept_id),
+            )
+        ]
+        aliases = [
+            {"alias": a[0], "course_id": a[1], "concept_id": a[2],
+             "source": a[3], "confidence": a[4]}
+            for a in conn.execute(
+                "SELECT alias, course_id, concept_id, source, confidence "
+                "FROM concept_aliases WHERE concept_id=?",
+                (concept_id,),
+            )
+        ]
+        return {
+            "concept_id": row[0], "name": row[1], "course_id": row[2],
+            "definition": row[3], "concept_type": row[4],
+            "relations": relations, "aliases": aliases,
+        }

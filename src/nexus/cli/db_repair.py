@@ -14,6 +14,18 @@ def main() -> int:
         "--migrate-metadata", action="store_true",
         help="Upgrade legacy Chroma metadata to canonical contract (MD5→SHA-256, chunk_index, etc.)",
     )
+    parser.add_argument(
+        "--quarantine-concepts", action="store_true",
+        help="Detect and isolate pseudo-concepts and orphan concepts",
+    )
+    parser.add_argument(
+        "--categories", nargs="+", default=None,
+        help="Quarantine categories: pseudo, orphan_no_def, orphan_with_def (default: pseudo,orphan_no_def)",
+    )
+    parser.add_argument(
+        "--restore", type=str, default=None, metavar="CONCEPT_ID",
+        help="Restore a quarantined concept back to the concepts table",
+    )
     args = parser.parse_args()
 
     sqlite_path = Path(args.sqlite_path)
@@ -23,7 +35,6 @@ def main() -> int:
         from nexus.knowledge.sqlite_store import SQLiteStore
         from nexus.knowledge.chunk_backfill import MetadataMigration
 
-        # Ensure schema migrations are applied (v6 adds chunk_index column)
         if args.apply:
             SQLiteStore(sqlite_path)
 
@@ -32,6 +43,21 @@ def main() -> int:
             report = migration.apply()
         else:
             report = migration.plan()
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report.get("ok") else 1
+
+    if args.quarantine_concepts or args.restore:
+        from nexus.knowledge.chunk_backfill import ConceptQuarantine
+
+        q = ConceptQuarantine(sqlite_path)
+
+        if args.restore:
+            report = q.restore(args.restore)
+        elif args.apply:
+            categories = args.categories if args.categories else None
+            report = q.apply(categories=categories)
+        else:
+            report = q.plan()
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report.get("ok") else 1
 

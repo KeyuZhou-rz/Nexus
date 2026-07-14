@@ -22,7 +22,7 @@ from .connection_registry import register_connection, unregister_connection
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_LATEST_SCHEMA_VERSION = 6
+_LATEST_SCHEMA_VERSION = 7
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -202,6 +202,22 @@ class SQLiteStore:
             columns = SQLiteStore._table_columns(conn, "chunks")
             if "chunk_index" not in columns:
                 conn.execute("ALTER TABLE chunks ADD COLUMN chunk_index INTEGER")
+            return
+        if version == 7:
+            # concept_quarantine table is defined in schema.sql (CREATE IF NOT EXISTS)
+            # Migration ensures the table exists for DBs that skip schema re-init.
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS concept_quarantine (
+                    concept_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    course_id TEXT NOT NULL,
+                    definition TEXT,
+                    concept_type TEXT,
+                    quarantine_reason TEXT NOT NULL,
+                    original_data TEXT,
+                    quarantined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )"""
+            )
             return
         raise RuntimeError(f"Unsupported schema migration: {version}")
 
