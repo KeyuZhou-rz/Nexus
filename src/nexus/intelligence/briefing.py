@@ -302,6 +302,7 @@ def _llm_briefing(
         model_used=client.model,
         input_tokens=response.raw.get("usage", {}).get("prompt_tokens"),
         output_tokens=response.raw.get("usage", {}).get("completion_tokens"),
+        call_site="briefing",
     )
     data = extract_json(response.content)
     _validate_llm_payload(data)

@@ -199,7 +199,7 @@ def _parse_text_with_llm(text: str) -> list[dict[str, Any]]:
             {"role": "system", "content": PARSE_PROMPT},
             {"role": "user", "content": text},
         ],
-        call_site="document_parser",
+        call_site="document_parse",
         temperature=0.1,
         max_tokens=8192,
     )

@@ -62,6 +62,7 @@ class LLMClient:
         model_used: str | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        call_site: str = "briefing",
     ) -> None:
         if self._store is None:
             return
@@ -75,6 +76,7 @@ class LLMClient:
                 model_used=model_used or self.model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                call_site=call_site,
             )
         except Exception as exc:
             logger.warning("Briefing interaction_logs write failed: %s", exc)

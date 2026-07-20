@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS interaction_logs (
     llm_response    TEXT,
     model_used      TEXT,
     input_tokens    INTEGER,
-    output_tokens   INTEGER
+    output_tokens   INTEGER,
+    call_site       TEXT NOT NULL DEFAULT 'unspecified'
 );
 
 -- ────────────────────────────────────────────────

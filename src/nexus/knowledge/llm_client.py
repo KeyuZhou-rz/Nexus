@@ -1,17 +1,17 @@
 """
 Knowledge LLM Client — Nexus Phase 3
 
-使用 litellm 作为 LLM 网关，实现模型无关的 API 调用。
-litellm 支持 OpenAI / Gemini / Anthropic / Azure 等，一套接口切换模型。
+委托统一的 LLMGateway 完成模型调用、配置解析与调用审计。
+LLMGateway 支持 OpenAI 兼容接口，默认读取 NEXUS_LLM_MODEL /
+NEXUS_LLM_API_KEY / NEXUS_LLM_BASE_URL 环境变量，并回退到
+legacy 的 data/QWEN_API_KEY.json。
 
 主要功能：
 - chat(): 发送消息列表，返回回答文本
-- 自动记录 interaction_logs（token 用量、使用模型、chunks 引用）
+- 自动记录 interaction_logs（token 用量、使用模型、chunks 引用、call_site）
 
-依赖：litellm 必须已安装（requirements.txt 中的 litellm>=1.40）。
-不可用时由 QAPipeline.ask() 明确降级为带来源标记的课件摘录。
-
-模型配置：通过 LLMGateway 单例读取 (NEXUS_LLM_MODEL / API_KEY / BASE_URL)
+模型配置：通过 LLMGateway 单例读取；本类也可通过 model 参数或
+NEXUS_QA_MODEL 环境变量覆盖默认模型（优先于网关默认）。
 """
 from __future__ import annotations
 
@@ -35,12 +35,12 @@ class LLMOutput:
 
 class KnowledgeLLMClient:
     """
-    模型无关的 LLM 客户端，使用 litellm 统一调用。
+    薄代理层：将问答调用委托给 LLMGateway，并负责写入 interaction_logs。
 
     参数：
     - sqlite_store: SQLiteStore 实例，用于记录 interaction_logs
-    - model: litellm 格式模型名（默认读取 NEXUS_QA_MODEL 环境变量）
-    - temperature: 生成温度（问答任务建议 0.3-0.5，不需要太确定性）
+    - model: 模型名（默认读取 NEXUS_QA_MODEL，其次使用网关默认模型）
+    - temperature: 生成温度（问答任务建议 0.3-0.5）
     - max_tokens: 单次回答最大 token 数
     """
 
@@ -65,7 +65,7 @@ class KnowledgeLLMClient:
     ) -> LLMOutput:
         """
         发送 messages 列表，返回 LLMOutput。
-        使用 litellm.completion 调用 LLM；litellm 未安装时抛 ModuleNotFoundError。
+        实际请求由 LLMGateway.chat() 完成。
         """
         effective_model = model or self.model
 
@@ -92,6 +92,7 @@ class KnowledgeLLMClient:
         *,
         course_id: str | None = None,
         chunks_used: list[str] | None = None,
+        call_site: str = "qa_client",
     ) -> None:
         """
         将本次问答记录写入 SQLite interaction_logs。
@@ -109,6 +110,7 @@ class KnowledgeLLMClient:
                 model_used=output.model_used,
                 input_tokens=output.input_tokens,
                 output_tokens=output.output_tokens,
+                call_site=call_site,
             )
         except Exception as exc:
             # 日志写入失败不应中断问答流程

@@ -22,7 +22,7 @@ from .connection_registry import register_connection, unregister_connection
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_LATEST_SCHEMA_VERSION = 7
+_LATEST_SCHEMA_VERSION = 8
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -217,6 +217,18 @@ class SQLiteStore:
                     original_data TEXT,
                     quarantined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )"""
+            )
+            return
+        if version == 8:
+            columns = SQLiteStore._table_columns(conn, "interaction_logs")
+            if "call_site" not in columns:
+                conn.execute(
+                    "ALTER TABLE interaction_logs ADD COLUMN call_site TEXT NOT NULL DEFAULT 'unspecified'"
+                )
+            conn.execute(
+                """UPDATE interaction_logs
+                   SET call_site = COALESCE(call_site, 'unspecified')
+                   WHERE call_site IS NULL OR call_site=''"""
             )
             return
         raise RuntimeError(f"Unsupported schema migration: {version}")
@@ -688,6 +700,7 @@ class SQLiteStore:
         model_used: str | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        call_site: str = "unspecified",
     ) -> None:
         """记录一次问答交互，用于后续 session 分析和画像更新。"""
         with connect(self.db_path) as conn:
@@ -695,8 +708,8 @@ class SQLiteStore:
                 """
                 INSERT INTO interaction_logs
                     (session_id, course_id, user_query, chunks_used,
-                     llm_response, model_used, input_tokens, output_tokens)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     llm_response, model_used, input_tokens, output_tokens, call_site)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -707,6 +720,7 @@ class SQLiteStore:
                     model_used,
                     input_tokens,
                     output_tokens,
+                    call_site,
                 ),
             )
 
