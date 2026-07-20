@@ -22,7 +22,7 @@ def main() -> int:
         Path(args.archive), Path(args.sqlite_path), Path(args.db_dir), apply=args.apply, force=args.force
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0
+    return 0 if report.get("ok") else 1
 
 
 if __name__ == "__main__":

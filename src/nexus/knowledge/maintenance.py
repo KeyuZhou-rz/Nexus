@@ -119,6 +119,10 @@ def verify_backup(archive_path: Path) -> dict[str, Any]:
         root = Path(tmp)
         try:
             with zipfile.ZipFile(archive_path, "r") as zf:
+                for name in zf.namelist():
+                    member = PurePosixPath(name)
+                    if member.is_absolute() or ".." in member.parts:
+                        return {"ok": False, "error": f"Unsafe archive member: {name}"}
                 zf.extractall(root)
         except (zipfile.BadZipFile, OSError) as exc:
             return {"ok": False, "error": f"Unable to open archive: {exc}"}
@@ -128,23 +132,30 @@ def verify_backup(archive_path: Path) -> dict[str, Any]:
             return {"ok": False, "error": "Archive missing manifest.json"}
 
         manifest = json.loads(manifest_path.read_text())
+        expected_files = manifest.get("files") or {}
+        if not isinstance(expected_files, dict):
+            return {"ok": False, "error": "Archive manifest has an invalid files map"}
         failed = []
         verified = 0
-        for entry in manifest.get("files", []):
-            fpath = root / entry["path"]
+        for relative, expected_hash in expected_files.items():
+            rel = PurePosixPath(relative)
+            if rel.is_absolute() or ".." in rel.parts:
+                failed.append({"path": relative, "error": "unsafe_path"})
+                continue
+            fpath = root / relative
             if not fpath.exists():
-                failed.append({"path": entry["path"], "error": "missing"})
+                failed.append({"path": relative, "error": "missing"})
                 continue
             actual = _sha256(fpath)
-            if actual != entry.get("hash"):
-                failed.append({"path": entry["path"], "hash_mismatch": True})
+            if actual != expected_hash:
+                failed.append({"path": relative, "hash_mismatch": True})
             else:
                 verified += 1
 
         return {
             "ok": not failed,
             "archive": str(archive_path),
-            "files": manifest.get("files", 0),
+            "files": len(expected_files),
             "verified": verified,
             "failed": failed,
         }

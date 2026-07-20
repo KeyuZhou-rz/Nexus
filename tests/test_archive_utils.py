@@ -29,3 +29,28 @@ def test_build_archive_filename_includes_due_and_ext():
     )
     assert name.startswith("General_Physics_II_HW3_Kinematics_20260228_")
     assert name.endswith(".pdf")
+
+
+def test_session_save_and_load_respect_nexus_data_dir(tmp_path, monkeypatch):
+    from nexus.archive_sync.session import load_session, save_session
+
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(tmp_path))
+    cookies = [{"name": "session", "value": "abc123"}]
+    save_session(cookies)
+
+    expected_path = tmp_path / "brightspace_session.json"
+    assert expected_path.exists()
+    assert load_session() == cookies
+
+
+def test_session_explicit_path_overrides_env_var(tmp_path, monkeypatch):
+    from nexus.archive_sync.session import load_session, save_session
+
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(tmp_path / "env_dir"))
+    explicit = tmp_path / "explicit" / "session.json"
+    cookies = [{"name": "explicit", "value": "xyz"}]
+    save_session(cookies, path=explicit)
+
+    assert explicit.exists()
+    assert load_session(path=explicit) == cookies
+    assert not (tmp_path / "env_dir" / "brightspace_session.json").exists()

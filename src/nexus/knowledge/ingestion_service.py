@@ -147,7 +147,7 @@ def _ingest_text_documents_unlocked(
             metas.append(_build_metadata(document, idx, file_hash, identifier))
 
         # ChromaDB write
-        store.upsert_chunks(ids, docs, metas)
+        store.upsert_chunks(ids, docs, metas, course_id=document.course_id)
         stats.files += 1
         stats.chunks += len(chunks)
 

@@ -36,7 +36,12 @@ def read_chunks(
     collection_name: str = "nexus_chunks",
 ) -> ReadSummary:
     """Read stored chunks directly for human review/debug."""
-    store = ChromaKnowledgeStore(db_dir, collection_name=collection_name)
+    store = ChromaKnowledgeStore(
+        db_dir,
+        collection_name=collection_name,
+        per_course=True,
+        include_legacy_reads=True,
+    )
 
     filters: list[dict[str, str]] = []
     if course_id:
@@ -54,7 +59,10 @@ def read_chunks(
     elif len(filters) > 1:
         where = {"$and": filters}
 
-    result = store.fetch_chunks(where=where, limit=limit)
+    try:
+        result = store.fetch_chunks(where=where, limit=limit, course_id=course_id)
+    finally:
+        store.close()
     docs = result.get("documents") or []
     metas = result.get("metadatas") or []
 

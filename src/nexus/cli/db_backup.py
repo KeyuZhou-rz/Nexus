@@ -10,7 +10,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Create a checksummed SQLite and Chroma backup")
     parser.add_argument("--sqlite-path", default="data/nexus.db")
     parser.add_argument("--db-dir", default="data/chroma")
-    parser.add_argument("--output", default=f"data/backups/nexus-{datetime.now():%Y%m%d-%H%M%S}.zip")
+    parser.add_argument("--output", default=None,
+                        help="Backup archive path (default: data/backups/nexus-<timestamp>.zip)")
     parser.add_argument("--force", action="store_true", help="Replace an existing backup archive")
     parser.add_argument(
         "--retain", type=int, default=0,
@@ -29,14 +30,19 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report.get("ok") else 1
 
-    report = create_backup(Path(args.sqlite_path), Path(args.db_dir), Path(args.output), force=args.force)
+    report = create_backup(
+        Path(args.sqlite_path),
+        Path(args.db_dir),
+        Path(args.output or f"data/backups/nexus-{datetime.now():%Y%m%d-%H%M%S}.zip"),
+        force=args.force,
+    )
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
     # Phase 4E-3: retention cleanup
     if args.retain > 0:
-        _prune_backups(Path(args.output).parent, args.retain)
+        _prune_backups(Path(args.output).parent if args.output else Path("data/backups"), args.retain)
 
-    return 0
+    return 0 if report.get("ok") else 1
 
 
 def _prune_backups(backup_dir: Path, keep: int) -> None:

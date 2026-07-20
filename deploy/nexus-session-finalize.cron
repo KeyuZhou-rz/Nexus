@@ -3,4 +3,4 @@
 # Edit PROJECT_DIR to point at your checkout.
 
 PROJECT_DIR=/path/to/Nexus
-0 * * * * cd $PROJECT_DIR && PYTHONPATH=src python -m nexus.cli.sessions --finalize-expired >> data/sessions_cron.log 2>&1
+0 * * * * cd $PROJECT_DIR && PYTHONPATH=src python -m nexus.cli.sessions finalize-idle >> data/sessions_cron.log 2>&1

@@ -15,6 +15,8 @@ _ALLOWED_EXTENSIONS = {
     ".xlsx",
     ".zip",
     ".txt",
+    ".md",
+    ".markdown",
     ".csv",
 }
 

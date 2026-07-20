@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timedelta
 import html
+import json
 import re
 import textwrap
 import os
@@ -678,6 +679,7 @@ div[data-testid="stAlert"] {
 
 # Load configuration and data
 config = default_config()
+_DATA_DIR = config.data_dir
 now_local = datetime.now().astimezone()
 calendar_sync_error = None
 if config.google_calendar_sync_minutes > 0:
@@ -974,7 +976,7 @@ with st.sidebar:
                         from nexus.knowledge.query import query_knowledge
 
                         summary = query_knowledge(
-                            Path("data/chroma"),
+                            _DATA_DIR / "chroma",
                             query_text=query_text.strip(),
                             n_results=query_top_k,
                             course_id=query_course.strip() or None,
@@ -1146,8 +1148,6 @@ with right_panel:
 # Study Assistant Tab (Phase 3 QAPipeline integration)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_DATA_DIR = config.data_dir
-
 
 @st.cache_resource
 def _get_qa_pipeline():
@@ -1158,7 +1158,7 @@ def _get_qa_pipeline():
     # 优先用 gateway（已自动加载 .env），Streamlit secrets 作为补充
     api_key = gateway.api_key or ""
     try:
-        secrets_key = st.secrets.get("NEXUS_LLM_API_KEY", "")
+        secrets_key = st.secrets.get("NEXUS_LLM_API_KEY", "") or st.secrets.get("QWEN_API_KEY", "")
         if secrets_key:
             api_key = secrets_key
     except Exception:
@@ -1303,6 +1303,18 @@ with tab_study:
         ):
             # 追加用户消息
             st.session_state.qa_messages.append({"role": "user", "content": _qa_prompt})
+            try:
+                from nexus.conversation_store import append_message as _log_conv_message
+
+                _log_conv_message(
+                    _DATA_DIR / "conversations",
+                    st.session_state.qa_session_id,
+                    role="user",
+                    content=_qa_prompt,
+                    source="streamlit",
+                )
+            except Exception:
+                pass
             with st.chat_message("user"):
                 st.markdown(_qa_prompt)
 
@@ -1386,6 +1398,18 @@ with tab_study:
                 "sources": _sources,
                 "expanded_queries": _expanded,
             })
+            try:
+                from nexus.conversation_store import append_message as _log_conv_message
+
+                _log_conv_message(
+                    _DATA_DIR / "conversations",
+                    st.session_state.qa_session_id,
+                    role="assistant",
+                    content=_answer,
+                    source="streamlit",
+                )
+            except Exception:
+                pass
 
         # 检查 idle sessions（每次 rerun 都触发）
         if _pipeline_ok:
@@ -1488,6 +1512,7 @@ with tab_progress:
     _mastery_list: list[dict] = []
     _decaying_list: list[dict] = []
     _courses: list[str] = []
+    _progress_courses: list[str] = []
 
     try:
         if _pipeline_ok and _pipeline:
@@ -1659,6 +1684,10 @@ with tab_progress:
         else:
             st.caption("Select a course and click Generate to create a 7-day study plan.")
 
+    # Course pickers below need a non-empty list even when mastery data is missing.
+    if not _progress_courses:
+        _progress_courses = list(_courses)
+
     # ────────────────────────────────────────────────
     # Knowledge Gap Analysis (Memory Layer 1)
     # ────────────────────────────────────────────────
@@ -1669,9 +1698,10 @@ with tab_progress:
     _gap_course = st.selectbox(
         "Course", options=_progress_courses, key="gap_course",
         help="Select a course to scan for knowledge gaps",
+        disabled=not _progress_courses,
     )
 
-    if st.button("🔄 Run Gap Scan", key="run_gap_scan", help="Scan this course for knowledge gaps"):
+    if _progress_courses and st.button("🔄 Run Gap Scan", key="run_gap_scan", help="Scan this course for knowledge gaps"):
         with st.spinner("Scanning course for knowledge gaps..."):
             try:
                 _gap_store = SQLiteStore(_DATA_DIR / "nexus.db")
@@ -1714,6 +1744,7 @@ with tab_progress:
 
     _sprint_course = st.selectbox(
         "Course", options=_progress_courses, key="sprint_course",
+        disabled=not _progress_courses,
     )
     _col1, _col2 = st.columns(2)
     with _col1:
@@ -1730,7 +1761,7 @@ with tab_progress:
         help="Enter chapter exam weight proportions as JSON. Leave empty for equal distribution.",
     )
 
-    if st.button("⚡ Generate Sprint Plan", key="gen_sprint"):
+    if _progress_courses and st.button("⚡ Generate Sprint Plan", key="gen_sprint"):
         with st.spinner("Generating sprint plan..."):
             try:
                 from nexus.knowledge.sprint_planner import SprintPlanner
@@ -1782,6 +1813,7 @@ with tab_progress:
 
     _retro_course = st.selectbox(
         "Course", options=_progress_courses, key="retro_course",
+        disabled=not _progress_courses,
     )
     _retro_exam_date = st.date_input("Exam Date", key="retro_exam_date")
     _retro_input = st.text_area(
@@ -1791,7 +1823,7 @@ with tab_progress:
         help="Write freely — the LLM will extract structured insights from your description.",
     )
 
-    if st.button("📊 Generate Retrospective", key="gen_retro"):
+    if _progress_courses and st.button("📊 Generate Retrospective", key="gen_retro"):
         with st.spinner("Analyzing exam performance..."):
             try:
                 from nexus.knowledge.retrospective import ExamRetrospective

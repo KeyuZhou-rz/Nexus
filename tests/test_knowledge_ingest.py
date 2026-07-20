@@ -9,7 +9,7 @@ class _StoreStub:
     def __init__(self):
         self.calls = []
 
-    def upsert_chunks(self, ids, texts, metadatas):
+    def upsert_chunks(self, ids, texts, metadatas, course_id=None):
         self.calls.append((ids, texts, metadatas))
 
 

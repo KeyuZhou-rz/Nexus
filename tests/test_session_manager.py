@@ -270,3 +270,38 @@ class TestRetryableFinalization:
         assert row["finalize_status"] == "abandoned"
         assert row["ended"] == 1
         assert len(store.get_session_logs(SESSION)) == 1
+
+
+class TestUpsertSessionPreservesFinalizeColumns:
+    def test_heartbeat_does_not_reset_finalize_retry_state(self, store):
+        store.upsert_session(
+            session_id=SESSION,
+            started_at="2026-07-19T10:00:00",
+            last_active="2026-07-19T10:00:00",
+            course_id=COURSE,
+            interaction_count=2,
+            ended=False,
+        )
+        assert store.claim_session_end(SESSION) is True
+
+        next_retry = "2026-07-19T11:00:00"
+        store.release_session_retry(SESSION, error="transient failure", next_retry=next_retry)
+        row = store.get_session(SESSION)
+        assert row["finalize_status"] == "retry"
+        assert row["finalize_attempts"] == 1
+        assert row["finalize_last_error"] == "transient failure"
+        assert row["finalize_next_retry"] == next_retry
+
+        store.upsert_session(
+            session_id=SESSION,
+            started_at=row["started_at"],
+            last_active="2026-07-19T10:05:00",
+            course_id=COURSE,
+            interaction_count=3,
+            ended=False,
+        )
+        row = store.get_session(SESSION)
+        assert row["finalize_status"] == "retry"
+        assert row["finalize_attempts"] == 1
+        assert row["finalize_last_error"] == "transient failure"
+        assert row["finalize_next_retry"] == next_retry

@@ -61,7 +61,7 @@ query:
 
 # ─── Task Pipeline & Briefing ─────────────────────────────────────────────────
 
-.PHONY: pipeline pipeline-fast briefing
+.PHONY: pipeline pipeline-fast briefing briefing-llm
 
 pipeline:
 	$(PYTHON) -m nexus.cli.pipeline
@@ -93,10 +93,6 @@ test-cli:
 	$(PYTEST) tests/test_cli_smoke.py -v
 
 test-archive:
-	$(PYTEST) tests/test_archive_sync.py \
-	          tests/test_archive_utils.py \
-	          tests/test_archive_reporting.py \
-	          -v 2>/dev/null || \
 	$(PYTEST) tests/ -k "archive" -v
 
 test-fast:

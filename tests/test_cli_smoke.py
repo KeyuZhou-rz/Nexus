@@ -105,3 +105,39 @@ def test_pipeline_exit_code_tracks_structured_report(tmp_path) -> None:
     payload = json.loads(failed.stdout)
     assert payload["ok"] is False
     assert any(step["name"] == "briefing" and step["status"] == "failed" for step in payload["steps"])
+
+
+def test_db_restore_main_returns_one_on_bad_archive(tmp_path, monkeypatch) -> None:
+    from nexus.cli import db_restore
+    from nexus.knowledge import maintenance
+
+    def fake_restore_backup(*_args, **_kwargs):
+        return {"ok": False, "error": "simulated failure"}
+
+    monkeypatch.setattr(maintenance, "restore_backup", fake_restore_backup)
+    monkeypatch.setattr(sys, "argv", ["db-restore", str(tmp_path / "missing.zip")])
+    assert db_restore.main() == 1
+
+
+def test_db_backup_main_returns_one_when_create_backup_fails(tmp_path, monkeypatch) -> None:
+    from nexus.cli import db_backup
+    from nexus.knowledge import maintenance
+
+    def fake_create_backup(*_args, **_kwargs):
+        return {"ok": False, "error": "simulated failure"}
+
+    monkeypatch.setattr(maintenance, "create_backup", fake_create_backup)
+    monkeypatch.setattr(sys, "argv", ["db-backup", "--sqlite-path", str(tmp_path / "nexus.db")])
+    assert db_backup.main() == 1
+
+
+def test_new_dispatcher_commands_are_importable() -> None:
+    import importlib
+
+    from nexus.cli.main import COMMANDS
+
+    for name in ("concepts-backfill", "retro", "scan", "sprint"):
+        assert name in COMMANDS, f"{name} missing from COMMANDS"
+        module_name, _ = COMMANDS[name]
+        module = importlib.import_module(module_name)
+        assert hasattr(module, "main"), f"{module_name} has no main"

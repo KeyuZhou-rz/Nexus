@@ -21,12 +21,13 @@ make test            # 运行全量单元测试
 make ui
 ```
 
-打开 `http://localhost:8501`，包含两个 Tab：
+打开 `http://localhost:8501`，包含三个 Tab：
 
 | Tab | 功能 |
 |-----|------|
 | 📋 Dashboard | 任务聚合、Google Calendar、每日 Briefing |
-| 🎓 Study Assistant | 知识问答（基于 ChromaDB + Qwen），需先 ingest 数据 |
+| 🎓 Study Assistant | 知识问答（基于 ChromaDB + LLM），需先 ingest 数据 |
+| 📊 Learning Progress | 掌握度追踪、遗忘曲线、Gap 扫描、冲刺计划、考后复盘 |
 
 ---
 
@@ -102,7 +103,7 @@ make briefing-llm
 ## 单元测试
 
 ```bash
-make test              # 全量（~47 个测试）
+make test              # 全量（540+ 个测试）
 
 make test-knowledge    # 仅 Knowledge 模块（chunking / ingest / query）
 

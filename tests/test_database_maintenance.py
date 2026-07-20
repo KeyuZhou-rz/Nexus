@@ -328,3 +328,66 @@ def test_repair_is_dry_run_and_only_updates_document_counts(tmp_path: Path) -> N
     assert result["ok"]
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT chunk_count FROM documents").fetchone()[0] == 1
+
+
+def test_verify_backup_passes_for_valid_archive(tmp_path: Path) -> None:
+    source_db = tmp_path / "nexus.db"
+    source_chroma = tmp_path / "chroma"
+    source_chroma.mkdir()
+    (source_chroma / "index.bin").write_bytes(b"vector-data")
+    _database(source_db)
+    archive = tmp_path / "backup.zip"
+
+    report = create_backup(source_db, source_chroma, archive)
+    assert report["ok"]
+
+    verified = maintenance_module.verify_backup(archive)
+    assert verified["ok"] is True
+    assert verified["verified"] >= 1
+    assert verified["files"] == report["files"]
+    assert verified["failed"] == []
+
+
+def test_verify_backup_fails_when_manifest_declares_missing_file(tmp_path: Path) -> None:
+    source_db = tmp_path / "nexus.db"
+    _database(source_db)
+    archive = tmp_path / "backup.zip"
+    create_backup(source_db, tmp_path / "chroma", archive)
+
+    tampered = tmp_path / "tampered.zip"
+    with zipfile.ZipFile(archive, "r") as source:
+        manifest = json.loads(source.read("manifest.json"))
+        manifest["files"]["extra/missing.bin"] = "0" * 64
+        with zipfile.ZipFile(tampered, "w", compression=zipfile.ZIP_DEFLATED) as destination:
+            for name in source.namelist():
+                if name == "manifest.json":
+                    continue
+                destination.writestr(name, source.read(name))
+            destination.writestr("manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
+
+    verified = maintenance_module.verify_backup(tampered)
+    assert verified["ok"] is False
+    assert any(failure["path"] == "extra/missing.bin" for failure in verified["failed"])
+
+
+def test_verify_backup_fails_on_hash_mismatch(tmp_path: Path) -> None:
+    source_db = tmp_path / "nexus.db"
+    _database(source_db)
+    archive = tmp_path / "backup.zip"
+    create_backup(source_db, tmp_path / "chroma", archive)
+
+    tampered = tmp_path / "tampered.zip"
+    with zipfile.ZipFile(archive, "r") as source:
+        manifest = json.loads(source.read("manifest.json"))
+        relative = next(key for key in manifest["files"])
+        manifest["files"][relative] = "0" * 64
+        with zipfile.ZipFile(tampered, "w", compression=zipfile.ZIP_DEFLATED) as destination:
+            for name in source.namelist():
+                if name == "manifest.json":
+                    continue
+                destination.writestr(name, source.read(name))
+            destination.writestr("manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
+
+    verified = maintenance_module.verify_backup(tampered)
+    assert verified["ok"] is False
+    assert any(failure.get("hash_mismatch") for failure in verified["failed"])

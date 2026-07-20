@@ -22,6 +22,10 @@ COMMANDS = {
     "memory-extract": ("nexus.cli.memory_extract", "Extract weak points from conversations"),
     "memory-feedback": ("nexus.cli.memory_feedback", "Apply feedback to a weak point"),
     "memory-query": ("nexus.cli.memory_query", "Query conversation memory"),
+    "concepts-backfill": ("nexus.cli.concepts_backfill", "Backfill concept metadata on existing chunks"),
+    "retro": ("nexus.cli.retro", "Generate an exam retrospective"),
+    "scan": ("nexus.cli.scan", "Scan a course for knowledge gaps"),
+    "sprint": ("nexus.cli.sprint", "Generate an exam sprint plan"),
 }
 
 
@@ -43,6 +47,9 @@ def main() -> int:
         raise SystemExit(2)
 
     module_name, _ = COMMANDS[command]
+    from nexus.log_config import setup_logging
+
+    setup_logging()
     module = __import__(module_name, fromlist=["main"])
     sys.argv = [f"nexus {command}", *sys.argv[2:]]
     result = module.main()

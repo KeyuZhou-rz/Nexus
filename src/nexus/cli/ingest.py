@@ -73,16 +73,18 @@ def _run_phase3(args: argparse.Namespace) -> int:
 
 
 def _run_legacy(args: argparse.Namespace) -> int:
-    """Legacy ingest 路径：固定大小文本切片（Phase 2）。"""
+    """Legacy ingest 路径：固定大小文本切片（Phase 2），双写 ChromaDB+SQLite。"""
     from ..knowledge.document_text import SUPPORTED_TEXT_SUFFIXES
     from ..knowledge.ingest import ingest_files
+    from ..knowledge.sqlite_store import SQLiteStore
     from ..knowledge.store import ChromaKnowledgeStore
 
     files = _collect_files(Path(args.input), tuple(SUPPORTED_TEXT_SUFFIXES))
     if not files:
         raise SystemExit(f"No supported files found at: {args.input}")
 
-    store = ChromaKnowledgeStore(Path(args.db_dir))
+    store = ChromaKnowledgeStore(Path(args.db_dir), per_course=True)
+    sqlite_store = SQLiteStore(Path(args.sqlite_path))
     summary = ingest_files(
         files,
         store,
@@ -90,6 +92,7 @@ def _run_legacy(args: argparse.Namespace) -> int:
         doc_type=getattr(args, "doc_type", "notes"),
         max_chars=getattr(args, "max_chars", 900),
         overlap=getattr(args, "overlap", 120),
+        sqlite_store=sqlite_store,
     )
     print(f"Ingested files: {summary.files}, chunks: {summary.chunks}")
     return 0

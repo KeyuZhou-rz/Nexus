@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .document_text import extract_text
 from .ingestion_service import TextDocument, ingest_text_documents
+from .sqlite_store import SQLiteStore
 from .store import ChromaKnowledgeStore
 
 
@@ -25,6 +26,7 @@ def ingest_files(
     max_chars: int = 900,
     overlap: int = 120,
     id_namespace: str = "chunk",
+    sqlite_store: SQLiteStore | None = None,
 ) -> IngestSummary:
     """Ingest supported document files into Chroma with metadata."""
     now = timestamp or datetime.now().date().isoformat()
@@ -51,6 +53,7 @@ def ingest_files(
         max_chars=max_chars,
         overlap=overlap,
         id_namespace=id_namespace,
+        sqlite_store=sqlite_store,
     )
     return IngestSummary(files=stats.files, chunks=stats.chunks)
 

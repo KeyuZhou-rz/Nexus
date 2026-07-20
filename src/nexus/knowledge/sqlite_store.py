@@ -502,13 +502,19 @@ class SQLiteStore:
         interaction_count: int,
         ended: bool,
     ) -> None:
-        """插入或覆盖单个 session 状态（整体替换）。"""
+        """插入或覆盖单个 session 状态（保留 finalize_* 审计/重试列）。"""
         with connect(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO active_sessions
+                INSERT INTO active_sessions
                     (session_id, started_at, last_active, course_id, interaction_count, ended)
                 VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    started_at=excluded.started_at,
+                    last_active=excluded.last_active,
+                    course_id=excluded.course_id,
+                    interaction_count=excluded.interaction_count,
+                    ended=excluded.ended
                 """,
                 (session_id, started_at, last_active, course_id, interaction_count, int(ended)),
             )

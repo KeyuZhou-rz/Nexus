@@ -11,7 +11,7 @@ class _StoreStub:
     def __init__(self) -> None:
         self.calls = []
 
-    def upsert_chunks(self, ids, texts, metadatas):
+    def upsert_chunks(self, ids, texts, metadatas, course_id=None):
         self.calls.append((ids, texts, metadatas))
 
 
@@ -84,3 +84,50 @@ def test_run_archive_post_ingest_missing_file_skipped(tmp_path: Path):
     assert summary["files_ingested"] == 0
     assert summary["weak_candidates"] == 0
     assert summary["active_weak_points"] == 0
+
+
+def test_run_archive_post_ingest_uses_item_course_for_weak_points(tmp_path: Path, monkeypatch):
+    """Weak-point candidates must carry the archive item's course, not a hard-coded value."""
+
+    class _CourseAwareStoreStub:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def upsert_chunks(self, ids, texts, metadatas, course_id=None):
+            self.calls.append((ids, texts, metadatas))
+
+    cs_file = tmp_path / "cs_notes.txt"
+    cs_file.write_text("Common mistakes: pointer arithmetic off by one.")
+    math_file = tmp_path / "math_notes.txt"
+    math_file.write_text("Common mistakes: chain rule sign error.")
+
+    archives = [
+        {"course": "CS101", "archived_path": str(cs_file)},
+        {"course": "MATH201", "archived_path": str(math_file)},
+    ]
+
+    captured_courses = []
+
+    def fake_record_weak_point(_resolver, _profile, _temporal, topic, *, course_id, context):
+        captured_courses.append((course_id, topic))
+        return {"resolved": True, "concept_id": f"{course_id}:{topic}"}
+
+    monkeypatch.setattr(
+        "nexus.archive_sync.post_ingest.record_weak_point", fake_record_weak_point
+    )
+
+    summary = run_archive_post_ingest(
+        archives=archives,
+        data_dir=tmp_path / "data",
+        db_dir=tmp_path / "chroma",
+        sqlite_path=tmp_path / "nexus.db",
+        store=_CourseAwareStoreStub(),
+    )
+
+    assert summary["status"] == "success"
+    assert summary["files_scanned"] == 2
+    assert summary["weak_candidates"] == 2
+    courses = {course for course, _ in captured_courses}
+    assert courses == {"CS101", "MATH201"}
+    assert any(course == "CS101" and "pointer" in topic for course, topic in captured_courses)
+    assert any(course == "MATH201" and "chain rule" in topic for course, topic in captured_courses)
