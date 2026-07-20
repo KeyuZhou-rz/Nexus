@@ -58,7 +58,7 @@ class KnowledgeConsistencyAudit:
     The auditor never instantiates ``SQLiteStore`` (which may migrate a DB) and
     only uses Chroma ``get``/``list_collections`` calls.
 
-    Checks (14 rules):
+    Checks (12 rules):
       1. chroma_chunk_missing_sqlite
       2. course_id_mismatch
       3. missing_source_file

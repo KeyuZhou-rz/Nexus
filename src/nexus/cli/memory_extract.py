@@ -27,6 +27,11 @@ def main() -> None:
     parser.add_argument("--db-path", default="data/nexus.db")
     parser.add_argument("--db-dir", default="data/chroma")
     parser.add_argument("--collection", default="nexus_memory_evidence")
+    parser.add_argument(
+        "--course-id",
+        default="conversation",
+        help="Course ID used for concept resolution binding (default: conversation)",
+    )
     args = parser.parse_args()
 
     now_iso = datetime.now().astimezone().isoformat()
@@ -41,14 +46,14 @@ def main() -> None:
     db_path = Path(args.db_path)
     store = SQLiteStore(db_path)
     resolver = ConceptResolver(store)
-    profile_mgr = UserProfileManager(store)
     temporal = TemporalMemory(store)
+    profile_mgr = UserProfileManager(store, temporal_memory=temporal, concept_resolver=resolver)
 
     resolved_count = 0
     for item in candidates:
         result = record_weak_point(
             resolver, profile_mgr, temporal,
-            item.topic, course_id="conversation",
+            item.topic, course_id=args.course_id,
             session_id=args.session_id,
             context={"source": "chat_extraction", "confidence": item.confidence},
         )
@@ -72,7 +77,7 @@ def main() -> None:
                         "confidence": f"{item.confidence:.3f}",
                         "msg_ids": ",".join(item.evidence_msg_ids),
                         "doc_type": "conversation_memory",
-                        "course_id": "conversation",
+                        "course_id": args.course_id,
                         "file_name": f"session:{args.session_id}",
                     }
                 )

@@ -146,34 +146,38 @@ interaction_logs(session_id, user_query, llm_response, model_used, cost_tracking
 
 ### 实现步骤
 
-- [ ] **N1.1** 扩展 `llm_gateway.py`：
+- [x] **N1.1** 扩展 `llm_gateway.py`：
   - 添加 `chat(messages, call_site, temperature, max_tokens) -> LLMResponse` 方法（替代当前仅提供 `litellm_kwargs` 的半成品状态）
   - 添加 `structured_output(messages, schema, call_site) -> dict` 方法
   - 添加 `is_configured()` 检查（已有，确认覆盖）
   - 添加 `call_site` 参数用于成本归属和日志
   - 添加调用计数和 token 估算（tiktoken 或字符估算）
+  - (done: src/nexus/knowledge/llm_gateway.py)
 
-- [ ] **N1.2** 改造 `intelligence/llm.py` 的 `LLMClient`：
+- [x] **N1.2** 改造 `intelligence/llm.py` 的 `LLMClient`：
   - `chat()` 改为调用 `llm_gateway.chat(call_site="briefing")`
   - 或直接删除 `LLMClient`，让 `briefing.py` 直接使用网关
   - 保留 `LLMResponse` dataclass 和 `LLMError` 异常（作为网关的返回类型）
   - 保留 `extract_json()` 工具函数（非 LLM 相关）
+  - (done: src/nexus/intelligence/llm.py)
 
-- [ ] **N1.3** 改造 `parser.py`：
+- [x] **N1.3** 改造 `parser.py`：
   - 添加 `call_site="document_parse"` 的网关路由
   - Qwen-long 不走 OpenAI 兼容 API（DashScope Files API 是独立的），所以解析器保留自己的逻辑，但：
     - 在调用前检查网关的 `is_configured()`
     - 通过网关的日志钩子记录解析调用
     - 在网关注册 `call_site="document_parse"` 用于成本追踪
+  - (done: src/nexus/knowledge/parser.py)
 
-- [ ] **N1.4** 添加 `interaction_logs` 统一写入：
+- [x] **N1.4** 添加 `interaction_logs` 统一写入：(done: schema v8 call_site 列 + 迁移、log_interaction call_site 参数、briefing/qa_client/parser 接线、tests/test_llm_gateway_logging.py)
   - 所有 7 个调用点写入 `interaction_logs` 表时带上 `call_site` 字段
   - `schema.sql` 的 `interaction_logs` 表已有 `model_used`、`input_tokens`、`output_tokens` 字段，确认 `call_site` 是否需要加列
 
-- [ ] **N1.5** 测试：
-  - `test_llm_gateway.py`（新建）：测试网关的配置解析、回退、调用点标识
-  - 修改 `test_briefing_fallback.py`：适配新的网关调用路径
-  - 修改 `test_gmail_enhanced.py`：确认邮件提取的网关路径不变
+- [x] **N1.5** 测试：
+  - `test_llm_gateway_config.py` / `test_llm_gateway_runtime.py`：测试网关的配置解析、调用点标识
+  - `test_briefing_fallback.py`：已适配新的网关调用路径
+  - `test_gmail_enhanced.py`：已确认邮件提取的网关路径不变
+  - (done: tests/test_llm_gateway_config.py, tests/test_llm_gateway_runtime.py, tests/test_briefing_fallback.py, tests/test_gmail_enhanced.py)
 
 **文件**：`src/nexus/knowledge/llm_gateway.py`、`src/nexus/intelligence/llm.py`、`src/nexus/intelligence/briefing.py`、`src/nexus/knowledge/parser.py`
 
@@ -191,7 +195,7 @@ interaction_logs(session_id, user_query, llm_response, model_used, cost_tracking
 
 ### 实现步骤
 
-- [ ] **N2.1** 在 SQLite `schema.sql` 中添加 `parse_cache` 表：
+- [x] **N2.1** 在 SQLite `schema.sql` 中添加 `parse_cache` 表：
   ```sql
   CREATE TABLE IF NOT EXISTS parse_cache (
       file_hash TEXT NOT NULL,        -- SHA-256 of file content
@@ -202,22 +206,27 @@ interaction_logs(session_id, user_query, llm_response, model_used, cost_tracking
       PRIMARY KEY (file_hash, course_id, parse_mode)
   );
   ```
+  - (done: src/nexus/knowledge/schema.sql)
 
-- [ ] **N2.2** 在 `sqlite_store.py` 中添加缓存读写方法：
+- [x] **N2.2** 在 `sqlite_store.py` 中添加缓存读写方法：
   - `get_parse_cache(file_hash, course_id) -> list[ParsedChunk] | None`
   - `set_parse_cache(file_hash, course_id, chunks: list[ParsedChunk]) -> None`
+  - (done: src/nexus/knowledge/sqlite_store.py)
 
-- [ ] **N2.3** 在 `parser.py` 中集成缓存：
+- [x] **N2.3** 在 `parser.py` 中集成缓存：
   - `parse_document()` 开头先计算文件 SHA-256
   - 检查 `parse_cache` 表，命中则直接返回
   - 未命中 → 调用 Qwen-long → 写入缓存 → 返回
+  - (done: src/nexus/knowledge/parser.py)
 
-- [ ] **N2.4** 添加缓存失效机制：
+- [x] **N2.4** 添加缓存失效机制：
   - 提供 CLI 命令 `nexus parse-cache clear --course <id>` 清除指定课程的缓存
   - `parse_cache` 表添加 `file_size` 列用于审计
+  - (done: src/nexus/cli/cache.py, src/nexus/knowledge/schema.sql)
 
-- [ ] **N2.5** 测试：
+- [x] **N2.5** 测试：
   - `test_parse_cache.py`（新建）：测试缓存命中/未命中、缓存清空、哈希碰撞边界
+  - (done: tests/test_parse_cache.py)
 
 **文件**：`src/nexus/knowledge/parser.py`、`src/nexus/knowledge/sqlite_store.py`、`src/nexus/knowledge/schema.sql`
 
@@ -237,21 +246,24 @@ interaction_logs(session_id, user_query, llm_response, model_used, cost_tracking
 
 ### 实现步骤
 
-- [ ] **N3.1** 在 `query_engine.py` 中实现 `_expand_query_rule(query, course_id) -> list[str]`：
+- [x] **N3.1** 在 `query_engine.py` 中实现 `_expand_query_rule(query, course_id) -> list[str]`：
   - 按标点/空格分词提取关键词
   - 通过 `concept_resolver` 展开别名和同义词
   - 组合生成 2-3 个查询变体
   - 不依赖任何 LLM
+  - (done: src/nexus/knowledge/query_engine.py)
 
-- [ ] **N3.2** 保留 `_expand_query_llm()` 作为可选增强（Pro 用户）：
+- [x] **N3.2** 保留 `_expand_query_llm()` 作为可选增强（Pro 用户）：
   - 仅当 `use_llm_expansion=True` 且 `is_configured()` 时调用
   - 结果与规则扩展结果合并去重
+  - (done: src/nexus/knowledge/query_engine.py)
 
-- [ ] **N3.3** 在 `llm_gateway` 中标志 `call_site="query_expansion"` 为 optional：
+- [x] **N3.3** 在 `llm_gateway` 中标志 `call_site="query_expansion"` 为 optional：
   - 网关可以配置各调用点的启用/禁用
   - Free 用户该调用点始终禁用
+  - (done: src/nexus/knowledge/llm_gateway.py; `QueryEngine` 默认 `use_llm_expansion=False`，仅显式开启且网关配置就绪时才调用)
 
-- [ ] **N3.4** 测试：
+- [x] **N3.4** 测试：(done: tests/test_query_expansion.py — 规则扩展/别名展开/无 LLM 降级/LLM 失败回退)
   - `test_query_expansion.py`（新建）：验证规则扩展的关键词覆盖、别名展开、无 LLM 降级
 
 **文件**：`src/nexus/knowledge/query_engine.py`、`src/nexus/knowledge/concept_resolver.py`
@@ -274,7 +286,7 @@ interaction_logs(session_id, user_query, llm_response, model_used, cost_tracking
 
 ### 实现步骤
 
-- [ ] **N4.1** 新建 `src/nexus/knowledge/memory_api.py`：
+- [x] **N4.1** 新建 `src/nexus/knowledge/memory_api.py`：
   ```python
   class MemoryAPI:
       """记忆系统的统一 API 门面"""
@@ -299,17 +311,19 @@ interaction_logs(session_id, user_query, llm_response, model_used, cost_tracking
       def get_forgetting_curve(user_id, concept_id) -> ForgettingCurveData
       def get_predicted_forgetting_alerts(user_id, course_id) -> list[Alert]
   ```
+  - (done: src/nexus/knowledge/memory_api.py)
 
-- [ ] **N4.2** 重构现有调用点：
+- [x] **N4.2** 重构现有调用点：(done: qa_pipeline.py 与 streamlit_app.py 记忆访问已委托 MemoryAPI；ProgressService 已接入 Learning Progress tab)
   - `briefing.py` 中的 `UnifiedMemoryReader` 改为通过 `MemoryAPI` 调用
   - `streamlit_app.py` 中的学习进度 tab 改为通过 `MemoryAPI` 调用
   - `qa_pipeline.py` 中的苏格拉底引导改为通过 `MemoryAPI` 获取 mastery
 
-- [ ] **N4.3** 添加 JSON 序列化支持：
+- [x] **N4.3** 添加 JSON 序列化支持：
   - 所有 API 返回的数据类支持 `to_dict()` 方法
   - 为未来的 FastAPI REST 端点做准备
+  - (done: src/nexus/knowledge/memory_api.py — MasteryOverview/ForgettingAlert/MemoryContext 均实现 to_dict())
 
-- [ ] **N4.4** 测试：
+- [x] **N4.4** 测试：(done: tests/test_memory_api.py — MemoryAPI 全部 12 个公开方法 + to_dict)
   - `test_memory_api.py`（新建）：测试所有 API 方法
   - 修改 `test_briefing_context.py`：适配新的 API 路径
 

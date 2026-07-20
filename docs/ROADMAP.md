@@ -52,7 +52,7 @@
 - [x] **M1-5 统一写口 memory_writer**：新建 `memory_writer.py`，`record_weak_point`(resolve→add_weak_point，命中记 struggled) + `apply_feedback_unified`(reject→remove+forgot，accept→mastered+correct_answer)。测试 `tests/test_memory_writer.py`。
 - [x] **M1-6 三个根级入口改走 memory_writer**：改 `cli/memory_extract.py`、`cli/memory_feedback.py`、`archive_sync/post_ingest.py`，移除 state.json 读写。验收：`grep -r "state.json" src/nexus/` 仅剩 state_store.py；`test_archive_post_ingest` 改断言到 SQLite user_profile。
 - [x] **M1-7 UnifiedMemoryReader + briefing 改造**：新建 `knowledge/unified_memory.py`(`weak_points`/`review_queue`=get_decaying_concepts/`low_mastery_topics`)；`briefing._inject_learning_context` 用 reader 替代 `load_state`。验收：`grep load_state briefing.py` 无残留；`test_briefing_context` 改 monkeypatch reader。B1 前置。
-- [x] **M1-8 弃用标记 + 文档**：`state_store.py`/`memory_update.py` 加 deprecation 注释（保留 `memory_extractor`）；ROADMAP M1 标 `[x]`。验收：96 绿。
+- [x] **M1-8 弃用标记 + 文档**：`state_store.py`/`memory_update.py` 已移除；当前记忆入口为 `conversation_store.py` / `memory_writer.py` / `knowledge/temporal_memory.py`；ROADMAP M1 标 `[x]`。验收：96 绿。
 
 **风险**：M1-2/3/4 纯新增不碰现有测试；M1-6/7 高风险（同步改 `test_archive_post_ingest`/`test_briefing_context` 断言，语义保留）；数据改动前 `cp data/nexus.db data/nexus.db.bak`。
 
@@ -139,10 +139,11 @@
 
 目标：新环境按文档安装后，可以可靠启动和诊断。
 
-- [ ] **4A-1 重构依赖为 optional extras**
+- [x] **4A-1 重构依赖为 optional extras**
   - 拆分 pyproject.toml：`core`(streamlit/chromadb/litellm/sqlite3)、`google`(google-api-client/google-auth)、`archive`(playwright/pypdf/pymupdf4llm)、`pdf`(pypdf/pymupdf4llm)、`llm`(litellm)
   - 消灭 requirements.txt（pyproject.toml extras 替代）
   - 验收：`pip install -e .[core]` 可运行离线 QA、数据库命令和 pipeline
+  - (done: pyproject.toml — google/archive/pdf/llm/all extras 已定义；requirements.txt 已不存在)
 
 - [ ] **4A-2 CI 增加真实 pip install + 矩阵构建**
   - Python 3.10-3.13 矩阵
@@ -150,13 +151,14 @@
   - CLI smoke: doctor/db-check/query --help + 无 import crash
   - 验收：矩阵全绿
 
-- [ ] **4A-3 统一 Doctor 的 enabled/configured/available 语义**
+- [x] **4A-3 统一 Doctor 的 enabled/configured/available 语义**
   - 当前 Doctor 只有二元 ok/failed；补充三级诊断：
     - `enabled`: 用户是否启用该功能（env/config）
     - `configured`: 凭据/路径是否就绪（文件存在、权限正确）
     - `available`: 运行时依赖是否可用（import 成功、API 连通）
   - 扩展检查：ChromaDB embedding model、Python 版本、WAL 模式确认、Playwright browser binary、LLM API 连通性
   - 验收：`nexus doctor` 输出三级状态；缺少可选依赖时明确诊断，不产生 import crash
+  - (done: src/nexus/doctor.py — ComponentStatus 实现 enabled/configured/available 三级诊断)
 
 - [ ] **4A-4 补齐 .env.example 和首次启动检查**
   - 补：archive/chroma/pdf 相关环境变量说明
@@ -187,9 +189,10 @@
   - 清理 Berkshire/投资主题及"如何、区别"等伪概念
   - 默认 dry-run；确认后执行
 
-- [ ] **4B-4 Chroma 版本兼容**
+- [x] **4B-4 Chroma 版本兼容**
   - 固定经过验证的 Chroma 版本范围
   - 检查内部 foreign key 一致性
+  - (done: pyproject.toml — `chromadb>=1.0`)
 
 - [ ] **4B-5 迁移安全保障**
   - 每次 apply 前自动备份
@@ -199,24 +202,28 @@
 
 目标：所有入口写入同一双写管线，避免"导入成功但 Progress 不可见"。
 
-- [ ] **4C-1 legacy Markdown/Text ingest 接入双写**
+- [x] **4C-1 legacy Markdown/Text ingest 接入双写**
   - 将 `ingestion_service.ingest_text_documents` 路径接入 SQLite documents/chunks 表
   - 验收：.md/.txt 导入后能被 query、assessment、progress 消费
+  - (done: src/nexus/knowledge/ingestion_service.py — 传入 sqlite_store 时执行 SQLite dual-write)
 
-- [ ] **4C-2 archive post-ingest 接入 CourseIngestor**
+- [x] **4C-2 archive post-ingest 接入 CourseIngestor**
   - `post_ingest.py` 统一走 `CourseIngestor` 双写管线
   - 验收：archive 导入的文件在 SQLite 中可见
+  - (done: src/nexus/archive_sync/post_ingest.py 导入 CourseIngestor)
 
 - [ ] **4C-3 跨进程并发保护**
   - 为同一 document 增加 lease/generation token
   - 两个进程并发导入同一文件不互删、不留半成品
 
-- [ ] **4C-4 批量写入 SQLite**
+- [x] **4C-4 批量写入 SQLite**
   - 避免逐 chunk 事务，改为批量 commit
+  - (done: src/nexus/knowledge/sqlite_store.py — `upsert_chunks`/`_bulk_insert_chunks` 批量写入)
 
-- [ ] **4C-5 aggregation source-level snapshot**
+- [x] **4C-5 aggregation source-level snapshot**
   - 每个来源独立 snapshot，单个来源失败时保留该来源旧数据
   - 验收：任一外部源失败不清除其他来源或该来源的上次快照
+  - (done: src/nexus/aggregation.py — Phase 4C-5 预计算 per-source old tasks)
 
 - [ ] **4C-6 Canvas 接入 aggregation 和 Doctor**
   - Canvas connector 接入 `run_aggregation` 主流程
@@ -226,9 +233,10 @@
 
 目标：减少低价值模块，让 Progress 输出更准确、可解释。
 
-- [ ] **4D-1 建立单一 ProgressService**
+- [x] **4D-1 建立单一 ProgressService**
   - 统一读取 mastery、assessment、review queue
   - 替代分散的 TemporalMemory/MemoryAPI/UserProfileManager 直接调用
+  - (done: src/nexus/knowledge/progress.py — ProgressService 类已存在)
 
 - [ ] **4D-2 模块分级**
   - 核心：Mastery、Assessment、Review Queue
@@ -256,16 +264,18 @@
 
 ### 4E：P1 运维与可观测性
 
-- [ ] **4E-1 结构化日志**
+- [x] **4E-1 结构化日志**
   - JSON 格式、call site、错误分类、敏感信息脱敏
   - 统一 `logging` 配置入口
+  - (done: src/nexus/log_config.py — _JSONFormatter 与 configure_logging)
 
 - [ ] **4E-2 运行状态查询**
   - pipeline/session/backup 最近运行状态
 
-- [ ] **4E-3 备份策略**
+- [x] **4E-3 备份策略**
   - 保留、验证、导出和清理策略
   - 扩展 `nexus db-backup`
+  - (done: src/nexus/cli/db_backup.py — `--retain` 保留策略；src/nexus/knowledge/maintenance.py — create_backup/verify_backup/restore_backup)
 
 - [ ] **4E-4 失败队列**
   - 重试上限及人工处理命令

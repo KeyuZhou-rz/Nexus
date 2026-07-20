@@ -42,3 +42,12 @@ source .env
 
 # Streamlit secrets (contains API keys)
 .streamlit/secrets.toml
+
+# Agent tooling runtime state
+.codex/
+
+# Runtime data artifacts
+data/conversations/
+data/.nexus-maintenance.lock
+data/debug/
+data/backups/

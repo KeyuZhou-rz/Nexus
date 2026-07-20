@@ -6,49 +6,10 @@ from typing import Any, Literal
 
 from .schemas import TASK_SCHEMA_VERSION
 
-ProjectIDE = Literal["vscode", "unity", "pycharm", "other"]
 TaskStatus = Literal["open", "in_progress", "done", "blocked"]
 FeedKind = Literal["brightspace_ical", "brightspace_rss", "ical_file"]
 FeedAudience = Literal["ui", "llm"]
 FeedMode = Literal["default", "exams_only", "assignments_only"]
-
-
-@dataclass
-class Project:
-    """Represents a coding project (for the 'Projects' dashboard)."""
-
-    name: str
-    path: str
-    ide: ProjectIDE = "vscode"
-    docs: list[str] = field(default_factory=list)
-    launch: list[str] = field(default_factory=list)
-    links: list[str] = field(default_factory=list)
-    notes: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Converts object to dictionary for JSON saving."""
-        return {
-            "name": self.name,
-            "path": self.path,
-            "ide": self.ide,
-            "docs": self.docs,
-            "launch": self.launch,
-            "links": self.links,
-            "notes": self.notes,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Project":
-        """Creates object from dictionary (JSON loading)."""
-        return cls(
-            name=str(data.get("name", "")),
-            path=str(data.get("path", "")),
-            ide=data.get("ide", "vscode"),
-            docs=list(data.get("docs", [])),
-            launch=list(data.get("launch", [])),
-            links=list(data.get("links", [])),
-            notes=data.get("notes"),
-        )
 
 
 @dataclass

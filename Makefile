@@ -87,6 +87,31 @@ test-knowledge:
 	          tests/test_knowledge_ingest.py \
 	          tests/test_knowledge_ingest_files.py \
 	          tests/test_knowledge_query.py \
+	          tests/test_knowledge_read.py \
+	          tests/test_temporal_memory.py \
+	          tests/test_study_planner.py \
+	          tests/test_sprint_planner.py \
+	          tests/test_gap_scanner.py \
+	          tests/test_retrospective.py \
+	          tests/test_session_manager.py \
+	          tests/test_graph_retriever.py \
+	          tests/test_concept_extractor.py \
+	          tests/test_concept_resolver.py \
+	          tests/test_context_assembler.py \
+	          tests/test_hesitation_detector.py \
+	          tests/test_assessment_flow.py \
+	          tests/test_assessment_persistence.py \
+	          tests/test_user_profile_derived_mastery.py \
+	          tests/test_parse_cache.py \
+	          tests/test_llm_gateway_config.py \
+	          tests/test_llm_gateway_runtime.py \
+	          tests/test_query_collection_compatibility.py \
+	          tests/test_retrieval_golden.py \
+	          tests/test_qa_prompt_quality.py \
+	          tests/test_qa_pipeline_mastery.py \
+	          tests/test_chunk_backfill.py \
+	          tests/test_p0_storage_retrieval.py \
+	          tests/test_ingestion_contract.py \
 	          -v
 
 test-cli:

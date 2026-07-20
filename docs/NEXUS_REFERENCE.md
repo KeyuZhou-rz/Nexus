@@ -37,12 +37,16 @@ nexus pipeline
 - Briefing：`nexus briefing [--aggregate] [--window-days N] [--llm]`
 - Archive Sync：`python -m nexus.archive_sync`
 - Doctor：`nexus doctor [--no-google] [--strict]`
-- Knowledge Ingest：`nexus ingest --input <path> --course-id <id> --doc-type <type>`
+- Knowledge Ingest：`nexus ingest --input <path> --course-id <id> [--doc-type <type>]`（`--doc-type` 仅在使用 `--legacy` 路径时生效；默认 CourseIngestor 路径从文件名/扩展名推断）
 - Knowledge Query：`nexus query --query <text> [--course-id] [--doc-type]`
 - Knowledge Read：`nexus read [--course-id] [--doc-type] [--source-path] [--limit]`
-- Memory Extract：`nexus memory-extract --session-id <id>`
-- Memory Feedback：`nexus memory-feedback --topic <topic> --action accept|reject`
+- Memory Extract：`nexus memory-extract --session-id <id> [--course-id <course>]`
+- Memory Feedback：`nexus memory-feedback --topic <topic> --action accept|reject [--course-id <course>]`
 - Memory Query：`nexus memory-query --query <text>`
+- Concepts Backfill：`nexus concepts-backfill --course-id <id>`
+- Gap Scan：`nexus scan --course-id <id>`
+- Retrospective：`nexus retro --course-id <id>`
+- Sprint Plan：`nexus sprint --course-id <id>`
 
 数据库运维：
 

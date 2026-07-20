@@ -141,3 +141,10 @@ def test_new_dispatcher_commands_are_importable() -> None:
         module_name, _ = COMMANDS[name]
         module = importlib.import_module(module_name)
         assert hasattr(module, "main"), f"{module_name} has no main"
+
+
+def test_memory_extract_feedback_expose_course_id() -> None:
+    for module in ("memory-extract", "memory-feedback"):
+        result = _run("-m", f"nexus.cli.{module.replace('-', '_')}", "--help")
+        assert result.returncode == 0, (module, result.stderr)
+        assert "--course-id" in result.stdout, f"{module} missing --course-id option"

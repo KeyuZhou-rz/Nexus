@@ -26,6 +26,14 @@ It features an AI-powered daily briefing that analyzes your incoming data to hig
    source venv/bin/activate  # On Windows use: venv\Scripts\activate
    pip install -e .
    ```
+   Optional feature extras (match names in `pyproject.toml`):
+   ```bash
+   pip install -e ".[google]"     # Gmail / Calendar integration
+   pip install -e ".[archive]"    # Brightspace Playwright scraper
+   pip install -e ".[pdf]"        # PDF markdown extraction (pymupdf4llm)
+   pip install -e ".[llm]"        # LLM-powered features via litellm
+   pip install -e ".[all]"        # Everything above
+   ```
 
 3. **Prepare Data Directory:**
    ```bash
@@ -40,7 +48,7 @@ To enable Gmail and Calendar integration:
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
 2. Create a project and enable the **Gmail API** and **Google Calendar API**.
 3. Create OAuth 2.0 Desktop credentials and download the JSON file.
-4. Rename it to `google_credentials.json` and place it in the `data/` directory.
+4. Rename it to `google_client_secret.json` and place it in the `data/` directory.
 5. Run the auth script to generate your local token:
    ```bash
    python -m nexus.google_auth
@@ -113,6 +121,22 @@ streamlit run src/nexus/streamlit_app.py
 **Generate a Briefing manually:**
 ```bash
 nexus briefing --aggregate --window-days 7
+```
+
+**Backfill concept metadata on existing chunks:**
+```bash
+nexus concepts-backfill --course-id CS202_OS
+```
+
+**Generate an exam retrospective or sprint plan:**
+```bash
+nexus retro --course-id CS202_OS
+nexus sprint --course-id CS202_OS
+```
+
+**Scan a course for knowledge gaps:**
+```bash
+nexus scan --course-id CS202_OS
 ```
 
 **Run integrated pipeline with options:**

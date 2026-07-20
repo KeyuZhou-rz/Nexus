@@ -15,17 +15,22 @@ def main() -> None:
     parser.add_argument("--topic", required=True)
     parser.add_argument("--action", required=True, choices=["accept", "reject"])
     parser.add_argument("--db-path", default="data/nexus.db")
+    parser.add_argument(
+        "--course-id",
+        default="conversation",
+        help="Course ID used for concept resolution binding (default: conversation)",
+    )
     args = parser.parse_args()
 
     db_path = Path(args.db_path)
     store = SQLiteStore(db_path)
     resolver = ConceptResolver(store)
-    profile_mgr = UserProfileManager(store)
     temporal = TemporalMemory(store)
+    profile_mgr = UserProfileManager(store, temporal_memory=temporal, concept_resolver=resolver)
 
     result = apply_feedback_unified(
         resolver, profile_mgr, temporal,
-        args.topic, course_id="conversation",
+        args.topic, course_id=args.course_id,
         action=args.action, session_id=None,
     )
 
