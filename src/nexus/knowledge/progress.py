@@ -154,9 +154,9 @@ class ProgressService:
     # ── Internals ─────────────────────────────────────────────────────
 
     def _count_trusted_events(self, course_id: str | None) -> int:
-        import sqlite3
-        with sqlite3.connect(str(self._store.db_path)) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
+        from .sqlite_store import connect
+
+        with connect(self._store.db_path) as conn:
             if course_id:
                 return conn.execute(
                     """SELECT COUNT(*) FROM learning_events

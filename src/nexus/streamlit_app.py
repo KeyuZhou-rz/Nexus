@@ -1504,6 +1504,8 @@ with tab_study:
 with tab_progress:
     import math as _math
 
+    from nexus.knowledge.sqlite_store import SQLiteStore
+
     st.markdown('<div class="section-title" style="margin-top:0;">📊 Learning Progress</div>',
                 unsafe_allow_html=True)
 
@@ -1527,27 +1529,26 @@ with tab_progress:
         _db_path = _DATA_DIR / "nexus.db"
         if _db_path.exists():
             try:
-                from nexus.knowledge.sqlite_store import SQLiteStore
-                from nexus.knowledge.temporal_memory import TemporalMemory
+                from nexus.knowledge.memory_api import MemoryAPI
 
                 _store = SQLiteStore(_db_path)
-                _tm = TemporalMemory(_store)
-                _snapshots = _tm.get_all_mastery()
+                _mem_api = MemoryAPI(_store)
+                _overview = _mem_api.get_mastery_overview()
                 _mastery_list = [
                     {
-                        "concept_id": s.concept_id,
-                        "name": s.concept_name,
-                        "course_id": s.course_id,
-                        "mastery": round(s.current_mastery, 2),
-                        "urgency": s.urgency,
-                        "days_since_review": round(s.days_since_review, 1),
-                        "review_count": s.review_count,
-                        "decay_rate": s.decay_rate,
-                        "initial_mastery": s.initial_mastery,
+                        "concept_id": c["concept_id"],
+                        "name": c["concept_name"],
+                        "course_id": c["course_id"],
+                        "mastery": round(c["current_mastery"], 2),
+                        "urgency": c["urgency"],
+                        "days_since_review": round(c["days_since_review"], 1),
+                        "review_count": c["review_count"],
+                        "decay_rate": c["decay_rate"],
+                        "initial_mastery": c["initial_mastery"],
                     }
-                    for s in _snapshots
+                    for c in _overview.to_dict().get("concepts", [])
                 ]
-                _decaying = _tm.get_decaying_concepts(threshold=0.4)
+                _decaying = _mem_api.get_decaying_concepts(threshold=0.4)
                 _decaying_list = [
                     {"name": s.concept_name, "mastery": round(s.current_mastery, 2),
                      "urgency": s.urgency, "course_id": s.course_id}
@@ -1558,6 +1559,36 @@ with tab_progress:
                 st.warning("Failed to load mastery data from the database. Learning Progress will be unavailable this session.")
         else:
             st.info("No mastery data yet. Use the Study Assistant to build your learning profile.")
+
+    # ── ProgressService snapshot (Phase 4D) ──
+    if _mastery_list:
+        try:
+            from nexus.knowledge.progress import ProgressService, MODULE_TIERS
+
+            _prog_store = SQLiteStore(_DATA_DIR / "nexus.db")
+            _prog_svc = ProgressService(_prog_store)
+            _avg_mastery = sum(m.get("mastery", 0) for m in _mastery_list) / len(_mastery_list)
+            _report = _prog_svc.get_progress(course_id=None)
+            _core_count = sum(1 for t in MODULE_TIERS.values() if t == "core")
+            _conditional_count = sum(1 for t in MODULE_TIERS.values() if t == "conditional")
+            _experimental_count = sum(1 for t in MODULE_TIERS.values() if t == "experimental")
+
+            st.markdown("#### Progress Snapshot")
+            _ps1, _ps2, _ps3, _ps4 = st.columns(4)
+            with _ps1:
+                st.metric("Avg Mastery", f"{_avg_mastery:.0%}")
+            with _ps2:
+                st.metric("Trusted Events", _report.recent_events)
+            with _ps3:
+                st.metric("Review Queue", len(_report.review_queue))
+            with _ps4:
+                st.metric("Module Tiers", f"{_core_count}/{_conditional_count}/{_experimental_count}")
+            st.caption(
+                f"Core modules: {_core_count} · Conditional: {_conditional_count} · "
+                f"Experimental: {_experimental_count} · Total concepts: {_report.total_concepts}"
+            )
+        except Exception:
+            pass
 
     if _mastery_list:
         # ── Course filter ──

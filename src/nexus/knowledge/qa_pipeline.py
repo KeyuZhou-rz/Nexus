@@ -42,12 +42,11 @@ from .context_assembler import assemble_messages, estimate_tokens
 from .concept_resolver import ConceptResolver
 from .graph_retriever import GraphRetriever
 from .llm_client import KnowledgeLLMClient, LLMOutput
+from .memory_api import MemoryAPI
 from .query_engine import QueryEngine, RetrievedChunk, RetrievalResult
 from .session_manager import SessionManager
 from .sqlite_store import SQLiteStore, connect
 from .hesitation_detector import HesitationDetector
-from .temporal_memory import TemporalMemory
-from .user_profile import UserProfileManager
 from .prompts import ASSESSMENT_BUILD_PROMPT, ASSESSMENT_GRADE_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -337,18 +336,16 @@ class QAPipeline:
         self._sqlite_path = sqlite_path
         self._tasks_path = tasks_path
 
-        # Phase 4B unify: TemporalMemory 是唯一权威掌握度源，UserProfileManager
-        # 的 weak_points/mastered 从这里派生，不再各自为政。
-        self._temporal_memory = TemporalMemory(sqlite_store=self._sqlite)
+        # Phase N4.2: mastery/profile access is delegated to the MemoryAPI facade.
+        # QAPipeline no longer directly instantiates TemporalMemory/UserProfileManager.
         self._concept_resolver = ConceptResolver(self._sqlite)
-        self._profile_mgr = UserProfileManager(
+        self._memory_api = MemoryAPI(
             self._sqlite,
-            temporal_memory=self._temporal_memory,
             concept_resolver=self._concept_resolver,
         )
         self._session_mgr = SessionManager(
             sqlite_store=self._sqlite,
-            profile_manager=self._profile_mgr,
+            profile_manager=self._memory_api.profile_manager,
         )
         self._query_engine = QueryEngine(
             chroma_dir=chroma_dir,
@@ -391,7 +388,7 @@ class QAPipeline:
         self._session_mgr.start_session(session_id, course_id)
 
         # ── Step 1: 读取 profile ──
-        profile = self._profile_mgr.get()
+        profile = self._memory_api.get_profile()
         known_courses = profile.get("courses") or []
 
         # ── Step 1.5: 犹豫信号检测 (Memory Layer 1) ──
@@ -454,7 +451,7 @@ class QAPipeline:
                     if cid in seen or not cname:
                         continue
                     seen.add(cid)
-                    m = self._temporal_memory.get_mastery(cid)
+                    m = self._memory_api.get_mastery(cid)
                     if m > 0:
                         mastery_map[cname.strip().lower()] = m
             except Exception as exc:
@@ -771,11 +768,11 @@ class QAPipeline:
 
     def get_profile(self) -> dict[str, Any]:
         """获取当前 user profile。"""
-        return self._profile_mgr.get()
+        return self._memory_api.get_profile()
 
     def add_course(self, course_id: str) -> None:
         """手动添加课程到 profile。"""
-        self._profile_mgr.add_course(course_id)
+        self._memory_api.add_course(course_id)
 
     def get_session_history(self, session_id: str) -> list[dict]:
         """获取 session 的历史问答记录。"""
@@ -793,27 +790,27 @@ class QAPipeline:
 
     def get_mastery_overview(self, course_id: str | None = None) -> list[dict]:
         """获取所有概念的掌握度快照。"""
-        snapshots = self._temporal_memory.get_all_mastery(course_id)
+        overview = self._memory_api.get_mastery_overview(course_id)
         return [
             {
-                "concept_id": s.concept_id,
-                "name": s.concept_name,
-                "course_id": s.course_id,
-                "mastery": round(s.current_mastery, 2),
-                "urgency": s.urgency,
-                "days_since_review": round(s.days_since_review, 1),
-                "review_count": s.review_count,
-                "decay_rate": s.decay_rate,
-                "initial_mastery": s.initial_mastery,
+                "concept_id": c.concept_id,
+                "name": c.concept_name,
+                "course_id": c.course_id,
+                "mastery": round(c.current_mastery, 2),
+                "urgency": c.urgency,
+                "days_since_review": round(c.days_since_review, 1),
+                "review_count": c.review_count,
+                "decay_rate": c.decay_rate,
+                "initial_mastery": c.initial_mastery,
             }
-            for s in snapshots
+            for c in overview.concepts
         ]
 
     def get_decaying_concepts(
         self, threshold: float = 0.4, course_id: str | None = None
     ) -> list[dict]:
         """获取正在遗忘的概念列表。"""
-        snapshots = self._temporal_memory.get_decaying_concepts(threshold, course_id)
+        snapshots = self._memory_api.get_decaying_concepts(threshold, course_id)
         return [
             {
                 "concept_id": s.concept_id,
@@ -865,7 +862,7 @@ class QAPipeline:
                 or item.confidence < _MIN_EVIDENCE_CONFIDENCE
             ):
                 continue
-            self._temporal_memory.record_event(
+            self._memory_api.record_event(
                 concept_id=item.concept_id,
                 event_type=item.event_type,
                 session_id=session_id,
@@ -898,7 +895,7 @@ class QAPipeline:
             return False
         if not 0.0 <= confidence <= 1.0 or confidence < _MIN_EVIDENCE_CONFIDENCE:
             return False
-        snapshot = self._temporal_memory.record_event(
+        snapshot = self._memory_api.record_event(
             concept_id=concept_id,
             event_type=event_type,
             session_id=session_id,

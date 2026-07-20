@@ -27,6 +27,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from .concept_resolver import ConceptResolver
 from .sqlite_store import SQLiteStore
 from .temporal_memory import TemporalMemory, MasterySnapshot
 from .user_profile import UserProfileManager
@@ -65,9 +66,13 @@ class MasteryOverview:
                 {
                     "concept_id": c.concept_id,
                     "concept_name": c.concept_name,
+                    "course_id": c.course_id,
                     "current_mastery": round(c.current_mastery, 3),
                     "days_since_review": round(c.days_since_review, 1),
                     "urgency": c.urgency,
+                    "review_count": c.review_count,
+                    "decay_rate": round(c.decay_rate, 3),
+                    "initial_mastery": round(c.initial_mastery, 3),
                 }
                 for c in self.concepts
             ],
@@ -122,12 +127,25 @@ class MemoryAPI:
     - store: SQLiteStore 实例
     """
 
-    def __init__(self, store: SQLiteStore) -> None:
+    def __init__(
+        self,
+        store: SQLiteStore,
+        concept_resolver: ConceptResolver | None = None,
+    ) -> None:
         self._store = store
         self._temporal = TemporalMemory(store)
-        self._profile = UserProfileManager(store, temporal_memory=self._temporal)
+        self._profile = UserProfileManager(
+            store,
+            temporal_memory=self._temporal,
+            concept_resolver=concept_resolver,
+        )
         self._planner = StudyPlanner(store)
         self._reader = UnifiedMemoryReader(store)
+
+    @property
+    def profile_manager(self) -> UserProfileManager:
+        """Expose the underlying UserProfileManager for SessionManager."""
+        return self._profile
 
     # ════════════════════════════════════════════════
     # 掌握度（TemporalMemory）
@@ -231,6 +249,21 @@ class MemoryAPI:
     def get_courses(self) -> list[str]:
         """获取已注册课程列表。"""
         return self._profile.get_courses()
+
+    def add_course(self, course_id: str) -> None:
+        """追加一门课程到用户画像。"""
+        self._profile.add_course(course_id)
+
+    def apply_profile_patch(
+        self,
+        patch: dict[str, Any],
+        course_id: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, str]:
+        """将 LLM 生成的 JSON patch 原子应用到用户画像。"""
+        return self._profile.apply_patch(
+            patch, course_id=course_id, session_id=session_id
+        )
 
     # ════════════════════════════════════════════════
     # 学习计划（StudyPlanner）
