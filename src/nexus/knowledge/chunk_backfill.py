@@ -549,7 +549,7 @@ class SafeMigration:
     def __init__(self, sqlite_path: Path, chroma_path: Path, data_dir: Path | None = None) -> None:
         self.sqlite_path = sqlite_path
         self.chroma_path = chroma_path
-        self.data_dir = data_dir or Path("data")
+        self.data_dir = data_dir or sqlite_path.expanduser().resolve().parent
 
     def pre_backup(self) -> Path | None:
         """Create a migration-backup. Returns the backup path or None on failure."""
@@ -559,15 +559,17 @@ class SafeMigration:
 
             backup_dir = self.data_dir / "backups"
             backup_dir.mkdir(parents=True, exist_ok=True)
-            ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+            ts = datetime.now().strftime("%Y%m%dT%H%M%S%f")
             backup_path = backup_dir / f"nexus-pre-migration-{ts}.zip"
 
-            create_backup(
+            report = create_backup(
                 sqlite_path=self.sqlite_path,
                 chroma_path=self.chroma_path,
                 output_path=backup_path,
                 force=True,
-            )["path"]
+            )
+            if not report.get("ok"):
+                raise RuntimeError(report.get("error") or "backup did not complete")
             logger.info("Migration backup created: %s", backup_path)
             return backup_path
         except Exception as exc:
@@ -579,10 +581,27 @@ class SafeMigration:
         auditor = KnowledgeConsistencyAudit(self.sqlite_path, self.chroma_path)
         return auditor.run()
 
-    def safe_apply(self) -> dict:
-        """Apply migration with backup + verify. Returns combined report."""
+    def _safe_execute(self, operation: Any) -> dict:
+        """Run a destructive operation only after a verified pre-backup."""
         backup_path = self.pre_backup()
-        result = self.apply()
+        if backup_path is None:
+            return {
+                "ok": False,
+                "applied": False,
+                "backup_path": None,
+                "migration_result": None,
+                "post_audit": None,
+                "error": "Pre-migration backup failed; no changes were applied.",
+            }
+        try:
+            result = operation()
+        except Exception as exc:
+            logger.exception("Migration operation failed after backup")
+            result = {
+                "ok": False,
+                "applied": False,
+                "error": str(exc),
+            }
         audit = self.post_verify()
 
         return {
@@ -602,6 +621,10 @@ class SafeMigration:
             ),
         }
 
+    def safe_apply(self, *args: Any, **kwargs: Any) -> dict:
+        """Apply a migration with a backup and a post-migration audit."""
+        return self._safe_execute(lambda: self.apply(*args, **kwargs))
+
     def plan(self) -> dict:
         raise NotImplementedError("subclass must implement plan()")
 
@@ -614,7 +637,7 @@ class SafeMigration:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class MetadataMigration:
+class MetadataMigration(SafeMigration):
     """Upgrade legacy Chroma vectors to canonical metadata contract.
 
     Chroma-side:
@@ -632,8 +655,7 @@ class MetadataMigration:
     """
 
     def __init__(self, sqlite_path: Path, chroma_path: Path) -> None:
-        self.sqlite_path = sqlite_path
-        self.chroma_path = chroma_path
+        super().__init__(sqlite_path, chroma_path)
 
     # ── public API ────────────────────────────────────────────────────
 
@@ -872,7 +894,21 @@ _PSEUDO_OUTLINE_PATTERNS = [
 ]
 
 
-class ConceptQuarantine:
+class ConsistencyRepairMigration(SafeMigration):
+    """Safe wrapper for the deterministic ``db-repair`` write operation."""
+
+    def plan(self) -> dict:
+        from .maintenance import repair_consistency
+
+        return repair_consistency(self.sqlite_path, self.chroma_path, apply=False)
+
+    def apply(self) -> dict:
+        from .maintenance import repair_consistency
+
+        return repair_consistency(self.sqlite_path, self.chroma_path, apply=True)
+
+
+class ConceptQuarantine(SafeMigration):
     """Detect and isolate pseudo-concepts and orphan concepts.
 
     Classification rules (deterministic, no LLM):
@@ -883,8 +919,8 @@ class ConceptQuarantine:
     Default dry-run; pass ``apply=True`` to write.
     """
 
-    def __init__(self, sqlite_path: Path) -> None:
-        self.sqlite_path = sqlite_path
+    def __init__(self, sqlite_path: Path, chroma_path: Path | None = None) -> None:
+        super().__init__(sqlite_path, chroma_path or sqlite_path.parent / "chroma")
 
     def plan(self) -> dict:
         """Dry-run: return categorized lists without writing."""
@@ -944,6 +980,10 @@ class ConceptQuarantine:
             conn.commit()
 
         return {"ok": True, "restored": concept_id}
+
+    def safe_restore(self, concept_id: str) -> dict:
+        """Restore with the same backup and audit guarantees as quarantine."""
+        return self._safe_execute(lambda: self.restore(concept_id))
 
     def _run(self, dry_run: bool, categories: list[str] | None = None) -> dict:
         pseudo: list[dict] = []

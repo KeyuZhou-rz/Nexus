@@ -39,31 +39,29 @@ def main() -> int:
             SQLiteStore(sqlite_path)
 
         migration = MetadataMigration(sqlite_path, chroma_path)
-        if args.apply:
-            report = migration.apply()
-        else:
-            report = migration.plan()
+        report = migration.safe_apply() if args.apply else migration.plan()
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report.get("ok") else 1
 
     if args.quarantine_concepts or args.restore:
         from nexus.knowledge.chunk_backfill import ConceptQuarantine
 
-        q = ConceptQuarantine(sqlite_path)
+        q = ConceptQuarantine(sqlite_path, chroma_path)
 
         if args.restore:
-            report = q.restore(args.restore)
+            report = q.safe_restore(args.restore)
         elif args.apply:
             categories = args.categories if args.categories else None
-            report = q.apply(categories=categories)
+            report = q.safe_apply(categories=categories)
         else:
             report = q.plan()
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report.get("ok") else 1
 
-    from nexus.knowledge.maintenance import repair_consistency
+    from nexus.knowledge.chunk_backfill import ConsistencyRepairMigration
 
-    report = repair_consistency(sqlite_path, chroma_path, apply=args.apply)
+    migration = ConsistencyRepairMigration(sqlite_path, chroma_path)
+    report = migration.safe_apply() if args.apply else migration.plan()
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report.get("ok") else 1
 
