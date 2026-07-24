@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from nexus.knowledge.sqlite_store import SQLiteStore, connect
+from nexus.knowledge.sqlite_store import _LATEST_SCHEMA_VERSION, SQLiteStore, connect
 
 
 def test_log_interaction_persists_call_site(tmp_path: Path) -> None:
@@ -60,7 +60,7 @@ def test_legacy_database_gets_call_site_column_and_backfills(tmp_path: Path) -> 
         )
 
     store = SQLiteStore(db_path)
-    assert store.schema_version == 8
+    assert store.schema_version == _LATEST_SCHEMA_VERSION
 
     with connect(db_path) as conn:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(interaction_logs)")}

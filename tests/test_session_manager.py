@@ -30,6 +30,12 @@ def store(tmp_path):
     return SQLiteStore(tmp_path / "nexus.db")
 
 
+@pytest.fixture(autouse=True)
+def disable_live_llm(monkeypatch):
+    """Session persistence tests must not depend on a developer's local LLM config."""
+    monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
+
+
 def _make_manager(
     store: SQLiteStore,
     idle_timeout_minutes: int = 5,

@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from nexus.knowledge.sqlite_store import SQLiteStore, connect
+from nexus.knowledge.sqlite_store import _LATEST_SCHEMA_VERSION, SQLiteStore, connect
 
 
 _INIT_SCRIPT = """
@@ -70,12 +70,12 @@ def test_two_processes_can_initialize_new_database(tmp_path: Path) -> None:
     _initialize_in_two_processes(db_path, tmp_path)
 
     store = SQLiteStore(db_path)
-    assert store.schema_version == 8
+    assert store.schema_version == _LATEST_SCHEMA_VERSION
     with connect(db_path) as conn:
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30_000
         assert [row[0] for row in conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        )] == [1, 2, 3, 4, 5, 6, 7, 8]
+        )] == list(range(1, _LATEST_SCHEMA_VERSION + 1))
 
 
 def test_two_processes_can_migrate_legacy_database(tmp_path: Path) -> None:
@@ -104,7 +104,7 @@ def test_two_processes_can_migrate_legacy_database(tmp_path: Path) -> None:
     _initialize_in_two_processes(db_path, tmp_path)
 
     store = SQLiteStore(db_path)
-    assert store.schema_version == 8
+    assert store.schema_version == _LATEST_SCHEMA_VERSION
     with connect(db_path) as conn:
         row = conn.execute(
             """SELECT parser_version, model_version, prompt_hash, chunks_json

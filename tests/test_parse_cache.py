@@ -4,7 +4,7 @@ import sqlite3
 
 from nexus.cli.cache import main as cache_main
 from nexus.knowledge import parser
-from nexus.knowledge.sqlite_store import SQLiteStore
+from nexus.knowledge.sqlite_store import _LATEST_SCHEMA_VERSION, SQLiteStore
 
 
 def test_fallback_parse_is_cached(monkeypatch, tmp_path):
@@ -88,7 +88,7 @@ def test_legacy_cache_schema_is_migrated_without_reuse(tmp_path):
         )
 
     store = SQLiteStore(db_path)
-    assert store.schema_version == 8
+    assert store.schema_version == _LATEST_SCHEMA_VERSION
     entries = store.list_parse_cache()
     assert entries[0]["parser_version"] == "legacy"
     assert store.get_parse_cache(

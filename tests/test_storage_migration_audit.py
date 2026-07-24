@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from nexus.knowledge.chunk_backfill import KnowledgeConsistencyAudit
-from nexus.knowledge.sqlite_store import SQLiteStore, connect
+from nexus.knowledge.sqlite_store import _LATEST_SCHEMA_VERSION, SQLiteStore, connect
 
 
 def test_legacy_database_is_migrated_and_stale_parsing_recovered(tmp_path: Path) -> None:
@@ -26,7 +26,7 @@ def test_legacy_database_is_migrated_and_stale_parsing_recovered(tmp_path: Path)
         )
 
     store = SQLiteStore(db_path)
-    assert store.schema_version == 8
+    assert store.schema_version == _LATEST_SCHEMA_VERSION
     with connect(db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(documents)")}
         assert "status_updated_at" in columns
@@ -62,4 +62,4 @@ def test_consistency_audit_reports_cross_store_drift_without_writing(tmp_path: P
     assert not report["ok"]
     assert "chroma_chunk_missing_sqlite" in codes
     assert "sqlite_chunk_missing_chroma" in codes
-    assert store.schema_version == 8
+    assert store.schema_version == _LATEST_SCHEMA_VERSION
