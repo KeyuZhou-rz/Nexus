@@ -126,6 +126,7 @@ def run_mvp_pipeline(
                 "errors": aggregation.errors,
                 "warnings": aggregation.warnings,
                 "sources": aggregation.source_status,
+                "failure_queue": aggregation.failure_queue,
             },
         ))
     except Exception as exc:

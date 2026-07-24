@@ -5,6 +5,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from nexus.io_utils import atomic_write_json
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create a checksummed SQLite and Chroma backup")
@@ -25,17 +27,23 @@ def main() -> int:
 
     from nexus.knowledge.maintenance import create_backup, verify_backup
 
+    report_path = Path(args.sqlite_path).parent / "backup_report.json"
     if args.verify:
         report = verify_backup(Path(args.verify))
+        _write_status_report(report_path, report, command="verify")
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report.get("ok") else 1
 
-    report = create_backup(
-        Path(args.sqlite_path),
-        Path(args.db_dir),
-        Path(args.output or f"data/backups/nexus-{datetime.now():%Y%m%d-%H%M%S}.zip"),
-        force=args.force,
-    )
+    try:
+        report = create_backup(
+            Path(args.sqlite_path),
+            Path(args.db_dir),
+            Path(args.output or f"data/backups/nexus-{datetime.now():%Y%m%d-%H%M%S}.zip"),
+            force=args.force,
+        )
+    except Exception as exc:
+        report = {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
+    _write_status_report(report_path, report, command="create")
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
     # Phase 4E-3: retention cleanup
@@ -43,6 +51,19 @@ def main() -> int:
         _prune_backups(Path(args.output).parent if args.output else Path("data/backups"), args.retain)
 
     return 0 if report.get("ok") else 1
+
+
+def _write_status_report(path: Path, report: dict, *, command: str) -> None:
+    atomic_write_json(
+        path,
+        {
+            "schema_version": "1.0",
+            "generated_at": datetime.now().astimezone().isoformat(),
+            "command": command,
+            **report,
+        },
+        ensure_ascii=False,
+    )
 
 
 def _prune_backups(backup_dir: Path, keep: int) -> None:

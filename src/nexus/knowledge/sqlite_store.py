@@ -1391,6 +1391,59 @@ class SQLiteStore:
             ).fetchone()[0]
             return {"total_queries": total, "hesitation_count": hesitations}
 
+    def get_concept_query_stats_batch(
+        self,
+        concept_ids: list[str] | set[str] | tuple[str, ...],
+        *,
+        since_days: tuple[int, ...] = (14, 3),
+    ) -> dict[str, dict[int, dict[str, int]]]:
+        """Fetch all query statistics for a ranking pass in one SQLite query.
+
+        The result includes zero-valued entries for every requested concept and
+        window, so callers can use it as a direct replacement for repeated
+        ``get_concept_query_stats`` calls without special-case SQL.
+        """
+        ids = list(dict.fromkeys(concept_id for concept_id in concept_ids if concept_id))
+        windows = tuple(dict.fromkeys(int(days) for days in since_days if int(days) > 0))
+        if not ids or not windows:
+            return {}
+
+        result = {
+            concept_id: {
+                days: {"total_queries": 0, "hesitation_count": 0}
+                for days in windows
+            }
+            for concept_id in ids
+        }
+        columns: list[str] = []
+        parameters: list[Any] = []
+        for days in windows:
+            modifier = f"-{days} days"
+            columns.extend([
+                f"SUM(CASE WHEN timestamp >= datetime('now', ?) THEN 1 ELSE 0 END) AS total_{days}",
+                f"SUM(CASE WHEN timestamp >= datetime('now', ?) AND had_hesitation = 1 THEN 1 ELSE 0 END) AS hesitation_{days}",
+            ])
+            parameters.extend([modifier, modifier])
+        placeholders = ", ".join("?" for _ in ids)
+        oldest_modifier = f"-{max(windows)} days"
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                f"""SELECT concept_id, {', '.join(columns)}
+                    FROM concept_query_log
+                    WHERE concept_id IN ({placeholders})
+                      AND timestamp >= datetime('now', ?)
+                    GROUP BY concept_id""",
+                [*parameters, *ids, oldest_modifier],
+            ).fetchall()
+        for row in rows:
+            concept_stats = result[row["concept_id"]]
+            for days in windows:
+                concept_stats[days] = {
+                    "total_queries": int(row[f"total_{days}"] or 0),
+                    "hesitation_count": int(row[f"hesitation_{days}"] or 0),
+                }
+        return result
+
     # ── Exam Records ───────────────────────────────
 
     def upsert_exam_record(

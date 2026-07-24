@@ -20,6 +20,8 @@ import argparse
 import logging
 from pathlib import Path
 
+from ..failure_queue import failure_key, update_failure_queue
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 # 支持的文件扩展名
@@ -65,11 +67,37 @@ def _run_phase3(args: argparse.Namespace) -> int:
     skipped = sum(result.status == "skipped" for result in results)
     failed = sum(result.status == "failed" for result in results)
     total_chunks = sum(result.chunks for result in results if result.status != "failed")
+    _update_ingest_failure_queue(sqlite_path.parent, args.course_id, results)
     print(
         f"\n汇总：成功 {ingested}，跳过 {skipped}，失败 {failed}，"
         f"共 {total_chunks} chunks"
     )
     return 1 if failed else 0
+
+
+def _update_ingest_failure_queue(data_dir: Path, course_id: str, results: list[object]) -> None:
+    """Record retryable per-file ingest failures and clear files that recovered."""
+    failures: list[dict[str, str]] = []
+    resolved: set[str] = set()
+    for result in results:
+        path = str(getattr(result, "filepath", ""))
+        item = {
+            "operation": "ingest",
+            "course_id": course_id,
+            "input_path": path,
+        }
+        if getattr(result, "status", "") == "failed":
+            failures.append({**item, "error": str(getattr(result, "error", "ingest failed"))})
+        elif getattr(result, "status", "") in {"ingested", "skipped"}:
+            resolved.add(failure_key(item))
+    try:
+        update_failure_queue(
+            data_dir / "ingest_failures.json",
+            failures,
+            resolved_attachment_urls=resolved,
+        )
+    except OSError as exc:
+        logging.warning("Could not update ingest failure queue: %s", exc)
 
 
 def _run_legacy(args: argparse.Namespace) -> int:
@@ -85,15 +113,23 @@ def _run_legacy(args: argparse.Namespace) -> int:
 
     store = ChromaKnowledgeStore(Path(args.db_dir), per_course=True)
     sqlite_store = SQLiteStore(Path(args.sqlite_path))
-    summary = ingest_files(
-        files,
-        store,
-        course_id=args.course_id,
-        doc_type=getattr(args, "doc_type", "notes"),
-        max_chars=getattr(args, "max_chars", 900),
-        overlap=getattr(args, "overlap", 120),
-        sqlite_store=sqlite_store,
-    )
+    try:
+        summary = ingest_files(
+            files,
+            store,
+            course_id=args.course_id,
+            doc_type=getattr(args, "doc_type", "notes"),
+            max_chars=getattr(args, "max_chars", 900),
+            overlap=getattr(args, "overlap", 120),
+            sqlite_store=sqlite_store,
+        )
+    except Exception as exc:
+        _update_ingest_failure_queue(
+            Path(args.sqlite_path).parent,
+            args.course_id,
+            [type("LegacyFailure", (), {"filepath": Path(args.input), "status": "failed", "error": str(exc)})()],
+        )
+        raise
     print(f"Ingested files: {summary.files}, chunks: {summary.chunks}")
     return 0
 

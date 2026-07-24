@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 from pathlib import Path
+
+from nexus.io_utils import atomic_write_json
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -36,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.action == "abandon":
         payload = manager.abandon_session(args.session_id, args.reason)
+        _write_status_report(db_path.parent, payload)
         if args.as_json:
             print(json.dumps(payload, ensure_ascii=False))
         else:
@@ -44,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ended = manager.check_and_end_idle_sessions()
     payload = {"status": "ok", "finalized": ended, "count": len(ended)}
+    _write_status_report(db_path.parent, payload)
     if args.as_json:
         print(json.dumps(payload, ensure_ascii=False))
     else:
@@ -51,6 +56,20 @@ def main(argv: list[str] | None = None) -> int:
         for session_id in ended:
             print(f"  {session_id}")
     return 0
+
+
+def _write_status_report(data_dir: Path, payload: dict[str, object]) -> None:
+    """Persist the last scheduler outcome; successful sessions are later deleted from SQLite."""
+    atomic_write_json(
+        data_dir / "session_finalization_report.json",
+        {
+            "schema_version": "1.0",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "ok": payload.get("status") not in {"not_found"},
+            **payload,
+        },
+        ensure_ascii=False,
+    )
 
 
 if __name__ == "__main__":

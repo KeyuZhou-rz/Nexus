@@ -173,6 +173,14 @@ class GapScanner:
         if not cp:
             return []
 
+        # One grouped query replaces two statistics reads per checkpoint
+        # concept. Mastery remains a separate concern because it applies the
+        # time-decay model rather than exposing raw query-log data.
+        concept_ids = [str(c["concept_id"]) for c in cp if c.get("concept_id")]
+        query_stats = self._store.get_concept_query_stats_batch(
+            concept_ids, since_days=(14, 3)
+        )
+
         ranked: list[dict[str, Any]] = []
         for c in cp:
             name = c["name"]
@@ -185,16 +193,11 @@ class GapScanner:
             else:
                 mastery = 0.0
 
-            # 每个 concept 最多查询 2 次 query stats（14 天窗口 + 3 天窗口），
-            # 复用结果算 hesitation_boost / recency_boost / 输出字段，
-            # 避免同一个 (cid, since_days) 重复查 3-4 次冗余 SQL。
-            stats_14 = (
-                self._store.get_concept_query_stats(cid, since_days=14)
-                if cid else {"total_queries": 0, "hesitation_count": 0}
+            stats_14 = query_stats.get(cid, {}).get(
+                14, {"total_queries": 0, "hesitation_count": 0}
             )
-            stats_3 = (
-                self._store.get_concept_query_stats(cid, since_days=3)
-                if cid else {"total_queries": 0, "hesitation_count": 0}
+            stats_3 = query_stats.get(cid, {}).get(
+                3, {"total_queries": 0, "hesitation_count": 0}
             )
 
             # Hesitation boost

@@ -8,6 +8,7 @@ from .aggregators.brightspace import BrightspaceAggregator, FeedConfig
 from .aggregators.canvas import CanvasLMSConnector
 from .aggregators.google import GoogleAggregator
 from .config import AppConfig, default_config
+from .failure_queue import failure_key, update_failure_queue
 from .models import FeedSource, Task
 from .storage import load_feeds, load_tasks, save_tasks
 from .utils import dedupe_tasks
@@ -26,6 +27,7 @@ class AggregationResult:
     errors: list[str]
     warnings: list[str] = field(default_factory=list)
     source_status: dict[str, str] = field(default_factory=dict)
+    failure_queue: dict[str, object] | None = None
 
 
 @dataclass
@@ -123,6 +125,8 @@ def run_aggregation(
     errors: list[str] = []
     warnings: list[str] = []
     source_status: dict[str, str] = {}
+    failures: list[dict[str, str]] = []
+    resolved_failures: set[str] = set()
     existing_tasks = load_tasks(tasks_path)
 
     # Pre-compute per-source old tasks for snapshot preservation (Phase 4C-5)
@@ -143,9 +147,11 @@ def run_aggregation(
         try:
             tasks.extend(BrightspaceAggregator(ical_feeds, rss_feeds).fetch_tasks())
             source_status["brightspace"] = "succeeded"
+            resolved_failures.add(failure_key({"operation": "aggregation", "source": "brightspace"}))
         except Exception as exc:
             errors.append(f"Brightspace error: {exc}")
             source_status["brightspace"] = "failed"
+            failures.append({"operation": "aggregation", "source": "brightspace", "error": str(exc)})
             # Preserve old Brightspace tasks
             old = old_by_source.get("brightspace", [])
             if old:
@@ -163,9 +169,11 @@ def run_aggregation(
         try:
             tasks.extend(GoogleAggregator().fetch_tasks())
             source_status["google"] = "succeeded"
+            resolved_failures.add(failure_key({"operation": "aggregation", "source": "google"}))
         except Exception as exc:
             errors.append(f"Google error: {exc}")
             source_status["google"] = "failed"
+            failures.append({"operation": "aggregation", "source": "google", "error": str(exc)})
             for src_key in ("gcal", "gmail", "google"):
                 old = old_by_source.get(src_key, [])
                 if old:
@@ -184,9 +192,11 @@ def run_aggregation(
             canvas_tasks = connector.to_tasks()
             tasks.extend(canvas_tasks)
             source_status["canvas"] = f"succeeded ({len(canvas_tasks)} tasks)"
+            resolved_failures.add(failure_key({"operation": "aggregation", "source": "canvas"}))
         except Exception as exc:
             errors.append(f"Canvas error: {exc}")
             source_status["canvas"] = "failed"
+            failures.append({"operation": "aggregation", "source": "canvas", "error": str(exc)})
             old = old_by_source.get("canvas", [])
             if old:
                 warnings.append(f"Canvas failed; preserving {len(old)} old tasks.")
@@ -199,16 +209,40 @@ def run_aggregation(
             "Aggregation produced no new tasks; preserving existing tasks.json."
         )
         save_tasks(existing_tasks, tasks_path)
+        queue_report = _update_aggregation_failure_queue(
+            data_dir, failures, resolved_failures, warnings
+        )
         return AggregationResult(
             tasks=existing_tasks, errors=errors, warnings=warnings,
-            source_status=source_status,
+            source_status=source_status, failure_queue=queue_report,
         )
 
     save_tasks(tasks, tasks_path)
+    queue_report = _update_aggregation_failure_queue(
+        data_dir, failures, resolved_failures, warnings
+    )
     return AggregationResult(
         tasks=tasks, errors=errors, warnings=warnings,
-        source_status=source_status,
+        source_status=source_status, failure_queue=queue_report,
     )
+
+
+def _update_aggregation_failure_queue(
+    data_dir: Path,
+    failures: list[dict[str, str]],
+    resolved: set[str],
+    warnings: list[str],
+) -> dict[str, object] | None:
+    """Persist source failures without turning an observability fault into data loss."""
+    try:
+        return update_failure_queue(
+            data_dir / "aggregation_failures.json",
+            failures,
+            resolved_attachment_urls=resolved,
+        )
+    except OSError as exc:
+        warnings.append(f"Could not update aggregation failure queue: {exc}")
+        return None
 
 
 def sync_google_calendar(

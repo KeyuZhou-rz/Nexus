@@ -161,26 +161,31 @@ class TestGapScannerWeaknessRanking:
         )
         return "CS202_OS__2026-W01"
 
-    def test_get_concept_query_stats_called_at_most_twice_per_concept(self, tmp_store):
-        """Regression test for the redundant-SQL bug: compute_weakness_ranking
-        used to call get_concept_query_stats(cid, 14) three times and
-        (cid, 3) once per concept (4 total). It must now call it exactly
-        once per (cid, since_days) combination -> 2 calls for one concept."""
+    def test_query_stats_are_loaded_once_for_the_whole_checkpoint(self, tmp_store):
+        """Regression guard: ranking must not issue one stats query per concept."""
         checkpoint_id = self._seed_checkpoint(tmp_store)
+        tmp_store.upsert_checkpoint_concept(
+            checkpoint_id=checkpoint_id,
+            concept_id="cs202_os__virtual_memory",
+            name="Virtual Memory",
+            importance=7,
+            q1="q1", q2="q2", q3="q3",
+        )
         scanner = GapScanner(tmp_store)
 
-        real_stats = tmp_store.get_concept_query_stats
+        real_stats = tmp_store.get_concept_query_stats_batch
         calls: list[tuple] = []
 
-        def _spy(concept_id, since_days=14):
-            calls.append((concept_id, since_days))
-            return real_stats(concept_id, since_days=since_days)
+        def _spy(concept_ids, *, since_days=(14, 3)):
+            calls.append((tuple(concept_ids), since_days))
+            return real_stats(concept_ids, since_days=since_days)
 
-        with patch.object(tmp_store, "get_concept_query_stats", side_effect=_spy):
+        with patch.object(tmp_store, "get_concept_query_stats_batch", side_effect=_spy):
             scanner.compute_weakness_ranking("CS202_OS", checkpoint_id)
 
-        assert len(calls) == 2
-        assert set(calls) == {("cs202_os__deadlock", 14), ("cs202_os__deadlock", 3)}
+        assert calls == [
+            (("cs202_os__deadlock", "cs202_os__virtual_memory"), (14, 3))
+        ]
 
     def test_recency_boost_favors_neglected_concept_not_recently_queried(self, tmp_store):
         """Fix: a concept queried recently (last 3 days) should NOT get an
