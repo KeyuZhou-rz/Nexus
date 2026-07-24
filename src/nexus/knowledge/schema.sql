@@ -315,6 +315,8 @@ CREATE TABLE IF NOT EXISTS exam_records (
     exam_date       TEXT NOT NULL,
     chapter_weights TEXT,                       -- JSON: {"ch3": 0.15, ...}
     user_input      TEXT,                       -- 用户考后反馈
+    pre_exam_mastery_snapshot TEXT,             -- immutable JSON prediction captured before exam
+    pre_exam_snapshot_at TIMESTAMP,             -- capture time for auditability
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

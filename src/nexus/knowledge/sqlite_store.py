@@ -22,7 +22,7 @@ from .connection_registry import register_connection, unregister_connection
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_LATEST_SCHEMA_VERSION = 8
+_LATEST_SCHEMA_VERSION = 9
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -230,6 +230,13 @@ class SQLiteStore:
                    SET call_site = COALESCE(call_site, 'unspecified')
                    WHERE call_site IS NULL OR call_site=''"""
             )
+            return
+        if version == 9:
+            columns = SQLiteStore._table_columns(conn, "exam_records")
+            if "pre_exam_mastery_snapshot" not in columns:
+                conn.execute("ALTER TABLE exam_records ADD COLUMN pre_exam_mastery_snapshot TEXT")
+            if "pre_exam_snapshot_at" not in columns:
+                conn.execute("ALTER TABLE exam_records ADD COLUMN pre_exam_snapshot_at TIMESTAMP")
             return
         raise RuntimeError(f"Unsupported schema migration: {version}")
 
@@ -1403,6 +1410,21 @@ class SQLiteStore:
                 (exam_id, course_id, exam_date,
                  chapter_weights, user_input),
             )
+
+    def store_pre_exam_mastery_snapshot(
+        self, exam_id: str, snapshot: str,
+    ) -> bool:
+        """Persist an exam's prediction once, without ever replacing it."""
+        with connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """UPDATE exam_records
+                   SET pre_exam_mastery_snapshot = ?,
+                       pre_exam_snapshot_at = CURRENT_TIMESTAMP
+                   WHERE exam_id = ?
+                     AND pre_exam_mastery_snapshot IS NULL""",
+                (snapshot, exam_id),
+            )
+            return cursor.rowcount == 1
 
     def get_exam_record(self, exam_id: str) -> dict[str, Any] | None:
         with connect(self.db_path) as conn:

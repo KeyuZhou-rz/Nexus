@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from .assessment import AssessmentAttempt, AssessmentGrade, AssessmentTarget
-from .context_assembler import assemble_messages, estimate_tokens
+from .context_assembler import assemble_messages, estimate_tokens, validate_citation_protocol
 from .concept_resolver import ConceptResolver
 from .graph_retriever import GraphRetriever
 from .llm_client import KnowledgeLLMClient, LLMOutput
@@ -503,6 +503,31 @@ class QAPipeline:
             warnings.append(
                 "LLM 未启用或暂时不可用；当前结果仅展示检索到的课件原文。"
             )
+
+        # Retrieval-backed answers must only cite source IDs that were exposed
+        # in this prompt. Invalid generations are replaced with bounded source
+        # excerpts, preserving an auditable answer rather than leaking a bad ID.
+        if retrieval.chunks:
+            citation_check = validate_citation_protocol(
+                output.content, retrieval.chunks, require_citation=True,
+            )
+            if not citation_check["ok"]:
+                issues: list[str] = []
+                if citation_check["unknown"]:
+                    issues.append(
+                        "未知引用 " + ", ".join(f"[{source}]" for source in citation_check["unknown"])
+                    )
+                if citation_check["missing"]:
+                    issues.append("缺少课件引用")
+                warnings.append(
+                    "回答未通过引用校验（" + "；".join(issues) + "），已改为展示可验证的课件摘录。"
+                )
+                output = LLMOutput(
+                    content=_retrieval_only_answer(retrieval.chunks),
+                    model_used="citation-gated",
+                    input_tokens=output.input_tokens,
+                    output_tokens=output.output_tokens,
+                )
 
         # ── Step 6: 记录日志 + 更新 session 活动 ──
         chunk_ids = [c.chunk_id for c in retrieval.chunks]

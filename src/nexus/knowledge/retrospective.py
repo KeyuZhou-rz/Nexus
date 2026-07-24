@@ -60,8 +60,37 @@ class ExamRetrospective:
             chapter_weights=ch_json,
             user_input=user_input,
         )
+        self._capture_pre_exam_snapshot(exam_id, course_id, exam_date)
         logger.info(f"Exam recorded: {exam_id}")
         return exam_id
+
+    def _capture_pre_exam_snapshot(
+        self, exam_id: str, course_id: str, exam_date: str,
+    ) -> None:
+        """Capture the prediction once while the exam remains in the future."""
+        try:
+            if datetime.fromisoformat(exam_date).date() <= datetime.now().date():
+                return
+        except (TypeError, ValueError):
+            logger.warning("Exam %s has an invalid date; no mastery snapshot captured", exam_id)
+            return
+
+        snapshots = self._temporal.get_all_mastery(course_id)
+        payload = [
+            {
+                "concept_id": snapshot.concept_id,
+                "concept_name": snapshot.concept_name,
+                "current_mastery": snapshot.current_mastery,
+                "days_since_review": snapshot.days_since_review,
+                "urgency": snapshot.urgency,
+            }
+            for snapshot in snapshots
+        ]
+        # The store only writes when absent, so later metadata edits cannot
+        # rewrite the prediction used by a retrospective.
+        self._store.store_pre_exam_mastery_snapshot(
+            exam_id, json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        )
 
     # ── Generate Retrospective ───────────────────────────────────
 
@@ -106,20 +135,30 @@ class ExamRetrospective:
                 user_input=user_input,
             )
 
-        # Get predicted weak concepts (pre-exam snapshot)
-        # 这是系统在考前的真实、客观预测——命中率必须对照它来算，
-        # 不能让 LLM 在同一次调用里既定义"预测"又给自己打命中分（自评）。
-        snapshots = self._temporal.get_all_mastery(course_id)
+        # Retrospectives use only the immutable pre-exam prediction. Reading
+        # current mastery here would make the past change as the student studies.
+        raw_snapshot = exam.get("pre_exam_mastery_snapshot")
+        if not raw_snapshot:
+            return {"error": "Pre-exam mastery snapshot is unavailable; retrospective cannot be audited."}
+        try:
+            snapshot_rows = json.loads(raw_snapshot)
+        except (TypeError, json.JSONDecodeError):
+            return {"error": "Pre-exam mastery snapshot is invalid; retrospective is unavailable."}
+        if not isinstance(snapshot_rows, list):
+            return {"error": "Pre-exam mastery snapshot is unavailable; retrospective cannot be audited."}
         weak_snaps = [
-            s for s in snapshots
-            if s.urgency in ("critical", "decaying")
+            item for item in snapshot_rows
+            if isinstance(item, dict)
+            and item.get("urgency") in ("critical", "decaying")
+            and isinstance(item.get("concept_name"), str)
+            and isinstance(item.get("current_mastery"), (int, float))
         ]
-        weak_snaps.sort(key=lambda s: s.current_mastery)
-        predicted_weak_names = [s.concept_name for s in weak_snaps[:15]]
+        weak_snaps.sort(key=lambda item: float(item["current_mastery"]))
+        predicted_weak_names = [str(item["concept_name"]) for item in weak_snaps[:15]]
         predicted_weak = [
-            f"{s.concept_name} (掌握度 {s.current_mastery*100:.0f}%, "
-            f"最后复习 {s.days_since_review:.0f} 天前, urgency={s.urgency})"
-            for s in weak_snaps[:15]
+            f"{item['concept_name']} (掌握度 {float(item['current_mastery'])*100:.0f}%, "
+            f"最后复习 {float(item.get('days_since_review', 0)):.0f} 天前, urgency={item['urgency']})"
+            for item in weak_snaps[:15]
         ]
         predicted_weak_text = "\n".join(
             f"  {i+1}. {w}" for i, w in enumerate(predicted_weak)

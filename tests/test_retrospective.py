@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -103,6 +104,36 @@ class TestRecordExam:
         record = tmp_store.get_exam_record(exam_id)
         assert "死锁考了大题" in record["user_input"]
 
+    def test_future_exam_captures_an_immutable_mastery_snapshot(self, hit_rate_store):
+        retro = ExamRetrospective(hit_rate_store)
+        exam_date = (datetime.now() + timedelta(days=2)).date().isoformat()
+
+        exam_id = retro.record_exam("CS202_OS", exam_date)
+        first = hit_rate_store.get_exam_record(exam_id)["pre_exam_mastery_snapshot"]
+        assert json.loads(first)
+
+        # Editing the record before the exam must retain the first prediction.
+        retro.record_exam("CS202_OS", exam_date, user_input="Updated logistics")
+        second = hit_rate_store.get_exam_record(exam_id)["pre_exam_mastery_snapshot"]
+        assert second == first
+
+    def test_past_exam_has_no_fabricated_snapshot(self, tmp_store):
+        retro = ExamRetrospective(tmp_store)
+        exam_id = retro.record_exam("CS202_OS", "2020-01-01")
+        assert tmp_store.get_exam_record(exam_id)["pre_exam_mastery_snapshot"] is None
+
+
+def _record_auditable_past_exam(retro: ExamRetrospective, store: SQLiteStore) -> str:
+    """Capture a future snapshot, then model the later post-exam state."""
+    future_date = (datetime.now() + timedelta(days=2)).date().isoformat()
+    exam_id = retro.record_exam("CS202_OS", future_date)
+    with sqlite3.connect(str(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE exam_records SET exam_date = ? WHERE exam_id = ?",
+            ("2020-01-01", exam_id),
+        )
+    return exam_id
+
 
 class TestGenerateRetrospective:
     def test_requires_feedback(self, tmp_store):
@@ -123,7 +154,7 @@ class TestGenerateRetrospective:
         coming from the system's own pre-exam TemporalMemory snapshot (Deadlock
         was reinforced to "mastered", so only Virtual Memory is predicted weak)."""
         retro = ExamRetrospective(hit_rate_store)
-        exam_id = retro.record_exam("CS202_OS", "2026-07-01")
+        exam_id = _record_auditable_past_exam(retro, hit_rate_store)
 
         fake_response = MagicMock()
         fake_response.content = json.dumps({
@@ -152,7 +183,7 @@ class TestGenerateRetrospective:
         this is the fix for the old self-eval bug (predicted/actual both LLM-made
         in the same call, so a hallucinated hit used to count as 1/1 accuracy)."""
         retro = ExamRetrospective(hit_rate_store)
-        exam_id = retro.record_exam("CS202_OS", "2026-07-01")
+        exam_id = _record_auditable_past_exam(retro, hit_rate_store)
 
         fake_response = MagicMock()
         fake_response.content = json.dumps({
@@ -171,6 +202,16 @@ class TestGenerateRetrospective:
         assert result["predicted_weak"] == ["Virtual Memory"]
         assert result["actual_hits"] == []
         assert result["hit_rate"] == "0/1"
+
+    def test_missing_snapshot_refuses_non_auditable_retrospective(self, tmp_store):
+        retro = ExamRetrospective(tmp_store)
+        exam_id = retro.record_exam("CS202_OS", "2020-01-01")
+
+        result = retro.generate_retrospective(exam_id, "我记得考了死锁。")
+
+        assert result == {
+            "error": "Pre-exam mastery snapshot is unavailable; retrospective cannot be audited."
+        }
 
 
 class TestListExams:
