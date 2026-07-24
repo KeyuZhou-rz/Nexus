@@ -49,7 +49,7 @@ make ingest-force
 make ingest-legacy
 ```
 
-> **注意**：默认使用 Qwen（DashScope）解析课件，需要 `data/QWEN_API_KEY.json` 存在。
+> **注意**：LLM 功能需同时设置 `NEXUS_LLM_API_KEY` 和 `NEXUS_LLM_ENABLED=1`；旧版 `data/QWEN_API_KEY.json` 仅作为兼容回退。
 
 ### Step 2：验证数据已写入
 
@@ -103,7 +103,7 @@ make briefing-llm
 ## 单元测试
 
 ```bash
-make test              # 全量（540+ 个测试）
+make test              # 全量（594 个测试）
 
 make test-knowledge    # 仅 Knowledge 模块（chunking / ingest / query）
 

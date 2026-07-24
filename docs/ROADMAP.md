@@ -145,11 +145,12 @@
   - 验收：`pip install -e .[core]` 可运行离线 QA、数据库命令和 pipeline
   - (done: pyproject.toml — google/archive/pdf/llm/all extras 已定义；requirements.txt 已不存在)
 
-- [ ] **4A-2 CI 增加真实 pip install + 矩阵构建**
+- [x] **4A-2 CI 增加真实 pip install + 矩阵构建**
   - Python 3.10-3.13 矩阵
   - `pip install -e .[core,google,archive,pdf,llm]` + `pip check`
   - CLI smoke: doctor/db-check/query --help + 无 import crash
   - 验收：矩阵全绿
+  - (done: .github/workflows/tests.yml — Python 3.10-3.13, `.[all]`, pip check, CLI smoke)
 
 - [x] **4A-3 统一 Doctor 的 enabled/configured/available 语义**
   - 当前 Doctor 只有二元 ok/failed；补充三级诊断：
@@ -165,38 +166,43 @@
   - 首次启动向导：检测 data/ 是否初始化，提示运行 ingest
   - 验收：新环境按 .env.example 配置后可启动
 
-- [ ] **4A-5 scheduler 示例**
+- [x] **4A-5 scheduler 示例**
   - pipeline: 每日 cron/systemd timer 示例
   - session finalize: 定期清理过期 session
   - backup: 每周备份 cron 示例
   - 验收：示例可复制粘贴使用
+  - (done: deploy/ — cron, systemd, launchd pipeline/session/backup examples)
 
 ### 4B：P0 索引与历史数据治理
 
 目标：把当前可用但仍带旧契约的数据升级到统一索引格式。
 
-- [ ] **4B-1 只读索引审计**
+- [x] **4B-1 只读索引审计**
   - 扩展 `KnowledgeConsistencyAudit`：metadata、collection/course、document、分页完整性
   - 输出精确的待修复数量和分布
+  - (done: `nexus db-check` + KnowledgeConsistencyAudit)
 
-- [ ] **4B-2 metadata/hash 迁移**
+- [x] **4B-2 metadata/hash 迁移**
   - 为旧向量补齐 `schema_version`/`document_id`/`chunk_id`/`file_hash`/`chunk_index`
   - 将旧 MD5 document hash 迁移到 SHA-256
   - SQLite chunks 表加 `chunk_index` 列（如缺失）
+  - (done: MetadataMigration dry-run/apply + migration tests)
 
-- [ ] **4B-3 concept quarantine/cleanup**
+- [x] **4B-3 concept quarantine/cleanup**
   - 识别并隔离无 chunk 证据的孤立 concept
   - 清理 Berkshire/投资主题及"如何、区别"等伪概念
   - 默认 dry-run；确认后执行
+  - (done: `nexus db-repair --quarantine-concepts`, reversible quarantine table)
 
 - [x] **4B-4 Chroma 版本兼容**
   - 固定经过验证的 Chroma 版本范围
   - 检查内部 foreign key 一致性
   - (done: pyproject.toml — `chromadb>=1.0`)
 
-- [ ] **4B-5 迁移安全保障**
+- [x] **4B-5 迁移安全保障**
   - 每次 apply 前自动备份
   - 迁移后执行 db-check 和检索 golden set
+  - (done: SafeMigration is now required for db-repair writes; pre-backup failure blocks apply; post-audit covered by `tests/test_safe_migrations.py`)
 
 ### 4C：P1 入库路径统一
 
@@ -212,9 +218,10 @@
   - 验收：archive 导入的文件在 SQLite 中可见
   - (done: src/nexus/archive_sync/post_ingest.py 导入 CourseIngestor)
 
-- [ ] **4C-3 跨进程并发保护**
+- [x] **4C-3 跨进程并发保护**
   - 为同一 document 增加 lease/generation token
   - 两个进程并发导入同一文件不互删、不留半成品
+  - (done: per-course/document exclusive lease; `tests/test_ingest_document_lock.py` covers same-document serialization and unrelated-document concurrency)
 
 - [x] **4C-4 批量写入 SQLite**
   - 避免逐 chunk 事务，改为批量 commit
@@ -225,9 +232,10 @@
   - 验收：任一外部源失败不清除其他来源或该来源的上次快照
   - (done: src/nexus/aggregation.py — Phase 4C-5 预计算 per-source old tasks)
 
-- [ ] **4C-6 Canvas 接入 aggregation 和 Doctor**
+- [x] **4C-6 Canvas 接入 aggregation 和 Doctor**
   - Canvas connector 接入 `run_aggregation` 主流程
   - Doctor 检查 Canvas 凭据和连通性
+  - (done: aggregation.py Canvas source and doctor Canvas component)
 
 ### 4D：P1 Progress 后端收敛
 
@@ -238,26 +246,31 @@
   - 替代分散的 TemporalMemory/MemoryAPI/UserProfileManager 直接调用
   - (done: src/nexus/knowledge/progress.py — ProgressService 类已存在)
 
-- [ ] **4D-2 模块分级**
+- [x] **4D-2 模块分级**
   - 核心：Mastery、Assessment、Review Queue
   - 条件启用：Study/Sprint Plan
   - Experimental：Gap Scanner、Retrospective
   - Experimental 模块不影响核心 mastery
+  - (done: ProgressService MODULE_TIERS)
 
-- [ ] **4D-3 无可信 assessment 数据时不输出伪精确 mastery**
+- [x] **4D-3 无可信 assessment 数据时不输出伪精确 mastery**
   - 检查 `learning_events.trust_status` 过滤
   - 普通 QA、被动阅读和模型推断不修改 mastery
+  - (done: TemporalMemory trusted evidence gate)
 
-- [ ] **4D-4 Sprint 时间预算**
+- [x] **4D-4 Sprint 时间预算**
   - 根据概念数量、难度和可用时间计算时间预算
   - 非简单线性分配
+  - (done: SprintPlanner._estimate_minutes uses concept count, mastery gap, and daily cap)
 
-- [ ] **4D-5 Gap Scanner 批量统计**
+- [x] **4D-5 Gap Scanner 批量统计**
   - 消除 N+1 查询
+  - (done: SQLite batch concept query stats; GapScanner consumes one aggregated query)
 
-- [ ] **4D-6 Retrospective 命中率**
+- [x] **4D-6 Retrospective 命中率**
   - 只比较考前持久化快照与用户确认结果
   - 不允许 LLM 自由生成后自我评分
+  - (done: immutable future-exam mastery snapshots; retrospective rejects missing/invalid historical snapshots and filters LLM hits to stored predictions)
 
 - [ ] **4D-7 离线校准集**
   - 为 mastery 阈值、衰减参数和评分置信度建立校准数据
@@ -269,36 +282,42 @@
   - 统一 `logging` 配置入口
   - (done: src/nexus/log_config.py — _JSONFormatter 与 configure_logging)
 
-- [ ] **4E-2 运行状态查询**
+- [x] **4E-2 运行状态查询**
   - pipeline/session/backup 最近运行状态
+  - (done: read-only `nexus status --json`, scheduler reports, session backlog and queue counts)
 
 - [x] **4E-3 备份策略**
   - 保留、验证、导出和清理策略
   - 扩展 `nexus db-backup`
   - (done: src/nexus/cli/db_backup.py — `--retain` 保留策略；src/nexus/knowledge/maintenance.py — create_backup/verify_backup/restore_backup)
 
-- [ ] **4E-4 失败队列**
+- [x] **4E-4 失败队列**
   - 重试上限及人工处理命令
   - 从 archive-only 扩展到 aggregation + ingest
+  - (done: shared bounded-retry JSON queues with `.dead` manual-review files for archive, aggregation, and ingest)
 
 - [ ] **4E-5 并发 soak tests**
   - 长时间运行、并发 ingest/QA/backup 测试
 
 ### 4F：P2 质量门禁与发布
 
-- [ ] **4F-1 扩展 retrieval golden set**
+- [x] **4F-1 扩展 retrieval golden set**
   - 多课程、中英文、无答案、跨课程
+  - (done: 20-case offline golden fixture spans four courses, Chinese/English, no-answer and unknown-course cases)
 
-- [ ] **4F-2 QA citation gate**
-  - 验证引用确实支持结论
+- [~] **4F-2 QA citation gate**
+  - 已完成运行时 source-ID/required-citation gate，未知或缺失引用降级为有来源的课件摘录（`tests/test_qa_citation_gate.py`）。
+  - 待完成：对自然语言结论做语义蕴含验证，而非仅验证引用协议。
 
 - [ ] **4F-3 Assessment 案例扩展**
   - 正确、部分正确、错误、提示注入和课件冲突案例
 
-- [ ] **4F-4 数据库迁移与备份恢复兼容测试**
+- [x] **4F-4 数据库迁移与备份恢复兼容测试**
+  - (done: schema migration concurrency, maintenance backup/restore, and safe migration tests)
 
-- [ ] **4F-5 文档更新**
+- [x] **4F-5 文档更新**
   - README、Reference、Testing、迁移指南
+  - (done: 2026-07-24 reconciliation documents current LLM enablement, runtime status, queues, and test count)
 
 - [ ] **4F-6 发布 0.2.0 候选版本**
   - 全新目录验收

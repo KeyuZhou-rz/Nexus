@@ -37,6 +37,7 @@ nexus pipeline
 - Briefing：`nexus briefing [--aggregate] [--window-days N] [--llm]`
 - Archive Sync：`python -m nexus.archive_sync`
 - Doctor：`nexus doctor [--no-google] [--strict]`
+- Runtime Status：`nexus status [--json]`（只读汇总 pipeline、session、backup 和失败队列）
 - Knowledge Ingest：`nexus ingest --input <path> --course-id <id> [--doc-type <type>]`（`--doc-type` 仅在使用 `--legacy` 路径时生效；默认 CourseIngestor 路径从文件名/扩展名推断）
 - Knowledge Query：`nexus query --query <text> [--course-id] [--doc-type]`
 - Knowledge Read：`nexus read [--course-id] [--doc-type] [--source-path] [--limit]`
@@ -154,7 +155,8 @@ pip install pymupdf4llm
 - `data/briefing.json`：简报输出
 - `data/pipeline_report.json`：pipeline 步骤报告
 - `data/nexus.db`：学习状态、概念掌握度和用户 profile
-- `data/archive_failures.json`：归档失败队列
+- `data/{archive,aggregation,ingest}_failures.json`：有界重试失败队列；超过上限的项移动至对应 `.dead` 文件等待人工处理
+- `data/{session_finalization,backup}_report.json`：scheduler 最近一次运行报告
 - `data/chroma/`：Chroma 持久化目录
 
 ## 8. 测试组织与使用
@@ -181,5 +183,5 @@ PYTHONPATH=src pytest -q
 
 ## 10. 后续重构优先级
 1. 拆分 `streamlit_app.py`（当前最大复杂度来源）
-2. 为核心数据契约补 schema 级测试（pipeline_report / state / archive result）
+2. 建立 mastery 阈值、遗忘参数和评分置信度的离线校准集
 3. 引入 `ruff + mypy` 作为轻量质量闸门

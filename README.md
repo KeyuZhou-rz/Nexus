@@ -88,7 +88,11 @@ LLM is disabled by default. To enable AI briefing explicitly, set the following 
 ```bash
 export NEXUS_LLM_API_KEY="your-api-key"
 export NEXUS_LLM_BASE_URL="https://api.deepseek.com" # or https://api.openai.com/v1
+export NEXUS_LLM_MODEL="deepseek-chat"
+export NEXUS_LLM_ENABLED="1"
 ```
+
+`NEXUS_LLM_ENABLED` defaults to `0`; configuring a key alone does not send LLM requests.
 
 ## Usage
 
