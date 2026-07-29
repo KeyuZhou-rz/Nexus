@@ -123,13 +123,11 @@ def _check_sqlite(config: AppConfig) -> ComponentStatus:
             if journal.lower() != "wal":
                 comp.warnings.append(f"Journal mode is {journal}, WAL recommended")
 
-            # foreign keys (read-only connections can't set PRAGMA; expected=0)
+            # Foreign-key enforcement is a per-connection setting. This
+            # read-only diagnostic connection cannot enable it; SQLiteStore
+            # enables it on every write connection instead.
             fk = str(conn.execute("PRAGMA foreign_keys").fetchone()[0])
             comp.details["foreign_keys"] = fk
-            if fk != "1":
-                comp.warnings.append(
-                    "Foreign keys not enforced on read-only connection (expected; sqlite_store enables WAL+FK on write connections)"
-                )
 
             # table count
             tables = conn.execute(
@@ -306,7 +304,7 @@ def _check_archive(config: AppConfig) -> ComponentStatus:
             comp.details["browser"] = "chromium_ok"
         except Exception as exc:
             comp.available = False
-            msg = f"Playwright Chromium browser not installed. Run: playwright install chromium"
+            msg = "Playwright Chromium browser not installed. Run: python -m playwright install chromium"
             if comp.configured:
                 comp.errors.append(msg)
             else:

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+from types import ModuleType
 
 from nexus.config import AppConfig
 from nexus.doctor import run_doctor
 from nexus.config import default_config
+from nexus.knowledge.sqlite_store import SQLiteStore
 
 
 def test_doctor_reports_missing_feeds_warning(tmp_path):
@@ -53,6 +56,63 @@ def test_doctor_reports_storage_status(tmp_path):
     assert report.details["sqlite_status"] == "missing"
     assert report.details["chroma_status"] == "missing"
     assert any("SQLite database not initialized" in msg for msg in report.warnings)
+
+
+def test_doctor_does_not_warn_about_read_only_foreign_keys(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    SQLiteStore(data_dir / "nexus.db")
+
+    report = run_doctor(config=AppConfig(data_dir=data_dir, feeds_path=data_dir / "feeds.json"), include_google=False)
+
+    sqlite = report.components["sqlite"]
+    assert sqlite.available is True
+    assert sqlite.details["foreign_keys"] == "0"
+    assert not any("Foreign keys not enforced" in warning for warning in report.warnings)
+
+
+def test_doctor_reports_playwright_browser_install_command(tmp_path, monkeypatch):
+    class BrokenChromium:
+        def launch(self, **_kwargs):
+            raise RuntimeError("browser binary missing")
+
+    class FakePlaywright:
+        chromium = BrokenChromium()
+
+    class FakeContext:
+        def __enter__(self):
+            return FakePlaywright()
+
+        def __exit__(self, *_args):
+            return False
+
+    playwright = ModuleType("playwright")
+    sync_api = ModuleType("playwright.sync_api")
+    sync_api.sync_playwright = FakeContext
+    monkeypatch.setitem(sys.modules, "playwright", playwright)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
+
+    import nexus.doctor as doctor
+
+    original_available = doctor._module_available
+    monkeypatch.setattr(
+        doctor,
+        "_module_available",
+        lambda name: True if name == "playwright" else original_available(name),
+    )
+    report = run_doctor(
+        config=AppConfig(
+            data_dir=tmp_path / "data",
+            brightspace_url="https://brightspace.example.test",
+            brightspace_username="student",
+            brightspace_password="secret",
+        ),
+        include_google=False,
+    )
+
+    assert report.components["archive"].errors == [
+        "Playwright Chromium browser not installed. Run: python -m playwright install chromium"
+    ]
 
 
 def test_doctor_detects_sqlite_corruption(tmp_path):

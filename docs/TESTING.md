@@ -13,6 +13,33 @@ make ui              # 启动 Streamlit 前端（http://localhost:8501）
 make test            # 运行全量单元测试
 ```
 
+首次启用可选集成前，先检查当前环境；`--no-google` 适用于尚未配置 Google
+OAuth 的本地环境。`nexus doctor` 只检查配置和本机依赖，不会连接 LLM 或同步远端数据。
+
+```bash
+nexus doctor --no-google
+nexus status --json   # 只读查看最近 pipeline、失败队列和 session backlog
+```
+
+`--strict` 会将任何未完成配置或警告视为失败，适合已完成配置的部署前检查：
+
+```bash
+nexus doctor --strict
+```
+
+### Brightspace Archive 浏览器前置条件
+
+Archive Sync 除 Python 包外还需要 Playwright 的 Chromium 浏览器。安装 optional
+extra 后，在同一个虚拟环境执行一次：
+
+```bash
+pip install -e ".[archive]"
+python -m playwright install chromium
+```
+
+随后运行 `nexus doctor`。若 Brightspace URL 和账号均已配置，Doctor 会将缺少浏览器
+明确报告为失败，避免 `nexus pipeline` 在归档步骤才中断。
+
 ---
 
 ## 前端界面
@@ -116,6 +143,11 @@ make test-fast         # 跳过有副作用的 test_archive_post_ingest
 
 `tests/test_streamlit_structure.py` prevents nested Streamlit expanders, which
 would otherwise fail only after a browser loads the application.
+It also verifies that Study Assistant stays disabled when the default offline
+mode (`NEXUS_LLM_ENABLED=0`) is active, even if an API key is present.
+Idle-session finalization is deliberately scheduler-only (`nexus sessions
+finalize-idle`), so loading a page never makes an LLM request for another
+session.
 
 直接使用 pytest 时需加 `PYTHONPATH=src`：
 
