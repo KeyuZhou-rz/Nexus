@@ -13,6 +13,10 @@ make ui              # 启动 Streamlit 前端（http://localhost:8501）
 make test            # 运行全量单元测试
 ```
 
+`make ui` uses `python -m streamlit`, ensuring the UI runs with the same Python
+environment as the project dependencies instead of an unrelated `streamlit`
+executable found on `PATH`.
+
 首次启用可选集成前，先检查当前环境；`--no-google` 适用于尚未配置 Google
 OAuth 的本地环境。`nexus doctor` 只检查配置和本机依赖，不会连接 LLM 或同步远端数据。
 
