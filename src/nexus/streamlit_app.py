@@ -806,7 +806,10 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    with st.expander("System Controls", expanded=True):
+    # Keep this outer panel as a regular container: its controls use their own
+    # expanders, which Streamlit does not permit inside another expander.
+    with st.container(border=True):
+        st.subheader("System Controls")
         if calendar_sync_error:
             st.warning(f"Calendar sync issue: {calendar_sync_error}")
 

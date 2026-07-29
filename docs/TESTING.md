@@ -114,6 +114,9 @@ make test-archive      # 仅 Archive Sync 模块
 make test-fast         # 跳过有副作用的 test_archive_post_ingest
 ```
 
+`tests/test_streamlit_structure.py` prevents nested Streamlit expanders, which
+would otherwise fail only after a browser loads the application.
+
 直接使用 pytest 时需加 `PYTHONPATH=src`：
 
 ```bash
