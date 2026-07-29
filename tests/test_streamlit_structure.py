@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from streamlit.testing.v1 import AppTest
+
 
 APP_PATH = Path(__file__).parents[1] / "src" / "nexus" / "streamlit_app.py"
 
@@ -37,3 +39,23 @@ def test_streamlit_app_never_nests_expanders() -> None:
     visitor = _NestedExpanderVisitor()
     visitor.visit(ast.parse(APP_PATH.read_text(encoding="utf-8")))
     assert visitor.nested == []
+
+
+def test_streamlit_ui_does_not_run_global_session_maintenance() -> None:
+    """Idle-session finalization belongs to the scheduler, not page rendering."""
+    source = APP_PATH.read_text(encoding="utf-8")
+    assert ".check_idle_sessions(" not in source
+
+
+def test_study_assistant_stays_disabled_when_llm_is_explicitly_disabled(
+    monkeypatch,
+) -> None:
+    """A key must not bypass NEXUS_LLM_ENABLED=0, the default offline mode."""
+    monkeypatch.setenv("NEXUS_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
+
+    app = AppTest.from_file(APP_PATH).run(timeout=30)
+
+    assert not app.exception
+    assert len(app.chat_input) == 1
+    assert app.chat_input[0].disabled

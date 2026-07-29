@@ -1167,13 +1167,16 @@ def _get_qa_pipeline():
     except Exception:
         pass  # no secrets file → use .env
 
+    # An API key alone is intentionally insufficient: the project defaults to
+    # offline mode until NEXUS_LLM_ENABLED opts into outbound model requests.
+    llm_ready = gateway.is_enabled and bool(api_key)
     pipeline = QAPipeline(
         chroma_dir=_DATA_DIR / "chroma",
         sqlite_path=_DATA_DIR / "nexus.db",
         tasks_path=_DATA_DIR / "tasks.json",
-        use_llm_expansion=bool(api_key),
+        use_llm_expansion=llm_ready,
     )
-    return pipeline, api_key
+    return pipeline, llm_ready
 
 
 def _profile_badge(label: str, color: str) -> str:
@@ -1217,8 +1220,7 @@ with tab_study:
 
     # ── 加载 pipeline ──
     try:
-        _pipeline, _api_key = _get_qa_pipeline()
-        _pipeline_ok = bool(_api_key)
+        _pipeline, _pipeline_ok = _get_qa_pipeline()
         if _pipeline_ok and st.session_state.qa_assessment_attempt is None:
             st.session_state.qa_assessment_attempt = _pipeline.get_pending_assessment(
                 st.session_state.qa_session_id
@@ -1414,21 +1416,15 @@ with tab_study:
             except Exception:
                 pass
 
-        # 检查 idle sessions（每次 rerun 都触发）
-        if _pipeline_ok:
-            try:
-                _ended = _pipeline.check_idle_sessions()
-                if _ended:
-                    st.toast("Session ended after idle timeout.", icon="💾")
-            except Exception:
-                pass
-
     with profile_col:
         st.markdown('<div class="section-title" style="margin-top:0;">Learning Profile</div>',
                     unsafe_allow_html=True)
 
         if not _pipeline_ok:
-            st.info("Set NEXUS_LLM_API_KEY in .env to enable the Study Assistant.")
+            st.info(
+                "Set NEXUS_LLM_API_KEY and NEXUS_LLM_ENABLED=1 in .env "
+                "to enable the Study Assistant."
+            )
         else:
             try:
                 _prof = _pipeline.get_profile()
