@@ -7,6 +7,7 @@ import sys
 COMMANDS = {
     "doctor": ("nexus.cli.doctor", "Run environment checks"),
     "status": ("nexus.cli.status", "Show read-only runtime status"),
+    "sync-status": ("nexus.cli.sync_status", "Show read-only source synchronization health"),
     "pipeline": ("nexus.cli.pipeline", "Run the integrated task pipeline"),
     "briefing": ("nexus.cli.briefing", "Generate a daily briefing"),
     "ingest": ("nexus.cli.ingest", "Ingest local course documents"),

@@ -49,6 +49,23 @@ def test_unified_cli_dispatches_context_help() -> None:
     assert "--course-id" in result.stdout
 
 
+def test_unified_cli_dispatches_sync_status_help() -> None:
+    result = _run("-m", "nexus.cli.main", "sync-status", "--help")
+    assert result.returncode == 0
+    assert "--data-dir" in result.stdout
+
+
+def test_sync_status_reports_isolated_empty_runtime(tmp_path) -> None:
+    result = _run(
+        "-m", "nexus.cli.main", "sync-status", "--data-dir", str(tmp_path), "--json",
+    )
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["failed_sources"] == 0
+    assert payload["sources"]["google"]["status"] == "disabled"
+
+
 def test_unified_cli_propagates_subcommand_failure(tmp_path) -> None:
     result = _run(
         "-m",

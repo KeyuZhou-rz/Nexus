@@ -1,8 +1,8 @@
 # Nexus 🧭
 
-Nexus is a personal academic dashboard and intelligence aggregator. It unifies tasks, deadlines, and events from **Brightspace** (Learning Management System) and **Google Workspace** (Gmail, Calendar) into a single, streamlined interface.
+Nexus is a local-first learning context layer. It automatically unifies tasks, deadlines, and course updates from **Brightspace** (Learning Management System) and **Google Workspace** (Gmail, Calendar), then exposes a small, explainable learning state that can be consumed by your dashboard or another AI assistant.
 
-It features an AI-powered daily briefing that analyzes your incoming data to highlight what's urgent, what's noise, and what requires your immediate attention.
+It features an AI-powered daily briefing that analyzes your incoming data to highlight what's urgent, what's noise, and what requires your immediate attention. Nexus is intentionally not a chat replacement: it keeps your learning context current and portable.
 
 ## Features
 
@@ -11,6 +11,8 @@ It features an AI-powered daily briefing that analyzes your incoming data to hig
 - **Google Integration**: Fetches unread course notifications from Gmail and events from Google Calendar.
 - **Brightspace Integration**: Supports iCal and RSS feeds for assignments and announcements.
 - **Streamlit UI**: A clean, responsive dashboard for tracking deadlines and upcoming events.
+- **Canonical Context API**: Export tasks, sync health, briefing data, and learning memory as a stable JSON document.
+- **Read-only Sync Control Plane**: See whether each source is configured, fresh, stale, or failed without triggering network calls.
 
 ## Installation
 
@@ -168,6 +170,13 @@ nexus calibration --fixture tests/fixtures/mastery_calibration.json --json
 ```bash
 nexus context --course-id CS202_OS --json
 ```
+
+**Inspect source health without syncing:**
+```bash
+nexus sync-status --json
+```
+
+The dashboard's Home and Status views use the same read-only context snapshot. A missing Google token, LMS feed, or knowledge database is shown as a setup state; opening the UI never starts OAuth, Playwright, aggregation, or an LLM request.
 
 **Ingest local notes into Chroma (P2 minimal pipeline):**
 ```bash
