@@ -23,6 +23,7 @@ Memory API — Nexus Phase N4
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -298,3 +299,51 @@ class MemoryAPI:
             low_mastery_topics=self._reader.get_low_mastery_topics(),
             context_topics=self._reader.get_context_topics(),
         )
+
+    def get_evidence_summary(
+        self,
+        course_id: str | None = None,
+        *,
+        concept_limit: int = 10,
+        events_per_concept: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Return bounded, privacy-conscious evidence behind mastery state."""
+        snapshots = sorted(
+            self._temporal.get_all_mastery(course_id),
+            key=lambda item: (item.current_mastery, item.concept_name.casefold()),
+        )[:max(0, concept_limit)]
+        summary: list[dict[str, Any]] = []
+        event_limit = max(0, events_per_concept)
+        if event_limit == 0:
+            return summary
+
+        for snapshot in snapshots:
+            events = self._store.get_learning_events(snapshot.concept_id)
+            for event in reversed(events[-event_limit:]):
+                context: dict[str, Any] = {}
+                raw_context = event.get("context")
+                if isinstance(raw_context, str) and raw_context:
+                    try:
+                        parsed = json.loads(raw_context)
+                    except json.JSONDecodeError:
+                        parsed = {}
+                    if isinstance(parsed, dict):
+                        context = parsed
+                confidence = context.get("confidence")
+                if not isinstance(confidence, (int, float)):
+                    confidence = None
+                evidence_type = str(event.get("evidence_type") or "unclassified")
+                summary.append({
+                    "concept_id": snapshot.concept_id,
+                    "concept_name": snapshot.concept_name,
+                    "course_id": snapshot.course_id,
+                    "current_mastery": round(snapshot.current_mastery, 3),
+                    "urgency": snapshot.urgency,
+                    "event_type": str(event.get("event_type") or "unknown"),
+                    "evidence_type": evidence_type,
+                    "source": str(context.get("source") or evidence_type),
+                    "trust_status": str(event.get("trust_status") or "unclassified"),
+                    "timestamp": event.get("timestamp"),
+                    "confidence": round(float(confidence), 3) if confidence is not None else None,
+                })
+        return summary

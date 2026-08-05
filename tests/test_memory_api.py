@@ -174,3 +174,28 @@ def test_get_memory_context_and_context_topics(memory_api: MemoryAPI):
     assert "review_queue" in d
     assert "low_mastery_topics" in d
     assert "context_topics" in d
+
+
+def test_evidence_summary_exposes_source_time_and_trust_without_question_text(
+    memory_api: MemoryAPI,
+) -> None:
+    memory_api.record_event(
+        "cs202_os__deadlock",
+        "struggled",
+        session_id="session-1",
+        context={
+            "evidence_type": "assessment",
+            "source": "offline_quiz",
+            "confidence": 0.82,
+            "question": "Sensitive question text",
+        },
+    )
+
+    evidence = memory_api.get_evidence_summary("CS202_OS")
+
+    item = next(entry for entry in evidence if entry["concept_id"] == "cs202_os__deadlock")
+    assert item["source"] == "offline_quiz"
+    assert item["trust_status"] == "trusted"
+    assert item["confidence"] == 0.82
+    assert item["timestamp"]
+    assert "question" not in item

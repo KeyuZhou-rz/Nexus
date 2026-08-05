@@ -37,11 +37,20 @@ It features an AI-powered daily briefing that analyzes your incoming data to hig
    pip install -e ".[all]"        # Everything above
    ```
 
-3. **Prepare Data Directory:**
+3. **Initialize the local runtime:**
    ```bash
-   mkdir -p data
-   touch data/.gitkeep
+   nexus init --data-dir data --json
    ```
+
+   Optionally add a Brightspace calendar during initialization:
+   ```bash
+   nexus init --data-dir data \
+     --feed-url "https://example.edu/calendar.ics" \
+     --feed-name "Operating Systems" \
+     --course "CS202_OS" --json
+   ```
+
+   Re-running `nexus init` is safe: existing task and feed snapshots are preserved, and a feed with the same URL is updated in place.
 
 ## Configuration
 
@@ -177,6 +186,8 @@ nexus sync-status --json
 ```
 
 The dashboard's Home and Status views use the same read-only context snapshot. A missing Google token, LMS feed, or knowledge database is shown as a setup state; opening the UI never starts OAuth, Playwright, aggregation, or an LLM request.
+
+The Dashboard Setup tab can initialize the same local runtime and save Brightspace iCal or RSS feeds. Tokenized feed URLs are treated as sensitive inputs and are not displayed back in the interface.
 
 **Ingest local notes into Chroma (P2 minimal pipeline):**
 ```bash

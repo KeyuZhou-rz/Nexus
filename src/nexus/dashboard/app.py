@@ -8,6 +8,8 @@ import streamlit as st
 
 from ..config import default_config
 from ..context_api import build_context
+from ..models import FeedSource
+from ..onboarding import initialize_runtime, upsert_feed
 from ..storage import load_tasks, tasks_last_updated
 from .styles import DASHBOARD_CSS
 from .view_model import (
@@ -47,7 +49,7 @@ def main() -> None:
     _render_sidebar(data_dir=data_dir, briefing_path=briefing_path, report_path=report_path, state=state)
     _render_header(state)
 
-    tab_home, tab_tasks, tab_status = st.tabs(["Home", "Tasks", "Status"])
+    tab_home, tab_tasks, tab_status, tab_setup = st.tabs(["Home", "Tasks", "Status", "Setup"])
 
     with tab_home:
         _render_home(state)
@@ -57,6 +59,9 @@ def main() -> None:
 
     with tab_status:
         _render_status(state, briefing_path=briefing_path, report_path=report_path)
+
+    with tab_setup:
+        _render_setup(data_dir, state)
 
 
 def _render_sidebar(*, data_dir: Path, briefing_path: Path, report_path: Path, state) -> None:
@@ -79,8 +84,8 @@ def _render_sidebar(*, data_dir: Path, briefing_path: Path, report_path: Path, s
 
         st.divider()
         st.markdown("### What This App Does")
-        st.caption("Read-only dashboard for tasks, briefing, and pipeline status.")
-        st.caption("Memory, QA, ingest, and archive tooling stay outside this surface.")
+        st.caption("Dashboard for tasks, briefing, source health, and learning memory.")
+        st.caption("Only the Setup tab writes local source configuration.")
 
 
 def _render_header(state) -> None:
@@ -218,7 +223,7 @@ def _render_status(state, *, briefing_path: Path, report_path: Path) -> None:
         _render_sync_table(state)
 
         st.markdown('<div class="section-title">Learning memory</div>', unsafe_allow_html=True)
-        _render_learning_summary(state)
+        _render_learning_summary(state, show_evidence=True)
 
     with file_col:
         st.markdown('<div class="section-title">Files</div>', unsafe_allow_html=True)
@@ -269,7 +274,7 @@ def _render_sync_table(state) -> None:
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
-def _render_learning_summary(state) -> None:
+def _render_learning_summary(state, *, show_evidence: bool = False) -> None:
     learning = state.learning_context
     if not learning or not learning.get("available"):
         reason = str(learning.get("reason") or "not initialized").replace("_", " ")
@@ -285,6 +290,68 @@ def _render_learning_summary(state) -> None:
     weak_points = learning.get("weak_points") or []
     if weak_points:
         st.caption("Weak points: " + ", ".join(str(item) for item in weak_points[:5]))
+    evidence = learning.get("evidence") or []
+    if show_evidence and evidence:
+        rows = []
+        for item in evidence[:20]:
+            rows.append({
+                "Concept": item.get("concept_name") or item.get("concept_id"),
+                "Mastery": item.get("current_mastery"),
+                "Event": item.get("event_type"),
+                "Source": item.get("source"),
+                "Trust": item.get("trust_status"),
+                "Confidence": item.get("confidence"),
+                "Time": item.get("timestamp") or "-",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _render_setup(data_dir: Path, state) -> None:
+    st.markdown('<div class="section-title">Local runtime</div>', unsafe_allow_html=True)
+    st.caption(str(data_dir))
+    if st.button("Initialize local data", type="secondary", use_container_width=False):
+        result = initialize_runtime(data_dir)
+        if result["ready"]:
+            st.success("Local runtime is ready.")
+        else:
+            for warning in result["warnings"]:
+                st.error(str(warning))
+
+    st.markdown('<div class="section-title">Source readiness</div>', unsafe_allow_html=True)
+    _render_sync_table(state)
+
+    st.markdown('<div class="section-title">Brightspace feed</div>', unsafe_allow_html=True)
+    with st.form("brightspace_feed_setup", clear_on_submit=True):
+        kind_label = st.radio(
+            "Feed type",
+            options=["Calendar", "Announcements"],
+            index=0,
+            horizontal=True,
+        )
+        name_col, course_col = st.columns(2)
+        name = name_col.text_input("Name", placeholder="Operating Systems")
+        course = course_col.text_input("Course", placeholder="CS202_OS")
+        url = st.text_input(
+            "Feed URL",
+            type="password",
+            placeholder="https://...",
+        )
+        submitted = st.form_submit_button("Save source", type="primary")
+
+    if submitted:
+        feed = FeedSource(
+            kind="brightspace_rss" if kind_label == "Announcements" else "brightspace_ical",
+            name=name,
+            url=url,
+            course=course or None,
+        )
+        try:
+            result = upsert_feed(data_dir, feed)
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            st.success(f"Source {result['action']}.")
+            st.rerun()
 
 
 if __name__ == "__main__":

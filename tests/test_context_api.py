@@ -5,6 +5,8 @@ from pathlib import Path
 
 from nexus.context_api import build_context
 from nexus.io_utils import atomic_write_json
+from nexus.knowledge.memory_api import MemoryAPI
+from nexus.knowledge.sqlite_store import SQLiteStore
 
 
 def test_build_context_is_stable_and_read_only_for_empty_runtime(tmp_path: Path) -> None:
@@ -48,3 +50,27 @@ def test_context_can_be_serialized_for_an_assistant(tmp_path: Path) -> None:
     payload = build_context(data_dir=tmp_path)
     encoded = json.dumps(payload, ensure_ascii=False)
     assert "knowledge_store_not_initialized" in encoded
+
+
+def test_context_exposes_bounded_learning_evidence_without_question_text(tmp_path: Path) -> None:
+    store = SQLiteStore(tmp_path / "nexus.db")
+    store.upsert_concept("os__deadlock", "Deadlock", "OS")
+    MemoryAPI(store).record_event(
+        "os__deadlock",
+        "struggled",
+        context={
+            "evidence_type": "assessment",
+            "source": "offline_quiz",
+            "confidence": 0.91,
+            "question": "Sensitive question text",
+        },
+    )
+
+    payload = build_context(data_dir=tmp_path, course_id="OS")
+    evidence = payload["learning"]["evidence"]
+
+    assert len(evidence) == 1
+    assert evidence[0]["source"] == "offline_quiz"
+    assert evidence[0]["trust_status"] == "trusted"
+    assert evidence[0]["timestamp"]
+    assert "question" not in json.dumps(evidence)

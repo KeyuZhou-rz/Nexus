@@ -49,7 +49,8 @@ def _learning_context(db_path: Path, course_id: str | None) -> dict[str, Any]:
 
         store = SQLiteStore(db_path)
         progress = ProgressService(store).get_progress(course_id)
-        profile = MemoryAPI(store).get_profile()
+        memory = MemoryAPI(store)
+        profile = memory.get_profile()
     except Exception as exc:
         return {
             "available": False,
@@ -71,6 +72,7 @@ def _learning_context(db_path: Path, course_id: str | None) -> dict[str, Any]:
         "recent_trusted_events": progress.recent_events,
         "weak_points": (profile.get("weak_points") or [])[:10],
         "learning_style": profile.get("learning_style") or "default",
+        "evidence": memory.get_evidence_summary(course_id, concept_limit=10),
     }
 
 
