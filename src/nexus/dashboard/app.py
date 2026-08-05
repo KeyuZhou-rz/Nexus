@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from ..config import default_config
+from ..context_api import build_context
 from ..storage import load_tasks, tasks_last_updated
 from .styles import DASHBOARD_CSS
 from .view_model import (
@@ -30,10 +31,15 @@ def main() -> None:
     briefing_payload = load_briefing_payload(briefing_path)
     pipeline_report = load_pipeline_report(report_path)
     now_local = datetime.now().astimezone()
+    context = build_context(data_dir=data_dir, now=now_local)
+    sync_sources = context.get("sync", {}).get("sources", {})
+    learning_context = context.get("learning", {})
     state = build_dashboard_state(
         tasks,
         briefing_payload=briefing_payload,
         pipeline_report=pipeline_report,
+        sync_sources=sync_sources,
+        learning_context=learning_context,
         generated_at=now_local,
         last_updated=tasks_last_updated(),
     )
@@ -142,6 +148,9 @@ def _render_home(state) -> None:
             for warning in state.briefing_warnings:
                 st.warning(warning)
 
+        _render_sync_summary(state)
+        _render_learning_summary(state)
+
         st.markdown('<div class="section-title">Updates</div>', unsafe_allow_html=True)
         if not state.update_items:
             st.markdown(
@@ -205,11 +214,77 @@ def _render_status(state, *, briefing_path: Path, report_path: Path) -> None:
         else:
             st.caption("No step-level pipeline report available.")
 
+        st.markdown('<div class="section-title">Sources</div>', unsafe_allow_html=True)
+        _render_sync_table(state)
+
+        st.markdown('<div class="section-title">Learning memory</div>', unsafe_allow_html=True)
+        _render_learning_summary(state)
+
     with file_col:
         st.markdown('<div class="section-title">Files</div>', unsafe_allow_html=True)
         st.write(f"Briefing path: `{briefing_path}`")
         st.write(f"Report path: `{report_path}`")
         st.write(f"Snapshot time: `{state.generated_at.isoformat()}`")
+
+
+def _sync_label(source: dict[str, object]) -> str:
+    status = str(source.get("status") or "unknown").replace("_", " ").title()
+    freshness = str(source.get("freshness") or "unknown").replace("_", " ").title()
+    return f"{status} · {freshness}"
+
+
+def _render_sync_summary(state) -> None:
+    if not state.sync_sources:
+        return
+    st.markdown('<div class="section-title">Sync</div>', unsafe_allow_html=True)
+    columns = st.columns(len(state.sync_sources))
+    for column, source_name in zip(columns, sorted(state.sync_sources)):
+        source = state.sync_sources[source_name]
+        with column:
+            status = str(source.get("status") or "unknown")
+            if status == "failed":
+                st.error(f"{source_name.title()}\n\n{_sync_label(source)}")
+            elif status == "succeeded":
+                st.success(f"{source_name.title()}\n\n{_sync_label(source)}")
+            else:
+                st.info(f"{source_name.title()}\n\n{_sync_label(source)}")
+
+
+def _render_sync_table(state) -> None:
+    if not state.sync_sources:
+        st.caption("No source status available yet.")
+        return
+    rows = []
+    for name in sorted(state.sync_sources):
+        source = state.sync_sources[name]
+        rows.append({
+            "Source": name,
+            "Status": source.get("status", "unknown"),
+            "Configured": "Yes" if source.get("configured") else "No",
+            "Freshness": source.get("freshness", "unknown"),
+            "Items": source.get("item_count", 0),
+            "Last success": source.get("last_success_at") or "-",
+            "Error": source.get("error") or "",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _render_learning_summary(state) -> None:
+    learning = state.learning_context
+    if not learning or not learning.get("available"):
+        reason = str(learning.get("reason") or "not initialized").replace("_", " ")
+        st.caption(f"Learning memory: {reason}.")
+        return
+
+    counts = learning.get("counts") if isinstance(learning.get("counts"), dict) else {}
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Concepts", counts.get("total_concepts", 0))
+    metric_cols[1].metric("Mastered", counts.get("mastered", 0))
+    metric_cols[2].metric("Review queue", len(learning.get("review_queue") or []))
+    metric_cols[3].metric("Critical", counts.get("critical", 0))
+    weak_points = learning.get("weak_points") or []
+    if weak_points:
+        st.caption("Weak points: " + ", ".join(str(item) for item in weak_points[:5]))
 
 
 if __name__ == "__main__":

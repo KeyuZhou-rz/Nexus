@@ -52,6 +52,8 @@ class DashboardState:
     pipeline_ok: bool | None
     pipeline_summary: str
     pipeline_steps: list[dict[str, Any]]
+    sync_sources: dict[str, dict[str, Any]]
+    learning_context: dict[str, Any]
     tasks_table: list[dict[str, str]]
     available_courses: list[str]
     available_sources: list[str]
@@ -82,12 +84,16 @@ def build_dashboard_state(
     *,
     briefing_payload: dict[str, Any] | None = None,
     pipeline_report: dict[str, Any] | None = None,
+    sync_sources: dict[str, dict[str, Any]] | None = None,
+    learning_context: dict[str, Any] | None = None,
     generated_at: datetime | None = None,
     last_updated: datetime | None = None,
 ) -> DashboardState:
     now_local = (generated_at or datetime.now().astimezone())
     briefing_payload = briefing_payload or {}
     pipeline_report = pipeline_report or {}
+    sync_sources = sync_sources or {}
+    learning_context = learning_context or {}
 
     available_courses = sorted({task.course for task in tasks if task.course})
     available_sources = sorted({task.source for task in tasks if task.source})
@@ -142,6 +148,8 @@ def build_dashboard_state(
         pipeline_ok=pipeline_ok,
         pipeline_summary=pipeline_summary,
         pipeline_steps=pipeline_steps,
+        sync_sources=sync_sources,
+        learning_context=learning_context,
         tasks_table=tasks_table,
         available_courses=available_courses,
         available_sources=available_sources,

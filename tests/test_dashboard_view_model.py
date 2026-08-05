@@ -95,6 +95,35 @@ def test_build_dashboard_state_collects_recent_updates_and_briefing():
     assert "aggregation" in state.pipeline_summary
 
 
+def test_build_dashboard_state_keeps_sync_source_read_model() -> None:
+    now = datetime(2026, 4, 15, 10, 0, tzinfo=timezone.utc)
+    sources = {
+        "google": {
+            "status": "succeeded",
+            "configured": True,
+            "freshness": "fresh",
+            "item_count": 4,
+        },
+    }
+
+    state = build_dashboard_state([], generated_at=now, sync_sources=sources)
+
+    assert state.sync_sources == sources
+
+
+def test_build_dashboard_state_keeps_learning_context_read_model() -> None:
+    learning = {
+        "available": True,
+        "counts": {"total_concepts": 12, "mastered": 4, "critical": 2},
+        "review_queue": ["concept-1"],
+        "weak_points": ["deadlock"],
+    }
+
+    state = build_dashboard_state([], learning_context=learning)
+
+    assert state.learning_context == learning
+
+
 # ---------------------------------------------------------------------------
 # 1. Empty task list
 # ---------------------------------------------------------------------------
