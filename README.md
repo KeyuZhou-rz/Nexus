@@ -164,6 +164,11 @@ nexus doctor
 nexus calibration --fixture tests/fixtures/mastery_calibration.json --json
 ```
 
+**Export the current learning context for an assistant or integration:**
+```bash
+nexus context --course-id CS202_OS --json
+```
+
 **Ingest local notes into Chroma (P2 minimal pipeline):**
 ```bash
 nexus ingest --input ./notes --course-id EE201 --doc-type lecture_slide --db-dir data/chroma

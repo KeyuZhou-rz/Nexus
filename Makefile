@@ -77,7 +77,7 @@ briefing-llm:
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
-.PHONY: test test-knowledge test-cli test-archive test-fast calibration
+.PHONY: test test-knowledge test-cli test-archive test-fast calibration context
 
 test:
 	$(PYTEST) tests/ -q
@@ -126,6 +126,9 @@ test-fast:
 calibration:
 	$(PYTHON) -m nexus.cli.main calibration \
 		--fixture tests/fixtures/mastery_calibration.json --json
+
+context:
+	$(PYTHON) -m nexus.cli.main context --json
 
 # ─── DB Inspection ────────────────────────────────────────────────────────────
 

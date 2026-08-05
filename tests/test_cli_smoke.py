@@ -43,6 +43,12 @@ def test_unified_cli_dispatches_calibration_help() -> None:
     assert "--fixture" in result.stdout
 
 
+def test_unified_cli_dispatches_context_help() -> None:
+    result = _run("-m", "nexus.cli.main", "context", "--help")
+    assert result.returncode == 0
+    assert "--course-id" in result.stdout
+
+
 def test_unified_cli_propagates_subcommand_failure(tmp_path) -> None:
     result = _run(
         "-m",

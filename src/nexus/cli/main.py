@@ -28,6 +28,7 @@ COMMANDS = {
     "scan": ("nexus.cli.scan", "Scan a course for knowledge gaps"),
     "sprint": ("nexus.cli.sprint", "Generate an exam sprint plan"),
     "calibration": ("nexus.cli.calibration", "Evaluate an offline assessment calibration fixture"),
+    "context": ("nexus.cli.context", "Export the current learning context"),
 }
 
 
