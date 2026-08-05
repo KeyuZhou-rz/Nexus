@@ -67,8 +67,6 @@ def temporal(store):
 # ─────────────────────────────────────────────────────
 # record_weak_point
 # ─────────────────────────────────────────────────────
-
-
 class TestRecordWeakPointResolved:
     def test_adds_weak_point_and_temporal_event(self, resolver, profile_mgr, temporal):
         result = record_weak_point(resolver, profile_mgr, temporal, "deadlock", COURSE)
