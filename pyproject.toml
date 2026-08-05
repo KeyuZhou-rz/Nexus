@@ -49,6 +49,8 @@ nexus-db-backup = "nexus.cli.db_backup:main"
 nexus-db-restore = "nexus.cli.db_restore:main"
 nexus-db-repair = "nexus.cli.db_repair:main"
 nexus-ui = "nexus.cli.ui:main"
+nexus-init = "nexus.cli.init:main"
+nexus-sync-status = "nexus.cli.sync_status:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
