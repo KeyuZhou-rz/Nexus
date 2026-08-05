@@ -55,6 +55,22 @@ def test_unified_cli_dispatches_sync_status_help() -> None:
     assert "--data-dir" in result.stdout
 
 
+def test_init_command_creates_runtime_and_feed(tmp_path) -> None:
+    result = _run(
+        "-m", "nexus.cli.main", "init",
+        "--data-dir", str(tmp_path),
+        "--feed-url", "https://example.edu/feed.ics",
+        "--feed-name", "Operating Systems",
+        "--course", "CS202_OS",
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["feed"]["action"] == "created"
+    assert json.loads((tmp_path / "feeds.json").read_text(encoding="utf-8"))[0]["course"] == "CS202_OS"
+
+
 def test_sync_status_reports_isolated_empty_runtime(tmp_path) -> None:
     result = _run(
         "-m", "nexus.cli.main", "sync-status", "--data-dir", str(tmp_path), "--json",

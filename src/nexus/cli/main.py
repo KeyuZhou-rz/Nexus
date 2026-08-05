@@ -5,6 +5,7 @@ import sys
 
 
 COMMANDS = {
+    "init": ("nexus.cli.init", "Initialize the local runtime and optional LMS feed"),
     "doctor": ("nexus.cli.doctor", "Run environment checks"),
     "status": ("nexus.cli.status", "Show read-only runtime status"),
     "sync-status": ("nexus.cli.sync_status", "Show read-only source synchronization health"),
