@@ -38,7 +38,8 @@ def test_build_context_is_stable_and_read_only_for_empty_runtime(tmp_path: Path)
     assert payload["scope"]["course_id"] == "CS202_OS"
     assert payload["tasks"]["count"] == 1
     assert payload["tasks"]["items"][0]["id"] == "gcal:1"
-    assert payload["sync"]["sources"] == {"google": "succeeded"}
+    assert payload["sync"]["sources"]["google"]["status"] == "succeeded"
+    assert payload["sync"]["sources"]["google"]["configured"] is False
     assert payload["learning"]["available"] is False
     assert (tmp_path / "tasks.json").read_text(encoding="utf-8") == before
 

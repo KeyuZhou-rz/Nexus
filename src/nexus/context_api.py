@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from .config import default_config
 from .runtime_status import build_runtime_status
 from .storage import load_tasks, tasks_last_updated
+from .sync_control import build_sync_status
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -85,6 +87,16 @@ def build_context(
     """
     config = default_config()
     root = Path(data_dir or config.data_dir).expanduser()
+    if data_dir is not None:
+        # A caller-provided data directory is an isolated runtime. Use its
+        # conventional credential files unless the user explicitly overrides
+        # them through environment variables.
+        config.data_dir = root
+        if not os.getenv("NEXUS_GOOGLE_CREDENTIALS"):
+            config.google_credentials_path = root / "google_client_secret.json"
+        if not os.getenv("NEXUS_GOOGLE_TOKEN"):
+            config.google_token_path = root / "google_token.json"
+        config.feeds_path = root / "feeds.json"
     generated_at = now or datetime.now(timezone.utc)
     tasks_path = root / "tasks.json"
     tasks = load_tasks(tasks_path)
@@ -96,9 +108,7 @@ def build_context(
     runtime = build_runtime_status(root)
     last_task_update = tasks_last_updated(tasks_path)
     pipeline_generated = pipeline.get("generated_at")
-    source_status = pipeline.get("sources")
-    if not isinstance(source_status, dict):
-        source_status = {}
+    source_status = build_sync_status(root, config=config, now=generated_at)
 
     return {
         "schema_version": "1.0",
