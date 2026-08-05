@@ -177,6 +177,17 @@ NEXUS_DATA_DIR=/tmp/nexus-rc-data \
 自动化覆盖位于 `tests/test_release_smoke.py`，会使用临时目录并验证
 pipeline 输出、首次启动诊断以及 SQLite/Chroma 一致性审计。
 
+### Assessment 离线校准
+
+不调用 LLM，直接评估固定测评案例的分类准确率和置信度校准：
+
+```bash
+PYTHONPATH=src python -m nexus.cli.main calibration \
+  --fixture tests/fixtures/mastery_calibration.json --json
+```
+
+默认门禁为 accuracy 至少 `0.8`、ECE 不超过 `0.2`；失败时命令返回非零状态。
+
 ---
 
 ## Makefile 变量参考

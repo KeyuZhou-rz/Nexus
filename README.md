@@ -159,6 +159,11 @@ nexus pipeline --llm --window-days 7
 nexus doctor
 ```
 
+**Run the offline assessment calibration gate:**
+```bash
+nexus calibration --fixture tests/fixtures/mastery_calibration.json --json
+```
+
 **Ingest local notes into Chroma (P2 minimal pipeline):**
 ```bash
 nexus ingest --input ./notes --course-id EE201 --doc-type lecture_slide --db-dir data/chroma

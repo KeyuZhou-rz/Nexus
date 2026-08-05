@@ -37,6 +37,12 @@ def test_unified_cli_dispatches_db_check_help() -> None:
     assert "--json" in result.stdout
 
 
+def test_unified_cli_dispatches_calibration_help() -> None:
+    result = _run("-m", "nexus.cli.main", "calibration", "--help")
+    assert result.returncode == 0
+    assert "--fixture" in result.stdout
+
+
 def test_unified_cli_propagates_subcommand_failure(tmp_path) -> None:
     result = _run(
         "-m",

@@ -271,8 +271,10 @@
   - 不允许 LLM 自由生成后自我评分
   - (done: immutable future-exam mastery snapshots; retrospective rejects missing/invalid historical snapshots and filters LLM hits to stored predictions)
 
-- [ ] **4D-7 离线校准集**
-  - 为 mastery 阈值、衰减参数和评分置信度建立校准数据
+- [x] **4D-7 离线校准集**
+  - 建立显式 assessment 事件与置信度的离线校准数据契约。
+  - `nexus calibration --fixture ...` 输出 accuracy、ECE 和混淆矩阵，并提供发布门禁阈值。
+  - 交付：`knowledge/calibration.py`、`tests/fixtures/mastery_calibration.json`、`tests/test_calibration.py`。
 
 ### 4E：P1 运维与可观测性
 

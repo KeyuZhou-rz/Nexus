@@ -1,0 +1,10 @@
+[
+  {"case_id": "correct-definition", "expected_event": "correct_answer", "predicted_event": "correct_answer", "confidence": 0.96},
+  {"case_id": "correct-application", "expected_event": "correct_answer", "predicted_event": "correct_answer", "confidence": 0.88},
+  {"case_id": "partial-definition", "expected_event": "struggled", "predicted_event": "struggled", "confidence": 0.82},
+  {"case_id": "partial-application", "expected_event": "struggled", "predicted_event": "struggled", "confidence": 0.78},
+  {"case_id": "forgot-recall", "expected_event": "forgot", "predicted_event": "forgot", "confidence": 0.86},
+  {"case_id": "forgot-transfer", "expected_event": "forgot", "predicted_event": "forgot", "confidence": 0.81},
+  {"case_id": "conflicting-course-fact", "expected_event": "struggled", "predicted_event": "struggled", "confidence": 0.88},
+  {"case_id": "injection-answer", "expected_event": "forgot", "predicted_event": "struggled", "confidence": 0.55}
+]
