@@ -10,7 +10,7 @@
 pip install -e .       # first run: install package and CLI
 make doctor          # 检查运行环境
 make ui              # 启动 Streamlit 前端（http://localhost:8501）
-make test            # 运行全量单元测试
+make test            # 运行正式测试套件（默认只收集 tests/）
 ```
 
 `make ui` uses `python -m streamlit`, ensuring the UI runs with the same Python
@@ -134,7 +134,7 @@ make briefing-llm
 ## 单元测试
 
 ```bash
-make test              # 全量（594 个测试）
+make test              # 正式测试套件（当前 601 个测试）
 
 make test-knowledge    # 仅 Knowledge 模块（chunking / ingest / query）
 
@@ -153,11 +153,29 @@ Idle-session finalization is deliberately scheduler-only (`nexus sessions
 finalize-idle`), so loading a page never makes an LLM request for another
 session.
 
-直接使用 pytest 时需加 `PYTHONPATH=src`：
+默认 pytest 配置只收集 `tests/`。仓库中的 `tmp/` 脚本是手工实验 harness，保留用于调试但不会进入发布门禁。
+
+直接使用 pytest 时需加 `PYTHONPATH=src`（或使用项目已安装环境）：
 
 ```bash
 PYTHONPATH=src python -m pytest tests/test_knowledge_chunking.py -v
 ```
+
+### Clean-room 启动验收
+
+在全新数据目录中验证离线核心和只读运维命令：
+
+```bash
+NEXUS_DATA_DIR=/tmp/nexus-rc-data NEXUS_LLM_ENABLED=0 \
+  PYTHONPATH=src python -m nexus.cli.main pipeline --skip-archive-sync --no-google
+NEXUS_DATA_DIR=/tmp/nexus-rc-data NEXUS_LLM_ENABLED=0 \
+  PYTHONPATH=src python -m nexus.cli.main doctor --no-google
+NEXUS_DATA_DIR=/tmp/nexus-rc-data \
+  PYTHONPATH=src python -m nexus.cli.main status --data-dir /tmp/nexus-rc-data
+```
+
+自动化覆盖位于 `tests/test_release_smoke.py`，会使用临时目录并验证
+pipeline 输出、首次启动诊断以及 SQLite/Chroma 一致性审计。
 
 ---
 

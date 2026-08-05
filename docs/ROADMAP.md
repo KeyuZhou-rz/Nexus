@@ -131,7 +131,7 @@
 
 ## Phase 4 — 生产可用性与 Progress 精度收口
 
-> 基线：schema v5、542 passed、DB consistency 0 issues。
+> 基线：schema v8、601 passed（正式 `tests/` 套件）、DB consistency 0 issues。
 > 不做前端视觉设计。每个子项单独提交；每完成一个阶段跑定向测试、全量测试、CLI smoke 和 db-check。
 > 数据库、Chroma、凭据和 pycache 不进入提交。
 
@@ -161,10 +161,9 @@
   - 验收：`nexus doctor` 输出三级状态；缺少可选依赖时明确诊断，不产生 import crash
   - (done: src/nexus/doctor.py — ComponentStatus 实现 enabled/configured/available 三级诊断)
 
-- [ ] **4A-4 补齐 .env.example 和首次启动检查**
-  - 补：archive/chroma/pdf 相关环境变量说明
-  - 首次启动向导：检测 data/ 是否初始化，提示运行 ingest
-  - 验收：新环境按 .env.example 配置后可启动
+- [x] **4A-4 补齐 .env.example 和首次启动检查**
+  - `.env.example` 已覆盖 LLM、Google、Brightspace、Canvas、Archive、PDF 和运行目录配置。
+  - `nexus doctor` 对首次启动时缺失的 SQLite/Chroma 存储给出可操作诊断；clean-room 冒烟测试已锁定离线启动契约。
 
 - [x] **4A-5 scheduler 示例**
   - pipeline: 每日 cron/systemd timer 示例
@@ -300,6 +299,11 @@
   - 长时间运行、并发 ingest/QA/backup 测试
 
 ### 4F：P2 质量门禁与发布
+
+- [x] **4F-0 RC 测试门禁与 clean-room 启动验收**
+  - 默认 pytest 只收集正式 `tests/`，临时 `tmp/` harness 不阻塞发布门禁。
+  - 覆盖离线 pipeline、doctor、status、db-check 的全新数据目录验收。
+  - 交付：`pyproject.toml` pytest 配置、`tests/test_release_smoke.py`、测试指南更新。
 
 - [x] **4F-1 扩展 retrieval golden set**
   - 多课程、中英文、无答案、跨课程
