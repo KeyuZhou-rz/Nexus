@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nexus-dashboard"
-version = "0.2.0"
-description = "Personal academic dashboard and knowledge assistant"
+version = "0.3.0b1"
+description = "Local-first learning context layer for academic tasks and memory"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "streamlit>=1.31",
+  "pandas>=1.5",
   "requests>=2.31",
   "feedparser>=6.0",
   "icalendar>=5.0",
@@ -49,11 +50,17 @@ nexus-db-backup = "nexus.cli.db_backup:main"
 nexus-db-restore = "nexus.cli.db_restore:main"
 nexus-db-repair = "nexus.cli.db_repair:main"
 nexus-ui = "nexus.cli.ui:main"
+nexus-dashboard = "nexus.cli.dashboard:main"
 nexus-init = "nexus.cli.init:main"
 nexus-sync-status = "nexus.cli.sync_status:main"
+nexus-demo = "nexus.cli.demo:main"
+nexus-google-auth = "nexus.google_auth:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"nexus.knowledge" = ["schema.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

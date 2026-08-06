@@ -23,6 +23,8 @@ def test_unified_cli_help() -> None:
     assert "db-check" in result.stdout
     assert "cache" in result.stdout
     assert "ui" in result.stdout
+    assert "dashboard" in result.stdout
+    assert "demo" in result.stdout
 
 
 def test_unified_cli_dispatches_help() -> None:
@@ -55,6 +57,12 @@ def test_unified_cli_dispatches_sync_status_help() -> None:
     assert "--data-dir" in result.stdout
 
 
+def test_unified_cli_dispatches_dashboard_help() -> None:
+    result = _run("-m", "nexus.cli.main", "dashboard", "--help")
+    assert result.returncode == 0
+    assert "streamlit" in result.stdout.lower()
+
+
 def test_init_command_creates_runtime_and_feed(tmp_path) -> None:
     result = _run(
         "-m", "nexus.cli.main", "init",
@@ -69,6 +77,18 @@ def test_init_command_creates_runtime_and_feed(tmp_path) -> None:
     assert payload["ok"] is True
     assert payload["feed"]["action"] == "created"
     assert json.loads((tmp_path / "feeds.json").read_text(encoding="utf-8"))[0]["course"] == "CS202_OS"
+
+
+def test_demo_command_creates_complete_runtime(tmp_path) -> None:
+    data_dir = tmp_path / "demo"
+    result = _run(
+        "-m", "nexus.cli.main", "demo", "--data-dir", str(data_dir), "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["synthetic"] is True
+    assert payload["task_count"] == 2
+    assert payload["evidence_count"] == 1
 
 
 def test_sync_status_reports_isolated_empty_runtime(tmp_path) -> None:

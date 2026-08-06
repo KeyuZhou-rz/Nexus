@@ -6,6 +6,8 @@ import sys
 
 COMMANDS = {
     "init": ("nexus.cli.init", "Initialize the local runtime and optional LMS feed"),
+    "demo": ("nexus.cli.demo", "Create an isolated synthetic demo runtime"),
+    "dashboard": ("nexus.cli.dashboard", "Launch the local information dashboard"),
     "doctor": ("nexus.cli.doctor", "Run environment checks"),
     "status": ("nexus.cli.status", "Show read-only runtime status"),
     "sync-status": ("nexus.cli.sync_status", "Show read-only source synchronization health"),
@@ -21,7 +23,7 @@ COMMANDS = {
     "cache": ("nexus.cli.cache", "List or clear parser cache entries"),
     "mastery-migrate": ("nexus.cli.mastery_migrate", "Migrate legacy mastery evidence"),
     "sessions": ("nexus.cli.sessions", "Finalize idle learning sessions"),
-    "ui": ("nexus.cli.ui", "Run the Streamlit application"),
+    "ui": ("nexus.cli.ui", "Run the legacy Streamlit study application"),
     "memory-extract": ("nexus.cli.memory_extract", "Extract weak points from conversations"),
     "memory-feedback": ("nexus.cli.memory_feedback", "Apply feedback to a weak point"),
     "memory-query": ("nexus.cli.memory_query", "Query conversation memory"),
