@@ -3,7 +3,7 @@ PYTHON     := PYTHONPATH=$(PYTHONPATH) python
 PYTEST     := PYTHONPATH=$(PYTHONPATH) python -m pytest
 
 COURSE_ID    ?= CS202_OS
-INPUT        ?= data/testDataFile
+INPUT        ?= data/import
 DB_DIR       ?= data/chroma
 SQLITE_PATH  ?= data/nexus.db
 
@@ -77,7 +77,7 @@ briefing-llm:
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
-.PHONY: test test-knowledge test-cli test-archive test-fast calibration context
+.PHONY: test test-knowledge test-cli test-archive test-fast calibration context release-smoke release-check package
 
 test:
 	$(PYTEST) tests/ -q
@@ -129,6 +129,16 @@ calibration:
 
 context:
 	$(PYTHON) -m nexus.cli.main context --json
+
+release-smoke:
+	$(PYTEST) tests/test_release_smoke.py tests/test_release_privacy.py -q
+	$(PYTHON) -m nexus.cli.main calibration \
+		--fixture tests/fixtures/mastery_calibration.json --json
+
+package:
+	$(PYTHON) -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
+
+release-check: test release-smoke package
 
 # ─── DB Inspection ────────────────────────────────────────────────────────────
 

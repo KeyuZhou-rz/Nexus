@@ -5,6 +5,8 @@ __pycache__/
 *.pyd
 .Python
 *.egg-info/
+build/
+dist/
 env/
 venv/
 .venv/
@@ -16,11 +18,10 @@ venv/
 .vscode/
 .idea/
 
-# Nexus Data & Credentials
-# Exclude all JSON in data/ as it contains personal tasks, tokens, and briefings
-data/*.json
-# Keep the data directory structure
-!data/.gitkeep
+# Nexus runtime data and credentials
+# Everything under data/ is local state or imported course material. Keep only
+# the redacted feed template in source control.
+data/**
 !data/feeds.example.json
 
 # Root-level runtime/cache JSON

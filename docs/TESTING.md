@@ -9,7 +9,7 @@
 ```bash
 pip install -e .       # first run: install package and CLI
 make doctor          # 检查运行环境
-make ui              # 启动 Streamlit 前端（http://localhost:8501）
+make dashboard       # 启动信息面板（http://localhost:8501）
 make test            # 运行正式测试套件（默认只收集 tests/）
 ```
 
@@ -67,7 +67,7 @@ make ui
 ### Step 1：导入测试数据
 
 ```bash
-# 使用 data/testDataFile/ 中的 PDF/DOCX（默认）
+# 使用本地 data/import/ 中的 PDF/DOCX（默认，不进入 Git）
 make ingest
 
 # 指定其他目录或课程
@@ -134,7 +134,7 @@ make briefing-llm
 ## 单元测试
 
 ```bash
-make test              # 正式测试套件（当前 601 个测试）
+make test              # 正式测试套件
 
 make test-knowledge    # 仅 Knowledge 模块（chunking / ingest / query）
 
@@ -177,6 +177,12 @@ NEXUS_DATA_DIR=/tmp/nexus-rc-data \
 自动化覆盖位于 `tests/test_release_smoke.py`，会使用临时目录并验证
 pipeline 输出、首次启动诊断以及 SQLite/Chroma 一致性审计。
 
+完整发布门禁还会检查合成 demo 闭环、隐私文件追踪和离线测评校准：
+
+```bash
+make release-check
+```
+
 ### Assessment 离线校准
 
 不调用 LLM，直接评估固定测评案例的分类准确率和置信度校准：
@@ -195,7 +201,7 @@ PYTHONPATH=src python -m nexus.cli.main calibration \
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `COURSE_ID` | `CS202_OS` | 课程代码（ChromaDB collection 名） |
-| `INPUT` | `data/testDataFile` | ingest 输入目录或文件 |
+| `INPUT` | `data/import` | ingest 输入目录或文件（本地运行数据） |
 | `DB_DIR` | `data/chroma` | ChromaDB 持久化目录 |
 | `SQLITE_PATH` | `data/nexus.db` | SQLite 数据库路径 |
 | `QUERY` | `What is a process...` | query 目标文字 |

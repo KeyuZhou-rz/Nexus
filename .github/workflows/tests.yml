@@ -28,6 +28,11 @@ jobs:
       - name: CLI smoke (core)
         run: |
           nexus --help
+          nexus init --help
+          nexus demo --help
+          nexus sync-status --help
+          nexus context --help
+          nexus dashboard --help
           nexus doctor --help
           nexus db-check --help
           nexus db-backup --help
@@ -55,6 +60,45 @@ jobs:
       - name: Core CLI smoke (no optional deps)
         run: |
           nexus --help
+          nexus init --help
+          nexus demo --help
+          nexus sync-status --help
+          nexus context --help
+          nexus dashboard --help
           nexus doctor --help
           nexus db-check --help
           python -c "from nexus.cli.doctor import main; print('doctor ok')"
+
+  package:
+    runs-on: ubuntu-latest
+    needs: [test, test-minimal]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+      - name: Inspect wheel privacy and package data
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          wheel = next(Path("dist").glob("*.whl"))
+          with ZipFile(wheel) as archive:
+              names = archive.namelist()
+          assert "nexus/knowledge/schema.sql" in names
+          assert not any(name.startswith("data/") for name in names)
+          assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
+          print(wheel)
+          PY
+      - name: Installed wheel smoke
+        run: |
+          python -m pip install --no-deps dist/*.whl
+          nexus --help
+          nexus demo --data-dir /tmp/nexus-demo --json
+          nexus context --data-dir /tmp/nexus-demo --course-id CS202_OS --json

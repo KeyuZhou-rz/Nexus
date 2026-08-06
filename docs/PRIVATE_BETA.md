@@ -1,0 +1,75 @@
+# Nexus 0.3 Private Beta
+
+## Product boundary
+
+Nexus is a local learning context layer, not a replacement chat assistant. The
+Private Beta validates one loop:
+
+1. collect course tasks and updates;
+2. produce a concise local dashboard and briefing;
+3. retain trusted learning evidence and mastery state;
+4. export a stable JSON context for another assistant.
+
+The release intentionally excludes multi-user hosting, mobile apps, browser DOM
+injection, billing, real-time webhooks, and automated MFA handling.
+
+## Supported environment
+
+- Python 3.10-3.13
+- macOS and Linux as primary platforms
+- Windows is best-effort through a Python virtual environment
+- Local Streamlit Dashboard
+
+## Install
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install nexus_dashboard-0.3.0b1-py3-none-any.whl
+nexus init --data-dir data --json
+nexus dashboard
+```
+
+Install optional integrations only when needed:
+
+```bash
+python -m pip install "nexus-dashboard[google]"
+python -m pip install "nexus-dashboard[pdf]"
+```
+
+The Playwright archive extra is advanced mode and is not required for the
+first-run experience.
+
+## Evaluate without accounts
+
+```bash
+nexus demo --data-dir /tmp/nexus-demo --json
+NEXUS_DATA_DIR=/tmp/nexus-demo nexus dashboard
+NEXUS_DATA_DIR=/tmp/nexus-demo nexus context --course-id CS202_OS --json
+```
+
+The demo command refuses non-empty destinations and generates synthetic data
+only.
+
+## Beta acceptance checklist
+
+- `nexus init` succeeds in a new directory.
+- At least one Brightspace feed or Google integration is configured.
+- `nexus pipeline` creates `briefing.json` and `pipeline_report.json`.
+- `nexus sync-status --json` reports no failed source.
+- `nexus dashboard` loads without starting sync or an LLM call.
+- `nexus context --json` contains tasks and stable source status.
+- Assessment evidence appears with source, trust, time, and confidence.
+- `nexus doctor` reports no failures.
+
+## Release channels
+
+The initial channel is a GitHub pre-release containing the wheel, source archive,
+changelog, privacy policy, and a short demo video. Invite a small cohort before
+broader launch. Product Hunt and public marketplace distribution should wait
+until at least five beta users complete the collection-to-context loop.
+
+Collect only operational feedback needed for the beta: installation success,
+time to first source, first useful dashboard view, sync failures, and whether the
+exported context improved an external assistant session. Do not collect course
+content or credentials.

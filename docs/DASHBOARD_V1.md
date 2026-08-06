@@ -1,7 +1,7 @@
 # Dashboard V1
 
 ## Goal
-先把 Nexus 拆出一个轻量、可调试、只读的数据看板。
+Nexus 的轻量、本地优先信息面板。主要视图保持只读，只有 Setup 页面写入来源配置。
 
 这个 dashboard 只回答三个问题：
 
@@ -11,17 +11,17 @@
 
 ## Scope
 
-Dashboard V1 只消费以下文件：
+Dashboard V1 消费以下本地状态：
 
 - `data/tasks.json`
 - `data/briefing.json`
 - `data/pipeline_report.json`
+- `data/nexus.db` 中的学习记忆摘要
 
-它不直接依赖：
+它不直接执行：
 
-- `memory` 状态
 - `QAPipeline`
-- `Chroma`
+- Chroma 检索
 - `archive sync` 执行逻辑
 - 调试面板 / ingest 面板
 
@@ -47,10 +47,15 @@ Dashboard V1 只消费以下文件：
 - 每个 step 的状态摘要
 - 当前 dashboard 读取的文件路径
 
+### `Setup`
+- 初始化本地运行目录
+- 保存 Brightspace iCal/RSS Feed
+- 展示来源是否配置完成
+
 ## Design Principles
 
 ### 1. Read-only first
-主看板不负责复杂操作，只读现成快照，减少调试成本。
+Home、Tasks、Status 只读现成快照；Setup 的写操作通过独立 onboarding 服务完成。
 
 ### 2. Stable ranking
 任务优先级固定：
@@ -87,7 +92,7 @@ Dashboard V1 只消费以下文件：
 ## Run
 
 ```bash
-PYTHONPATH=src streamlit run src/nexus/dashboard_app.py
+nexus dashboard
 ```
 
 或：

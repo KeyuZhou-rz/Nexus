@@ -33,6 +33,11 @@ nexus pipeline
 ```
 
 ### 3.2 常用 CLI
+- 初始化：`nexus init [--data-dir] [--feed-url]`
+- 合成演示：`nexus demo --data-dir <empty-directory>`
+- 信息面板：`nexus dashboard`
+- Context 导出：`nexus context [--course-id] [--json]`
+- 来源状态：`nexus sync-status [--data-dir] [--json]`
 - Pipeline：`nexus pipeline [--skip-archive-sync] [--no-google] [--llm]`
 - Briefing：`nexus briefing [--aggregate] [--window-days N] [--llm]`
 - Archive Sync：`python -m nexus.archive_sync`
@@ -151,6 +156,10 @@ pip install pymupdf4llm
 ```
 
 ## 7. 运行时数据文件约定
+
+`data/` 整体属于本地运行数据，不进入源码发布；仓库仅保留脱敏的
+`data/feeds.example.json`。
+
 - `data/tasks.json`：聚合后的任务总表
 - `data/briefing.json`：简报输出
 - `data/pipeline_report.json`：pipeline 步骤报告

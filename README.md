@@ -16,9 +16,8 @@ It features an AI-powered daily briefing that analyzes your incoming data to hig
 
 ## Installation
 
-1. **Clone the repository:**
+1. **Download the Private Beta release or clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/nexus.git
    cd nexus
    ```
 
@@ -71,7 +70,7 @@ To enable Gmail and Calendar integration:
    Nexus writes refreshed OAuth tokens atomically with these permissions. `nexus doctor --strict` reports unsafe permissions without printing credential contents.
 
 ### 2. Brightspace (LMS) Feeds
-Create a file named `data/feeds.json` to configure your course feeds.
+Use the Dashboard Setup tab or create `data/feeds.json` to configure course feeds.
 
 **Example `data/feeds.json`:**
 ```json
@@ -128,8 +127,17 @@ Reference docs:
 Start the Streamlit interface:
 
 ```bash
-streamlit run src/nexus/streamlit_app.py
+nexus dashboard
 ```
+
+Evaluate the complete product loop with synthetic data and no accounts:
+
+```bash
+nexus demo --data-dir /tmp/nexus-demo --json
+NEXUS_DATA_DIR=/tmp/nexus-demo nexus dashboard
+```
+
+`nexus ui` retains the legacy study application during the Private Beta.
 
 ### CLI Tools
 
@@ -228,7 +236,7 @@ nexus read --db-dir data/chroma --course-id EE201 --limit 10
 
 **Refresh Google Token:**
 ```bash
-python -m nexus.google_auth
+nexus-google-auth
 ```
 
 ## Project Structure
@@ -238,8 +246,15 @@ python -m nexus.google_auth
 - `src/nexus/archive_sync/`: Brightspace scraping, attachment archiving, and post-ingest trigger.
 - `src/nexus/knowledge/`: Shared chunking/ingestion/query pipeline for Chroma.
 - `src/nexus/intelligence/`: LLM logic for generating briefings.
-- `src/nexus/streamlit_app.py`: The main dashboard UI.
+- `src/nexus/dashboard/`: The primary information dashboard.
+- `src/nexus/streamlit_app.py`: The legacy study and QA interface.
 - `data/`: Local storage for tasks, cache, and configuration (ignored by Git).
 
-## License
-MIT
+## Privacy, Security, and Release Notes
+
+- [Private Beta guide](docs/PRIVATE_BETA.md)
+- [Privacy policy](PRIVACY.md)
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
+
+Nexus is licensed under the [MIT License](LICENSE).
