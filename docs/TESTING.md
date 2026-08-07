@@ -129,6 +129,28 @@ make briefing
 make briefing-llm
 ```
 
+### 无头采集到学习状态的闭环验收
+
+以下流程不打开 Dashboard，也不需要真实账号。`nexus demo` 会实际解析一个本地 iCal Feed，写入统一任务快照，建立一条可信测评证据，再由 canonical context 将同课程任务与弱项关联：
+
+```bash
+nexus demo --data-dir /tmp/nexus-headless-check --json
+NEXUS_DATA_DIR=/tmp/nexus-headless-check \
+  nexus context --course-id CS202_OS --json
+NEXUS_DATA_DIR=/tmp/nexus-headless-check \
+  nexus sync-status --data-dir /tmp/nexus-headless-check --json
+```
+
+验收信号：
+
+- task id 以 `bspace_ical:` 开头，证明经过 iCal 解析器而非预写任务；
+- Brightspace 状态为 `succeeded`，并包含采集数量和最近成功时间；
+- `learning.evidence` 包含 `source`、`trust_status` 和 `confidence`；
+- `learning.focus[].related_task` 指向同课程的 Brightspace 任务；
+- 问题正文不会出现在导出的 evidence 中。
+
+手动任务的持久性由 `tests/test_task_service.py` 验证：成功运行外部聚合之后，`source=manual` 的项目仍然存在。
+
 ---
 
 ## 单元测试

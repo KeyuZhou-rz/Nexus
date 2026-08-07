@@ -7,6 +7,8 @@ It features an AI-powered daily briefing that analyzes your incoming data to hig
 ## Features
 
 - **Unified Timeline**: Merges LMS assignments and Calendar events into a single chronological view.
+- **Course-aware Learning Focus**: Pairs evidence-backed weak concepts with the nearest open task from the same course.
+- **User-owned Tasks**: Add local tasks from the Dashboard without losing them during later source synchronization.
 - **Smart Briefing**: Uses LLMs (e.g., DeepSeek, OpenAI) to generate a bilingual (EN/ZH) daily summary of tasks.
 - **Google Integration**: Fetches unread course notifications from Gmail and events from Google Calendar.
 - **Brightspace Integration**: Supports iCal and RSS feeds for assignments and announcements.
@@ -139,6 +141,12 @@ NEXUS_DATA_DIR=/tmp/nexus-demo nexus dashboard
 
 `nexus ui` retains the legacy study application during the Private Beta.
 
+The Home view deliberately keeps two parallel tracks: the task timeline answers
+"when", while Learning Focus answers "what knowledge needs attention and which
+course task makes it relevant now". Passive email, calendar, and LMS collection
+never increases mastery by itself; only trusted assessment evidence or explicit
+user feedback may change learning state.
+
 ### CLI Tools
 
 **Generate a Briefing manually:**
@@ -193,7 +201,7 @@ nexus context --course-id CS202_OS --json
 nexus sync-status --json
 ```
 
-The dashboard's Home and Status views use the same read-only context snapshot. A missing Google token, LMS feed, or knowledge database is shown as a setup state; opening the UI never starts OAuth, Playwright, aggregation, or an LLM request.
+The dashboard's Home and Status views use the same read-only context snapshot. A missing Google token, LMS feed, or knowledge database is shown as a setup state; opening the UI never starts OAuth, Playwright, aggregation, or an LLM request. Tasks added in the Tasks tab use the `manual` source and are preserved across later pipeline runs.
 
 The Dashboard Setup tab can initialize the same local runtime and save Brightspace iCal or RSS feeds. Tokenized feed URLs are treated as sensitive inputs and are not displayed back in the interface.
 

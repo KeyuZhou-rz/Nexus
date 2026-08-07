@@ -49,7 +49,8 @@ NEXUS_DATA_DIR=/tmp/nexus-demo nexus context --course-id CS202_OS --json
 ```
 
 The demo command refuses non-empty destinations and generates synthetic data
-only.
+only. Its Brightspace sample is still synthetic, but it is processed through
+the same local iCal parser used by a configured feed.
 
 ## Beta acceptance checklist
 
@@ -60,6 +61,8 @@ only.
 - `nexus dashboard` loads without starting sync or an LLM call.
 - `nexus context --json` contains tasks and stable source status.
 - Assessment evidence appears with source, trust, time, and confidence.
+- Home links at least one evidence-backed weak concept to a task in the same course.
+- A task added manually remains present after a subsequent pipeline run.
 - `nexus doctor` reports no failures.
 
 ## Release channels
