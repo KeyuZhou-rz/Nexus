@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 
 import pandas as pd
@@ -11,11 +11,13 @@ from ..context_api import build_context
 from ..models import FeedSource
 from ..onboarding import initialize_runtime, upsert_feed
 from ..storage import load_tasks, tasks_last_updated
+from ..task_service import add_manual_task
 from .styles import DASHBOARD_CSS
 from .view_model import (
     build_dashboard_state,
     load_briefing_payload,
     load_pipeline_report,
+    render_learning_focus_card,
     render_task_card,
 )
 
@@ -55,7 +57,7 @@ def main() -> None:
         _render_home(state)
 
     with tab_tasks:
-        _render_tasks(state)
+        _render_tasks(state, data_dir=data_dir)
 
     with tab_status:
         _render_status(state, briefing_path=briefing_path, report_path=report_path)
@@ -85,7 +87,7 @@ def _render_sidebar(*, data_dir: Path, briefing_path: Path, report_path: Path, s
         st.divider()
         st.markdown("### What This App Does")
         st.caption("Dashboard for tasks, briefing, source health, and learning memory.")
-        st.caption("Only the Setup tab writes local source configuration.")
+        st.caption("Setup writes source configuration. Tasks can also add user-owned local items.")
 
 
 def _render_header(state) -> None:
@@ -136,6 +138,8 @@ def _render_home(state) -> None:
                     st.markdown(render_task_card(item), unsafe_allow_html=True)
 
     with right_col:
+        _render_learning_focus(state)
+
         st.markdown('<div class="section-title">Briefing</div>', unsafe_allow_html=True)
         if state.briefing_lines:
             st.markdown('<div class="panel"><div class="panel-kicker">Today\'s summary</div>', unsafe_allow_html=True)
@@ -154,8 +158,6 @@ def _render_home(state) -> None:
                 st.warning(warning)
 
         _render_sync_summary(state)
-        _render_learning_summary(state)
-
         st.markdown('<div class="section-title">Updates</div>', unsafe_allow_html=True)
         if not state.update_items:
             st.markdown(
@@ -167,7 +169,49 @@ def _render_home(state) -> None:
                 st.markdown(render_task_card(item), unsafe_allow_html=True)
 
 
-def _render_tasks(state) -> None:
+def _render_tasks(state, *, data_dir: Path) -> None:
+    with st.expander("Add task", expanded=False):
+        with st.form("manual_task", clear_on_submit=True):
+            title = st.text_input("Title", placeholder="Review chapter 4")
+            course_col, priority_col = st.columns(2)
+            course = course_col.text_input("Course", placeholder="CS202_OS")
+            priority_label = priority_col.selectbox(
+                "Priority", ["Normal", "Low", "High", "Urgent"], index=0
+            )
+            has_deadline = st.checkbox("Set a deadline", value=True)
+            due_date = None
+            due_time = None
+            if has_deadline:
+                date_col, time_col = st.columns(2)
+                due_date = date_col.date_input("Due date")
+                due_time = time_col.time_input("Due time", value=time(23, 59))
+            tags = st.text_input("Tags", placeholder="reading, exam")
+            notes = st.text_area("Notes", placeholder="Optional context")
+            submitted = st.form_submit_button("Add task", type="primary")
+
+        if submitted:
+            priority = {"Low": 0, "Normal": 1, "High": 2, "Urgent": 3}[priority_label]
+            deadline = (
+                datetime.combine(due_date, due_time).astimezone()
+                if has_deadline and due_date is not None and due_time is not None
+                else None
+            )
+            try:
+                add_manual_task(
+                    data_dir,
+                    title=title,
+                    due_at=deadline,
+                    course=course,
+                    priority=priority,
+                    tags=tags.split(","),
+                    notes=notes,
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.success("Task added.")
+                st.rerun()
+
     filter_cols = st.columns(4)
     course = filter_cols[0].selectbox("Course", ["All"] + state.available_courses, index=0)
     source = filter_cols[1].selectbox("Source", ["All"] + state.available_sources, index=0)
@@ -304,6 +348,21 @@ def _render_learning_summary(state, *, show_evidence: bool = False) -> None:
                 "Time": item.get("timestamp") or "-",
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _render_learning_focus(state) -> None:
+    st.markdown('<div class="section-title">Learning Focus</div>', unsafe_allow_html=True)
+    learning = state.learning_context
+    if not learning or not learning.get("available"):
+        st.info("Learning memory is not initialized yet.")
+        return
+    focus = learning.get("focus") or []
+    if not focus:
+        st.info("No evidence-backed weak concepts yet.")
+        return
+    for item in focus[:5]:
+        if isinstance(item, dict):
+            st.markdown(render_learning_focus_card(item), unsafe_allow_html=True)
 
 
 def _render_setup(data_dir: Path, state) -> None:

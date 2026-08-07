@@ -178,6 +178,31 @@ def render_task_card(item: DashboardItem) -> str:
     )
 
 
+def render_learning_focus_card(item: dict[str, Any]) -> str:
+    name = escape(str(item.get("name") or "Unknown concept"))
+    course = escape(str(item.get("course_id") or "Unassigned course"))
+    urgency = escape(str(item.get("urgency") or "review").replace("_", " ").title())
+    mastery = item.get("mastery")
+    mastery_text = f"{float(mastery):.0%} mastery" if isinstance(mastery, (int, float)) else "Mastery not measured"
+    source = escape(str(item.get("evidence_source") or "No evidence source"))
+    trust = escape(str(item.get("trust_status") or "unclassified").replace("_", " "))
+    related = item.get("related_task") if isinstance(item.get("related_task"), dict) else None
+    if related:
+        task_title = escape(str(related.get("title") or "upcoming task"))
+        action = f'<div class="focus-action">Review before: {task_title}</div>'
+    else:
+        action = '<div class="focus-action muted">No upcoming task linked to this course.</div>'
+    return (
+        '<div class="learning-card">'
+        f'<div class="learning-card-head"><div class="learning-title">{name}</div>'
+        f'<div class="urgency-tag">{urgency}</div></div>'
+        f'<div class="task-meta">{course} · {escape(mastery_text)}</div>'
+        f'{action}'
+        f'<div class="evidence-line">Evidence: {source} · {trust}</div>'
+        '</div>'
+    )
+
+
 def _pipeline_summary(pipeline_ok: bool | None, steps: list[dict[str, Any]]) -> str:
     if pipeline_ok is True:
         return "Latest pipeline run completed successfully."

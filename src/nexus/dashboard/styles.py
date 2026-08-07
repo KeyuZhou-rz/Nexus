@@ -137,6 +137,52 @@ html, body, [data-testid="stAppViewContainer"] {
 .task-card.upcoming { border-left-color: var(--accent); background: var(--accent-soft); }
 .task-card.update { border-left-color: var(--info); background: var(--info-soft); }
 
+.learning-card {
+    background: rgba(255, 255, 255, 0.64);
+    border: 1px solid var(--border);
+    border-left: 5px solid var(--danger);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+}
+
+.learning-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.learning-title {
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.35;
+}
+
+.urgency-tag {
+    flex: 0 0 auto;
+    color: var(--danger);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.focus-action {
+    margin-top: 10px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.focus-action.muted,
+.evidence-line {
+    color: var(--muted);
+}
+
+.evidence-line {
+    margin-top: 8px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+}
+
 .task-title {
     font-size: 17px;
     font-weight: 700;
