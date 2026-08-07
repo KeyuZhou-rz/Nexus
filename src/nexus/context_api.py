@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import default_config
+from .learning_focus import build_learning_focus
 from .runtime_status import build_runtime_status
 from .storage import load_tasks, tasks_last_updated
 from .sync_control import build_sync_status
@@ -112,6 +113,9 @@ def build_context(
     last_task_update = tasks_last_updated(tasks_path)
     pipeline_generated = pipeline.get("generated_at")
     source_status = build_sync_status(root, config=config, now=generated_at)
+    learning = _learning_context(root / "nexus.db", course_id)
+    if learning.get("available"):
+        learning["focus"] = build_learning_focus(tasks, learning)
 
     return {
         "schema_version": "1.0",
@@ -138,5 +142,5 @@ def build_context(
             "schedule": briefing.get("schedule", [])[:10] if isinstance(briefing.get("schedule"), list) else [],
             "warnings": briefing.get("warnings", [])[:10] if isinstance(briefing.get("warnings"), list) else [],
         },
-        "learning": _learning_context(root / "nexus.db", course_id),
+        "learning": learning,
     }

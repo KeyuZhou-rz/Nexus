@@ -26,6 +26,8 @@ def test_demo_runtime_builds_complete_synthetic_context(tmp_path: Path) -> None:
     assert context["sync"]["sources"]["brightspace"]["status"] == "succeeded"
     assert context["briefing"]["available"] is True
     assert context["learning"]["evidence"][0]["source"] == "demo_assessment"
+    assert context["tasks"]["items"][0]["id"].startswith("bspace_ical:")
+    assert context["learning"]["focus"][0]["related_task"]["source"] == "brightspace"
 
 
 def test_demo_runtime_refuses_nonempty_destination(tmp_path: Path) -> None:

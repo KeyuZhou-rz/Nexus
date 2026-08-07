@@ -74,3 +74,34 @@ def test_context_exposes_bounded_learning_evidence_without_question_text(tmp_pat
     assert evidence[0]["trust_status"] == "trusted"
     assert evidence[0]["timestamp"]
     assert "question" not in json.dumps(evidence)
+
+
+def test_context_combines_course_task_with_learning_focus(tmp_path: Path) -> None:
+    atomic_write_json(
+        tmp_path / "tasks.json",
+        [{
+            "schema_version": "1.0",
+            "id": "lms:lab",
+            "title": "Deadlock lab",
+            "due_at": "2026-08-09T09:00:00+00:00",
+            "source": "brightspace",
+            "course": "OS",
+            "status": "open",
+            "priority": 2,
+            "tags": ["assignment"],
+        }],
+    )
+    store = SQLiteStore(tmp_path / "nexus.db")
+    store.upsert_concept("os__deadlock", "Deadlock", "OS")
+    MemoryAPI(store).record_event(
+        "os__deadlock",
+        "struggled",
+        context={"evidence_type": "assessment", "source": "quiz"},
+    )
+
+    payload = build_context(data_dir=tmp_path, course_id="OS")
+    focus = payload["learning"]["focus"]
+
+    assert focus[0]["name"] == "Deadlock"
+    assert focus[0]["related_task"]["id"] == "lms:lab"
+    assert focus[0]["evidence_source"] == "quiz"

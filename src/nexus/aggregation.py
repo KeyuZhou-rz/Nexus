@@ -135,6 +135,10 @@ def run_aggregation(
         src = getattr(t, "source", None) or "unknown"
         old_by_source.setdefault(src, []).append(t)
 
+    # Manual tasks are user-owned input, not an external-source snapshot.
+    # They must survive every successful or failed aggregation run.
+    tasks.extend(old_by_source.get("manual", []))
+
     feeds = load_feeds(feeds_path)
     ical_feeds, rss_feeds = _split_feeds(feeds)
     brightspace_enabled = bool(ical_feeds or rss_feeds)

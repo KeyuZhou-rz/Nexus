@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .aggregation import run_aggregation
+from .config import AppConfig
 from .context_api import build_context
 from .io_utils import atomic_write_json, atomic_write_text
 from .knowledge.memory_api import MemoryAPI
@@ -45,21 +47,23 @@ def create_demo_runtime(data_dir: Path, *, now: datetime | None = None) -> dict[
         ),
     )
 
+    config = AppConfig(data_dir=root, feeds_path=root / "feeds.json")
+    aggregation = run_aggregation(
+        include_google=False,
+        include_canvas=False,
+        data_dir=root,
+        config=config,
+    )
+    if aggregation.errors or len(aggregation.tasks) != 1:
+        raise RuntimeError("Synthetic iCal acquisition did not produce exactly one task")
+
     tasks = [
-        Task(
-            id="demo:lab",
-            title="Operating Systems Lab",
-            due_at=due,
-            source="brightspace",
-            course="CS202_OS",
-            priority=3,
-            tags=["assignment", "deadline", "demo"],
-        ),
+        *aggregation.tasks,
         Task(
             id="demo:office-hours",
             title="Concurrency Office Hours",
             due_at=current + timedelta(days=3),
-            source="gcal",
+            source="manual",
             course="CS202_OS",
             priority=1,
             tags=["meeting", "demo"],
@@ -74,7 +78,7 @@ def create_demo_runtime(data_dir: Path, *, now: datetime | None = None) -> dict[
         "todo": [{
             "text_en": "Finish the operating systems lab before tomorrow's deadline.",
             "text_zh": "在明天截止前完成操作系统实验。",
-            "source_ids": ["demo:lab"],
+            "source_ids": [tasks[0].id],
         }],
         "schedule": [{
             "text_en": "Review deadlock before concurrency office hours.",
@@ -103,9 +107,7 @@ def create_demo_runtime(data_dir: Path, *, now: datetime | None = None) -> dict[
                 "details": {
                     "task_count": len(tasks),
                     "sources": {
-                        "brightspace": "succeeded",
-                        "google": "disabled",
-                        "canvas": "disabled",
+                        **aggregation.source_status,
                     },
                 },
             },
