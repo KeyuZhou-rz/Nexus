@@ -13,8 +13,10 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import queue
 import random
 import sqlite3
+import threading
 import time
 import traceback
 import zipfile
@@ -255,20 +257,19 @@ def _create_backup_worker(
     chroma_path: str,
     archive_path: str,
     started: Any,
-    finished: Any,
+    succeeded: Any,
     result_queue: Any,
 ) -> None:
     try:
         started.set()
         report = create_backup(Path(db_path), Path(chroma_path), Path(archive_path))
         result_queue.put({"role": "backup", "status": "ok", "report": report})
+        succeeded.set()
     except BaseException:
         result_queue.put(
             {"role": "backup", "status": "error", "traceback": traceback.format_exc()}
         )
         raise
-    finally:
-        finished.set()
 
 
 def _hold_sync_lock(
@@ -348,6 +349,31 @@ def _assert_database(db_path: Path, expected: list[tuple[str, int, int, int]]) -
     assert rows == expected
 
 
+def test_backup_worker_does_not_signal_success_when_backup_fails(
+    tmp_path: Path,
+) -> None:
+    started = threading.Event()
+    succeeded = threading.Event()
+    results: queue.SimpleQueue[dict[str, Any]] = queue.SimpleQueue()
+
+    with pytest.raises(FileNotFoundError, match="SQLite database not found"):
+        _create_backup_worker(
+            str(tmp_path / "missing.db"),
+            str(tmp_path / "chroma"),
+            str(tmp_path / "backup.zip"),
+            started,
+            succeeded,
+            results,
+        )
+
+    assert started.is_set() is True
+    assert succeeded.is_set() is False
+    result = results.get_nowait()
+    assert result["role"] == "backup"
+    assert result["status"] == "error"
+    assert "FileNotFoundError: SQLite database not found" in result["traceback"]
+
+
 @pytest.mark.skipif(os.name != "posix", reason="release soak requires POSIX flock")
 def test_concurrent_ingest_qa_backup_and_sync_leave_consistent_release_state(
     tmp_path: Path,
@@ -362,6 +388,7 @@ def test_concurrent_ingest_qa_backup_and_sync_leave_consistent_release_state(
     status_dir = root / "status"
     db_path = root / "nexus.db"
     archive_path = root / "backups" / "concurrent.zip"
+    blocked_archive_path = root / "backups" / "blocked.zip"
     sync_lock_path = root / ".sync.lock"
     chroma_path.mkdir(parents=True)
     status_dir.mkdir()
@@ -372,7 +399,7 @@ def test_concurrent_ingest_qa_backup_and_sync_leave_consistent_release_state(
     shared_ready = context.Event()
     shared_release = context.Event()
     backup_started = context.Event()
-    backup_finished = context.Event()
+    backup_succeeded = context.Event()
     sync_ready = context.Event()
     sync_release = context.Event()
 
@@ -388,8 +415,8 @@ def test_concurrent_ingest_qa_backup_and_sync_leave_consistent_release_state(
         name="soak-exclusive-backup",
         target=_create_backup_worker,
         args=(
-            str(db_path), str(chroma_path), str(archive_path),
-            backup_started, backup_finished, results,
+            str(db_path), str(chroma_path), str(blocked_archive_path),
+            backup_started, backup_succeeded, results,
         ),
     )
     sync_holder = context.Process(
@@ -416,7 +443,25 @@ def test_concurrent_ingest_qa_backup_and_sync_leave_consistent_release_state(
 
         backup.start()
         assert backup_started.wait(timeout=_remaining(deadline, "backup start"))
-        assert backup_finished.wait(timeout=0.1) is False
+        assert backup_succeeded.wait(timeout=0.1) is False
+        assert backup.is_alive(), f"backup exited while waiting: {backup.exitcode}"
+
+        # This contention probe must stay inside create_backup's real lock
+        # timeout.  The long quota belongs to the later WAL workload; it must
+        # not turn the product's bounded maintenance-lock contract into an
+        # arbitrarily long wait.
+        shared_release.set()
+        _join(shared_holder, deadline)
+        _join(backup, deadline)
+        assert backup_succeeded.is_set() is True
+        blocked_verification = verify_backup(blocked_archive_path)
+        assert blocked_verification == {
+            "ok": True,
+            "archive": str(blocked_archive_path.resolve()),
+            "files": 1,
+            "verified": 1,
+            "failed": [],
+        }
 
         sync_holder.start()
         assert sync_ready.wait(timeout=_remaining(deadline, "sync lock acquisition"))
@@ -475,13 +520,11 @@ def test_concurrent_ingest_qa_backup_and_sync_leave_consistent_release_state(
         for process in ingest_processes:
             _join(process, deadline)
 
-        # The exclusive backup has been waiting behind a real shared flock
-        # throughout all writes.  Releasing the holder lets it snapshot the
-        # complete, quiescent state.
-        assert backup_finished.is_set() is False
-        shared_release.set()
-        _join(shared_holder, deadline)
-        _join(backup, deadline)
+        # Snapshot the complete state after all shared-lock writers exit.  The
+        # earlier blocked backup covers real lock contention without asking a
+        # product operation to wait beyond its configured 30-second contract.
+        create_backup(db_path, chroma_path, archive_path)
+        _remaining(deadline, "final backup")
 
         expected_process_results = workers + 3
         process_results = [
