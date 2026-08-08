@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Iterable
 
-from ..config import default_config
+from ..config import AppConfig, default_config
 from ..models import Task
 from .base import Aggregator
 
@@ -94,13 +94,15 @@ class GoogleAggregator(Aggregator):
 
     def __init__(
         self,
-        credentials_path: str | None = None,
+        credentials_path: str | Path | None = None,
         include_gmail: bool = True,
         include_calendar: bool = True,
         gmail_max_results: int = 20,
         gmail_window_days: int = 30,
+        *,
+        config: AppConfig | None = None,
     ) -> None:
-        config = default_config()
+        config = config or default_config()
         self.credentials_path = (
             Path(credentials_path) if credentials_path else config.google_credentials_path
         )

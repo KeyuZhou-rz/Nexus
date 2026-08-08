@@ -19,7 +19,7 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
 
@@ -108,6 +108,7 @@ def build_context(
         tasks = [task for task in tasks if task.course == course_id]
 
     pipeline = _read_json(root / "pipeline_report.json")
+    sync_receipt = _read_json(root / "sync_receipt.json")
     briefing = _read_json(root / "briefing.json")
     runtime = build_runtime_status(root)
     last_task_update = tasks_last_updated(tasks_path)
@@ -124,6 +125,7 @@ def build_context(
         "sync": {
             "last_task_update": _iso(last_task_update),
             "last_pipeline_run": pipeline_generated,
+            "last_sync": _sync_receipt_summary(sync_receipt),
             "pipeline_ok": pipeline.get("ok") if isinstance(pipeline.get("ok"), bool) else None,
             "sources": source_status,
             "runtime": {
@@ -143,4 +145,21 @@ def build_context(
             "warnings": briefing.get("warnings", [])[:10] if isinstance(briefing.get("warnings"), list) else [],
         },
         "learning": learning,
+}
+
+
+def _sync_receipt_summary(receipt: dict[str, Any]) -> dict[str, Any] | None:
+    if not receipt:
+        return None
+    summary = receipt.get("summary") if isinstance(receipt.get("summary"), dict) else {}
+    return {
+        "status": receipt.get("status"),
+        "trigger": receipt.get("trigger"),
+        "finished_at": receipt.get("finished_at"),
+        "duration_seconds": receipt.get("duration_seconds"),
+        "summary": {
+            key: summary.get(key)
+            for key in ("task_count", "learning_available", "evidence_count", "focus_count", "linked_focus_count")
+            if key in summary
+        },
     }

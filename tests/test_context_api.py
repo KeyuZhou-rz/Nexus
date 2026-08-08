@@ -105,3 +105,28 @@ def test_context_combines_course_task_with_learning_focus(tmp_path: Path) -> Non
     assert focus[0]["name"] == "Deadlock"
     assert focus[0]["related_task"]["id"] == "lms:lab"
     assert focus[0]["evidence_source"] == "quiz"
+
+
+def test_context_exposes_bounded_last_sync_receipt(tmp_path: Path) -> None:
+    atomic_write_json(tmp_path / "sync_receipt.json", {
+        "status": "succeeded",
+        "trigger": "scheduler",
+        "finished_at": "2026-08-07T01:00:00+00:00",
+        "duration_seconds": 1.2,
+        "summary": {"task_count": 3, "linked_focus_count": 1},
+        "sources": {"brightspace": {"error": "secret"}},
+    })
+
+    payload = build_context(data_dir=tmp_path)
+
+    assert payload["sync"]["last_sync"]["status"] == "succeeded"
+    assert payload["sync"]["last_sync"]["summary"]["linked_focus_count"] == 1
+    assert "secret" not in json.dumps(payload)
+
+
+def test_context_treats_non_utf8_sync_receipt_as_unavailable(tmp_path: Path) -> None:
+    (tmp_path / "sync_receipt.json").write_bytes(b"\xffnot-json")
+
+    payload = build_context(data_dir=tmp_path)
+
+    assert payload["sync"]["last_sync"] is None

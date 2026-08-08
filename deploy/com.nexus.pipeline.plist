@@ -8,7 +8,8 @@
   <array>
     <string>/path/to/python</string>
     <string>-m</string>
-    <string>nexus.cli.pipeline</string>
+    <string>nexus.cli.main</string>
+    <string>sync</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/path/to/Nexus</string>

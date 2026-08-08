@@ -11,6 +11,7 @@ from ..context_api import build_context
 from ..models import FeedSource
 from ..onboarding import initialize_runtime, upsert_feed
 from ..storage import load_tasks, tasks_last_updated
+from ..sync_service import load_sync_receipt, run_sync
 from ..task_service import add_manual_task
 from .styles import DASHBOARD_CSS
 from .view_model import (
@@ -37,12 +38,14 @@ def main() -> None:
     now_local = datetime.now().astimezone()
     context = build_context(data_dir=data_dir, now=now_local)
     sync_sources = context.get("sync", {}).get("sources", {})
+    sync_receipt = load_sync_receipt(data_dir)
     learning_context = context.get("learning", {})
     state = build_dashboard_state(
         tasks,
         briefing_payload=briefing_payload,
         pipeline_report=pipeline_report,
         sync_sources=sync_sources,
+        sync_receipt=sync_receipt,
         learning_context=learning_context,
         generated_at=now_local,
         last_updated=tasks_last_updated(),
@@ -76,6 +79,24 @@ def _render_sidebar(*, data_dir: Path, briefing_path: Path, report_path: Path, s
             st.markdown('<div class="status-bad">Pipeline needs attention</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="status-warn">No pipeline report yet</div>', unsafe_allow_html=True)
+
+        if st.button("Sync now", type="primary", use_container_width=True):
+            with st.spinner("Syncing configured sources..."):
+                receipt = run_sync(data_dir=data_dir, trigger="dashboard")
+            st.session_state["sync_notice"] = {
+                "status": receipt.get("status"),
+                "task_count": receipt.get("summary", {}).get("task_count", 0),
+            }
+            st.rerun()
+
+        notice = st.session_state.pop("sync_notice", None)
+        if isinstance(notice, dict):
+            if notice.get("status") == "succeeded":
+                st.success(f"Sync complete. {notice.get('task_count', 0)} tasks in context.")
+            elif notice.get("status") == "busy":
+                st.warning("A sync is already running.")
+            else:
+                st.error("Sync finished with errors. Check Status for details.")
 
         st.divider()
         st.markdown("### Data Sources")
@@ -270,10 +291,28 @@ def _render_status(state, *, briefing_path: Path, report_path: Path) -> None:
         _render_learning_summary(state, show_evidence=True)
 
     with file_col:
+        st.markdown('<div class="section-title">Last sync</div>', unsafe_allow_html=True)
+        _render_sync_receipt(state.sync_receipt)
+
         st.markdown('<div class="section-title">Files</div>', unsafe_allow_html=True)
         st.write(f"Briefing path: `{briefing_path}`")
         st.write(f"Report path: `{report_path}`")
         st.write(f"Snapshot time: `{state.generated_at.isoformat()}`")
+
+
+def _render_sync_receipt(receipt: dict[str, object]) -> None:
+    if not receipt:
+        st.caption("No sync receipt available yet.")
+        return
+    summary = receipt.get("summary") if isinstance(receipt.get("summary"), dict) else {}
+    status = str(receipt.get("status") or "unknown").replace("_", " ").title()
+    st.write(f"Status: **{status}**")
+    st.write(f"Trigger: `{receipt.get('trigger') or 'unknown'}`")
+    st.write(f"Duration: `{receipt.get('duration_seconds', 0)}s`")
+    metric_cols = st.columns(2)
+    metric_cols[0].metric("Collected tasks", summary.get("task_count", 0))
+    metric_cols[1].metric("Linked weak points", summary.get("linked_focus_count", 0))
+    st.caption(f"Finished: {receipt.get('finished_at') or '-'}")
 
 
 def _sync_label(source: dict[str, object]) -> str:

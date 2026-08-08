@@ -7,7 +7,7 @@ Grades, converting each item to a Task and merging into tasks.json.
 
 Public API
 ----------
-run_archive_sync_subprocess() -> dict
+run_archive_sync_subprocess(..., data_dir=...) -> dict
     Launch the scraper as a subprocess (avoids asyncio event-loop conflicts
     with Streamlit) and return the parsed JSON result.
 """
@@ -22,13 +22,20 @@ from pathlib import Path
 _SRC_DIR = str(Path(__file__).resolve().parents[2])  # …/src/
 
 
-def run_archive_sync_subprocess(timeout: int = 300) -> dict:
+def run_archive_sync_subprocess(
+    timeout: int = 300,
+    *,
+    data_dir: Path | None = None,
+) -> dict:
     """
     Run ``python -m nexus.archive_sync`` in a subprocess and return the
     JSON result dict.  Raises ``RuntimeError`` on non-zero exit or JSON
-    parse failure.
+    parse failure. When provided, ``data_dir`` overrides the inherited
+    ``NEXUS_DATA_DIR`` for the child process only.
     """
     env = {**os.environ, "PYTHONPATH": _SRC_DIR}
+    if data_dir is not None:
+        env["NEXUS_DATA_DIR"] = str(Path(data_dir).expanduser())
     proc = subprocess.run(
         [sys.executable, "-m", "nexus.archive_sync"],
         capture_output=True,

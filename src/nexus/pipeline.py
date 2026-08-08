@@ -64,6 +64,7 @@ def _report_payload(steps: list[StepResult], generated_at: datetime) -> dict[str
 
 def run_mvp_pipeline(
     *,
+    data_dir: Path | None = None,
     run_archive_sync: bool = True,
     archive_timeout: int = 420,
     include_google: bool = True,
@@ -74,6 +75,14 @@ def run_mvp_pipeline(
 ) -> dict[str, Any]:
     """Run the pipeline and always return a structured status report."""
     config = default_config()
+    if data_dir is not None:
+        root = Path(data_dir).expanduser()
+        config.data_dir = root
+        config.feeds_path = root / "feeds.json"
+        if not os.getenv("NEXUS_GOOGLE_CREDENTIALS"):
+            config.google_credentials_path = root / "google_client_secret.json"
+        if not os.getenv("NEXUS_GOOGLE_TOKEN"):
+            config.google_token_path = root / "google_token.json"
     now_local = datetime.now().astimezone()
     briefing_path = briefing_output or (config.data_dir / "briefing.json")
     report_path = report_output or (config.data_dir / "pipeline_report.json")
@@ -91,7 +100,10 @@ def run_mvp_pipeline(
         ))
     else:
         try:
-            archive_result = run_archive_sync_subprocess(timeout=archive_timeout)
+            archive_result = run_archive_sync_subprocess(
+                timeout=archive_timeout,
+                data_dir=config.data_dir,
+            )
             archive_ok = str(archive_result.get("status", "")) == "success"
             steps.append(StepResult(
                 "archive_sync",

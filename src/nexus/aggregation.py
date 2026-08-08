@@ -135,9 +135,23 @@ def run_aggregation(
         src = getattr(t, "source", None) or "unknown"
         old_by_source.setdefault(src, []).append(t)
 
-    # Manual tasks are user-owned input, not an external-source snapshot.
-    # They must survive every successful or failed aggregation run.
-    tasks.extend(old_by_source.get("manual", []))
+    managed_sources = {"brightspace", "gcal", "gmail", "google", "canvas"}
+    # User-owned, unknown/provider-extension, and browser-archive tasks are
+    # outside feed/API snapshot replacement scope, so they must always survive.
+    tasks.extend(
+        task
+        for source, source_tasks in old_by_source.items()
+        for task in source_tasks
+        if source == "manual"
+        or source not in managed_sources
+        or (source == "brightspace" and task.id.startswith("bspace_pw:"))
+    )
+
+    def preserve_snapshot(label: str, sources: tuple[str, ...], reason: str) -> None:
+        old = [task for source in sources for task in old_by_source.get(source, [])]
+        if old:
+            warnings.append(f"{label} {reason}; preserving {len(old)} old tasks.")
+            tasks.extend(old)
 
     feeds = load_feeds(feeds_path)
     ical_feeds, rss_feeds = _split_feeds(feeds)
@@ -145,6 +159,7 @@ def run_aggregation(
     if not brightspace_enabled:
         warnings.append("Brightspace feeds not configured or disabled.")
         source_status["brightspace"] = "skipped"
+        preserve_snapshot("Brightspace", ("brightspace",), "skipped")
 
     # 1. Brightspace
     if brightspace_enabled:
@@ -156,40 +171,36 @@ def run_aggregation(
             errors.append(f"Brightspace error: {exc}")
             source_status["brightspace"] = "failed"
             failures.append({"operation": "aggregation", "source": "brightspace", "error": str(exc)})
-            # Preserve old Brightspace tasks
-            old = old_by_source.get("brightspace", [])
-            if old:
-                warnings.append(f"Brightspace failed; preserving {len(old)} old tasks.")
-                tasks.extend(old)
+            preserve_snapshot("Brightspace", ("brightspace",), "failed")
 
     # 2. Google
     if not include_google:
         warnings.append("Google aggregation disabled.")
         source_status["google"] = "disabled"
+        preserve_snapshot("Google", ("gcal", "gmail", "google"), "disabled")
     elif not _google_configured(config):
         warnings.append("Google credentials or token not configured; source skipped.")
         source_status["google"] = "skipped"
+        preserve_snapshot("Google", ("gcal", "gmail", "google"), "skipped")
     else:
         try:
-            tasks.extend(GoogleAggregator().fetch_tasks())
+            tasks.extend(GoogleAggregator(config=config).fetch_tasks())
             source_status["google"] = "succeeded"
             resolved_failures.add(failure_key({"operation": "aggregation", "source": "google"}))
         except Exception as exc:
             errors.append(f"Google error: {exc}")
             source_status["google"] = "failed"
             failures.append({"operation": "aggregation", "source": "google", "error": str(exc)})
-            for src_key in ("gcal", "gmail", "google"):
-                old = old_by_source.get(src_key, [])
-                if old:
-                    warnings.append(f"Google failed; preserving {len(old)} old tasks (source={src_key}).")
-                    tasks.extend(old)
+            preserve_snapshot("Google", ("gcal", "gmail", "google"), "failed")
 
     # 3. Canvas (Phase 4C-6)
     if not include_canvas:
         warnings.append("Canvas aggregation disabled.")
         source_status["canvas"] = "disabled"
+        preserve_snapshot("Canvas", ("canvas",), "disabled")
     elif not _canvas_configured(config):
         source_status["canvas"] = "skipped"
+        preserve_snapshot("Canvas", ("canvas",), "skipped")
     else:
         try:
             connector = CanvasLMSConnector(config.canvas_url or "", config.canvas_token or "")
@@ -201,10 +212,7 @@ def run_aggregation(
             errors.append(f"Canvas error: {exc}")
             source_status["canvas"] = "failed"
             failures.append({"operation": "aggregation", "source": "canvas", "error": str(exc)})
-            old = old_by_source.get("canvas", [])
-            if old:
-                warnings.append(f"Canvas failed; preserving {len(old)} old tasks.")
-                tasks.extend(old)
+            preserve_snapshot("Canvas", ("canvas",), "failed")
 
     # 4. 去重 + 持久化
     tasks = _dedupe(tasks)

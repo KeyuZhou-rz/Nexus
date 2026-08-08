@@ -30,6 +30,7 @@ jobs:
           nexus --help
           nexus init --help
           nexus demo --help
+          nexus sync --help
           nexus sync-status --help
           nexus context --help
           nexus dashboard --help
@@ -62,6 +63,7 @@ jobs:
           nexus --help
           nexus init --help
           nexus demo --help
+          nexus sync --help
           nexus sync-status --help
           nexus context --help
           nexus dashboard --help

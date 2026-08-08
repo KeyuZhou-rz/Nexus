@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from nexus import aggregation
-from nexus.models import Task
+from nexus.config import AppConfig
+from nexus.models import FeedSource, Task
+from nexus.storage import load_tasks, save_feeds, save_tasks
 
 
 class _GoogleFailStub:
@@ -110,3 +113,70 @@ def test_partial_configuration_succeeds_with_warning(monkeypatch):
     assert len(result.tasks) == 1
     assert result.source_status == {"brightspace": "succeeded", "google": "skipped", "canvas": "skipped"}
     assert any("Google credentials" in warning for warning in result.warnings)
+
+
+def test_disabled_and_skipped_sources_preserve_mixed_snapshot(tmp_path: Path):
+    existing = [
+        _task("archive", "Archived assignment", "brightspace"),
+        _task("calendar", "Calendar event", "gcal"),
+        _task("mail", "Unread mail", "gmail"),
+        _task("legacy-google", "Legacy Google item", "google"),
+        _task("canvas", "Canvas assignment", "canvas"),
+        _task("manual", "User task", "manual"),
+        _task("extension", "Extension task", "custom_provider"),
+    ]
+    save_tasks(existing, tmp_path / "tasks.json")
+    config = AppConfig(data_dir=tmp_path)
+
+    result = aggregation.run_aggregation(
+        include_google=False,
+        include_canvas=False,
+        data_dir=tmp_path,
+        config=config,
+    )
+
+    expected_ids = {task.id for task in existing}
+    assert {task.id for task in result.tasks} == expected_ids
+    assert {task.id for task in load_tasks(tmp_path / "tasks.json")} == expected_ids
+    assert result.source_status == {
+        "brightspace": "skipped",
+        "google": "disabled",
+        "canvas": "disabled",
+    }
+
+
+def test_successful_feed_refresh_preserves_archive_only_brightspace_tasks(
+    monkeypatch,
+    tmp_path: Path,
+):
+    archive_task = _task(
+        "bspace_pw:course-1:assignment-1",
+        "Assignment discovered by archive sync",
+    )
+    stale_feed_task = _task("ical:stale", "Old feed assignment")
+    save_tasks([archive_task, stale_feed_task], tmp_path / "tasks.json")
+    save_feeds(
+        [
+            FeedSource(
+                kind="brightspace_ical",
+                name="Course feed",
+                url="file:///unused.ics",
+            )
+        ],
+        tmp_path / "feeds.json",
+    )
+    monkeypatch.setattr(aggregation, "BrightspaceAggregator", _BrightspaceSuccessStub)
+
+    result = aggregation.run_aggregation(
+        include_google=False,
+        include_canvas=False,
+        data_dir=tmp_path,
+        config=AppConfig(data_dir=tmp_path),
+    )
+
+    assert {task.id for task in result.tasks} == {archive_task.id, "new-1"}
+    assert {task.id for task in load_tasks(tmp_path / "tasks.json")} == {
+        archive_task.id,
+        "new-1",
+    }
+    assert result.source_status["brightspace"] == "succeeded"

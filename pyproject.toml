@@ -53,6 +53,7 @@ nexus-ui = "nexus.cli.ui:main"
 nexus-dashboard = "nexus.cli.dashboard:main"
 nexus-init = "nexus.cli.init:main"
 nexus-sync-status = "nexus.cli.sync_status:main"
+nexus-sync = "nexus.cli.sync:main"
 nexus-demo = "nexus.cli.demo:main"
 nexus-google-auth = "nexus.google_auth:main"
 

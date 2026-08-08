@@ -25,6 +25,7 @@ def test_unified_cli_help() -> None:
     assert "ui" in result.stdout
     assert "dashboard" in result.stdout
     assert "demo" in result.stdout
+    assert "sync" in result.stdout
 
 
 def test_unified_cli_dispatches_help() -> None:
@@ -55,6 +56,12 @@ def test_unified_cli_dispatches_sync_status_help() -> None:
     result = _run("-m", "nexus.cli.main", "sync-status", "--help")
     assert result.returncode == 0
     assert "--data-dir" in result.stdout
+
+
+def test_unified_cli_dispatches_sync_help() -> None:
+    result = _run("-m", "nexus.cli.main", "sync", "--help")
+    assert result.returncode == 0
+    assert "--include-archive" in result.stdout
 
 
 def test_unified_cli_dispatches_dashboard_help() -> None:

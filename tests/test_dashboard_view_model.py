@@ -111,6 +111,12 @@ def test_build_dashboard_state_keeps_sync_source_read_model() -> None:
     assert state.sync_sources == sources
 
 
+def test_build_dashboard_state_keeps_sync_receipt_read_model() -> None:
+    receipt = {"status": "succeeded", "summary": {"linked_focus_count": 2}}
+    state = build_dashboard_state([], generated_at=datetime(2026, 4, 15, tzinfo=timezone.utc), sync_receipt=receipt)
+    assert state.sync_receipt == receipt
+
+
 def test_build_dashboard_state_keeps_learning_context_read_model() -> None:
     learning = {
         "available": True,

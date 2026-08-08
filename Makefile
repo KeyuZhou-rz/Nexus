@@ -61,13 +61,16 @@ query:
 
 # ─── Task Pipeline & Briefing ─────────────────────────────────────────────────
 
-.PHONY: pipeline pipeline-fast briefing briefing-llm
+.PHONY: pipeline pipeline-fast sync briefing briefing-llm
 
 pipeline:
 	$(PYTHON) -m nexus.cli.pipeline
 
 pipeline-fast:
 	$(PYTHON) -m nexus.cli.pipeline --skip-archive-sync --no-google
+
+sync:
+	$(PYTHON) -m nexus.cli.main sync
 
 briefing:
 	$(PYTHON) -m nexus.cli.briefing

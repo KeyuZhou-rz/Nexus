@@ -1,5 +1,5 @@
 [Unit]
-Description=Nexus Pipeline (archive_sync → aggregation → briefing)
+Description=Nexus Single-Flight Sync
 After=network-online.target
 Wants=network-online.target
 
@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/path/to/Nexus
 Environment=PYTHONPATH=src
-ExecStart=python -m nexus.cli.pipeline
+ExecStart=python -m nexus.cli.main sync
 StandardOutput=append:/path/to/Nexus/data/pipeline.log
 StandardError=append:/path/to/Nexus/data/pipeline.log
 User=nexus

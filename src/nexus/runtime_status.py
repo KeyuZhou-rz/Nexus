@@ -15,7 +15,7 @@ def _load_report(path: Path) -> dict[str, Any]:
         return {"available": False, "path": str(path)}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         return {"available": False, "path": str(path), "error": f"Unreadable report: {exc}"}
     if not isinstance(payload, dict):
         return {"available": False, "path": str(path), "error": "Report is not a JSON object"}
@@ -65,6 +65,7 @@ def build_runtime_status(data_dir: Path, *, db_path: Path | None = None) -> dict
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "data_dir": str(data_dir),
         "pipeline": _load_report(data_dir / "pipeline_report.json"),
+        "sync": _load_sync_receipt(data_dir / "sync_receipt.json"),
         "session_finalization": _load_report(data_dir / "session_finalization_report.json"),
         "backup": _load_report(data_dir / "backup_report.json"),
         "session_backlog": _session_backlog(database),
@@ -74,3 +75,25 @@ def build_runtime_status(data_dir: Path, *, db_path: Path | None = None) -> dict
             "ingest": _queue_status(data_dir / "ingest_failures.json"),
         },
     }
+
+
+def _load_sync_receipt(path: Path) -> dict[str, Any]:
+    payload = _load_report(path)
+    if not payload.get("available"):
+        return payload
+    sources = payload.get("sources")
+    if isinstance(sources, dict):
+        allowed = {
+            "source", "enabled", "configured", "status", "freshness",
+            "last_success_at", "item_count",
+        }
+        payload["sources"] = {
+            str(name): {
+                key: value.get(key)
+                for key in allowed
+                if isinstance(value, dict) and key in value
+            }
+            for name, value in sources.items()
+            if isinstance(value, dict)
+        }
+    return payload

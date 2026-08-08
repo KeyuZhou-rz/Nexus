@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
+from nexus.aggregation import AggregationResult, run_aggregation
+from nexus.aggregators.google import GoogleAggregator
+from nexus.config import AppConfig
 from nexus.models import FeedSource, Task
 
 
@@ -89,3 +93,133 @@ def test_archive_sync_derives_every_store_from_runtime_data_dir(monkeypatch, tmp
     assert (data_dir / "archive_failures.json").exists()
     assert (data_dir / "nexus.db").exists()
     assert (data_dir / "chroma").is_dir()
+
+
+def test_archive_subprocess_explicit_data_dir_overrides_inherited_env(
+    monkeypatch,
+    tmp_path,
+):
+    inherited_dir = tmp_path / "inherited"
+    explicit_dir = tmp_path / "explicit"
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(inherited_dir))
+    captured = {}
+
+    def fake_run(*args, **kwargs):
+        captured.update(kwargs)
+        return type("Completed", (), {"stdout": "{}", "stderr": "", "returncode": 0})()
+
+    monkeypatch.setattr("nexus.archive_sync.subprocess.run", fake_run)
+
+    from nexus.archive_sync import run_archive_sync_subprocess
+
+    assert run_archive_sync_subprocess(data_dir=explicit_dir) == {}
+    assert captured["env"]["NEXUS_DATA_DIR"] == str(explicit_dir)
+    assert captured["env"]["PYTHONPATH"]
+    assert all(
+        captured["env"].get(key) == value
+        for key, value in os.environ.items()
+        if key not in {"NEXUS_DATA_DIR", "PYTHONPATH"}
+    )
+
+    captured.clear()
+    assert run_archive_sync_subprocess() == {}
+    assert captured["env"]["NEXUS_DATA_DIR"] == str(inherited_dir)
+
+
+def test_pipeline_passes_effective_data_dir_to_archive_subprocess(monkeypatch, tmp_path):
+    data_dir = tmp_path / "explicit"
+    inherited_dir = tmp_path / "inherited"
+    captured = {}
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(inherited_dir))
+    monkeypatch.setenv("NEXUS_BRIGHTSPACE_URL", "https://example.invalid")
+    monkeypatch.setenv("NEXUS_BRIGHTSPACE_LOGIN_MODE", "manual")
+    monkeypatch.setattr(
+        "nexus.pipeline.default_config",
+        lambda: AppConfig(data_dir=inherited_dir),
+    )
+
+    def fake_archive_sync(*, timeout, data_dir):
+        captured.update(timeout=timeout, data_dir=data_dir)
+        return {"status": "success", "tasks": [], "archives": [], "archive_failures": []}
+
+    monkeypatch.setattr("nexus.pipeline.run_archive_sync_subprocess", fake_archive_sync)
+    monkeypatch.setattr(
+        "nexus.pipeline.run_aggregation",
+        lambda **kwargs: AggregationResult(tasks=[], errors=[]),
+    )
+    monkeypatch.setattr("nexus.pipeline.load_tasks", lambda path: [])
+
+    from nexus.pipeline import run_mvp_pipeline
+
+    report = run_mvp_pipeline(
+        data_dir=data_dir,
+        run_archive_sync=True,
+        archive_timeout=37,
+        include_google=False,
+        use_llm=False,
+    )
+
+    assert report["steps"][0]["status"] == "succeeded"
+    assert captured == {"timeout": 37, "data_dir": data_dir}
+
+
+def test_aggregation_google_config_is_isolated_between_runtimes(monkeypatch, tmp_path):
+    runtime_a = tmp_path / "runtime-a"
+    runtime_b = tmp_path / "runtime-b"
+    captured = []
+
+    def make_config(data_dir: Path, course: str) -> AppConfig:
+        data_dir.mkdir()
+        credentials_path = data_dir / "client.json"
+        token_path = data_dir / "token.json"
+        credentials_path.write_text("{}", encoding="utf-8")
+        token_path.write_text("{}", encoding="utf-8")
+        (data_dir / "course_aliases.json").write_text(
+            json.dumps([{"course": course, "aliases": [course.lower()]}]),
+            encoding="utf-8",
+        )
+        return AppConfig(
+            data_dir=data_dir,
+            google_credentials_path=credentials_path,
+            google_token_path=token_path,
+        )
+
+    config_a = make_config(runtime_a, "COURSE-A")
+    config_b = make_config(runtime_b, "COURSE-B")
+
+    def fake_fetch(aggregator):
+        captured.append(
+            (
+                aggregator.credentials_path,
+                aggregator.token_path,
+                aggregator.course_aliases,
+            )
+        )
+        return []
+
+    monkeypatch.setattr(GoogleAggregator, "fetch_tasks", fake_fetch)
+    monkeypatch.setattr(
+        "nexus.aggregators.google.default_config",
+        lambda: (_ for _ in ()).throw(AssertionError("ambient config was read")),
+    )
+
+    for config in (config_a, config_b):
+        run_aggregation(
+            include_google=True,
+            include_canvas=False,
+            data_dir=config.data_dir,
+            config=config,
+        )
+
+    assert captured == [
+        (
+            config_a.google_credentials_path,
+            config_a.google_token_path,
+            [{"course": "COURSE-A", "aliases": ["course-a"]}],
+        ),
+        (
+            config_b.google_credentials_path,
+            config_b.google_token_path,
+            [{"course": "COURSE-B", "aliases": ["course-b"]}],
+        ),
+    ]

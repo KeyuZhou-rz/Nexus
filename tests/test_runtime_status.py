@@ -50,6 +50,41 @@ def test_status_cli_is_json_and_does_not_require_a_database(tmp_path, capsys) ->
     assert payload["session_backlog"]["available"] is False
 
 
+def test_runtime_status_exposes_sync_receipt_without_provider_errors(tmp_path) -> None:
+    atomic_write_json(
+        tmp_path / "sync_receipt.json",
+        {
+            "status": "failed",
+            "trigger": "scheduler",
+            "sources": {
+                "brightspace": {
+                    "status": "failed",
+                    "item_count": 0,
+                    "error": "https://example.invalid/feed?token=secret",
+                }
+            },
+        },
+    )
+
+    sync = build_runtime_status(tmp_path)["sync"]
+
+    assert sync["available"] is True
+    assert sync["status"] == "failed"
+    assert sync["sources"] == {
+        "brightspace": {"status": "failed", "item_count": 0}
+    }
+    assert "secret" not in json.dumps(sync)
+
+
+def test_runtime_status_handles_non_utf8_sync_receipt(tmp_path) -> None:
+    (tmp_path / "sync_receipt.json").write_bytes(b"\xffnot-json")
+
+    sync = build_runtime_status(tmp_path)["sync"]
+
+    assert sync["available"] is False
+    assert sync["path"].endswith("sync_receipt.json")
+
+
 def test_scheduler_commands_persist_session_and_backup_outcomes(tmp_path, monkeypatch) -> None:
     store = SQLiteStore(tmp_path / "nexus.db")
     store.upsert_session(

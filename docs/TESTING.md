@@ -151,6 +151,21 @@ NEXUS_DATA_DIR=/tmp/nexus-headless-check \
 
 手动任务的持久性由 `tests/test_task_service.py` 验证：成功运行外部聚合之后，`source=manual` 的项目仍然存在。
 
+### 单实例同步验收
+
+`nexus sync` 是定时器和 Dashboard 共用的入口：
+
+```bash
+NEXUS_DATA_DIR=/tmp/nexus-sync-check \
+  PYTHONPATH=src python -m nexus.cli.main sync --no-google
+cat /tmp/nexus-sync-check/sync_receipt.json
+```
+
+回执中的 `status`、`sources`、`summary.task_count`、
+`summary.evidence_count` 和 `summary.linked_focus_count` 是机器可读的验收
+信号。同步期间再次执行同一命令，退出码为 `2`（`busy`），不会覆盖上一次
+成功回执。回执不包含 Feed URL、错误正文或测评题目正文。
+
 ---
 
 ## 单元测试

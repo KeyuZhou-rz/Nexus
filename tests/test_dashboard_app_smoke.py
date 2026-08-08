@@ -22,7 +22,7 @@ def test_information_dashboard_renders_complete_demo_runtime(monkeypatch, tmp_pa
     assert not app.exception
     assert [tab.label for tab in app.tabs] == ["Home", "Tasks", "Status", "Setup"]
     assert {button.label for button in app.button} == {
-        "Add task", "Initialize local data", "Save source"
+        "Add task", "Initialize local data", "Save source", "Sync now"
     }
     assert any("Learning Focus" in markdown.value for markdown in app.markdown)
 
@@ -49,3 +49,23 @@ def test_dashboard_manual_task_form_writes_user_owned_task(monkeypatch, tmp_path
     assert manual[0].title == "Read chapter 7"
     assert manual[0].course == "CS202_OS"
     assert not app.exception
+
+
+def test_dashboard_sync_button_uses_shared_sync_service(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "demo"
+    create_demo_runtime(data_dir)
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
+    calls = []
+
+    def fake_sync(**kwargs):
+        calls.append(kwargs)
+        return {"status": "succeeded", "summary": {"task_count": 3}}
+
+    monkeypatch.setattr("nexus.dashboard.app.run_sync", fake_sync)
+    app = AppTest.from_file(APP_PATH).run(timeout=30)
+    next(item for item in app.button if item.label == "Sync now").click()
+    app.run(timeout=30)
+
+    assert calls == [{"data_dir": data_dir, "trigger": "dashboard"}]
+    assert any("Sync complete" in success.value for success in app.success)

@@ -8,7 +8,7 @@ paths for production virtualenv installs.
 
 | Job | Frequency | When | What |
 |-----|-----------|------|------|
-| Pipeline | Daily | 06:00 | Aggregation + briefing |
+| Sync | Daily | 06:00 | Single-flight source sync + aggregation + briefing |
 | Session finalize | Hourly | — | Clean up expired sessions |
 | Backup | Weekly | Sun 03:00 | Full database + Chroma backup |
 
@@ -29,6 +29,10 @@ sudo cp deploy/nexus-backup.service deploy/nexus-backup.timer /etc/systemd/syste
 sudo systemctl daemon-reload
 sudo systemctl enable --now nexus-pipeline.timer nexus-backup.timer
 ```
+
+The historical `nexus-pipeline.*` filenames are kept for compatibility, but
+the scheduled command is `nexus sync`. Browser-based archive sync remains an
+explicit opt-in and is not enabled by these examples.
 
 ## Launchd (macOS)
 

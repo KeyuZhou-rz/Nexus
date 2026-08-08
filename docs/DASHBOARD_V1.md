@@ -17,6 +17,7 @@ Dashboard V1 消费以下本地状态：
 - `data/tasks.json`
 - `data/briefing.json`
 - `data/pipeline_report.json`
+- `data/sync_receipt.json`
 - `data/nexus.db` 中的学习记忆摘要
 
 它不直接执行：
@@ -48,6 +49,7 @@ Dashboard V1 消费以下本地状态：
 
 ### `Status`
 - 最近一次 pipeline 是否成功
+- 最近一次同步的触发来源、耗时、任务数和弱项关联数
 - 每个 step 的状态摘要
 - 当前 dashboard 读取的文件路径
 

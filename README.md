@@ -122,6 +122,20 @@ Output files:
 - `data/briefing.json`
 - `data/pipeline_report.json`
 
+For a scheduler, use the single-flight headless entrypoint. It does not open a
+browser or call an LLM unless the advanced archive option is explicitly set:
+
+```bash
+nexus sync --data-dir data
+nexus sync --data-dir data --no-google
+```
+
+Each run writes `data/sync_receipt.json` with source health, task count,
+learning evidence count, and task-to-weak-point linkage count. A second run
+while one is active exits with status `2` and does not overwrite the prior
+receipt. This makes the command suitable for launchd, cron, or another local
+scheduler.
+
 Reference docs:
 - `docs/NEXUS_REFERENCE.md`
 
@@ -202,6 +216,9 @@ nexus sync-status --json
 ```
 
 The dashboard's Home and Status views use the same read-only context snapshot. A missing Google token, LMS feed, or knowledge database is shown as a setup state; opening the UI never starts OAuth, Playwright, aggregation, or an LLM request. Tasks added in the Tasks tab use the `manual` source and are preserved across later pipeline runs.
+
+The Dashboard sidebar's `Sync now` button calls the same headless service as
+`nexus sync` and records the trigger as `dashboard`.
 
 The Dashboard Setup tab can initialize the same local runtime and save Brightspace iCal or RSS feeds. Tokenized feed URLs are treated as sensitive inputs and are not displayed back in the interface.
 
