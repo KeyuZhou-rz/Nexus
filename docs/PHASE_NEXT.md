@@ -290,23 +290,23 @@ interaction_logs(session_id, user_query, llm_response, model_used, cost_tracking
   ```python
   class MemoryAPI:
       """记忆系统的统一 API 门面"""
-      
+
       # 掌握度
       def get_mastery_overview(user_id, course_id) -> MasteryOverview
       def get_decaying_concepts(user_id, course_id, limit=10) -> list[ConceptMastery]
       def record_review_event(user_id, concept_id, event_type) -> None
-      
+
       # 用户画像
       def get_profile(user_id, course_id) -> UserProfile
       def update_profile(user_id, course_id, patch: dict) -> None
-      
+
       # 弱点分析
       def get_weak_points(user_id, course_id) -> list[WeakPoint]
       def get_learning_recommendations(user_id, course_id) -> list[Recommendation]
-      
+
       # 学习计划
       def generate_study_plan(user_id, course_id, days=7) -> StudyPlan
-      
+
       # 遗忘曲线
       def get_forgetting_curve(user_id, concept_id) -> ForgettingCurveData
       def get_predicted_forgetting_alerts(user_id, course_id) -> list[Alert]

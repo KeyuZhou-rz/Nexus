@@ -131,7 +131,7 @@ ALTER TABLE chunks ADD COLUMN chunk_index INTEGER;
 class MetadataMigration:
     """
     将旧 ChromaDB 向量升级到新元数据契约。
-    
+
     操作（幂等，可重复执行）：
     1. 对每个 Chroma chunk，补全 metadata 字段：
        - schema_version → "1"
@@ -142,13 +142,13 @@ class MetadataMigration:
     2. 对每个 SQLite documents 行，如果 file_hash 是 32 字符（MD5），
        重新计算文件的 SHA-256 并更新。
     3. 对每个 SQLite chunks 行，填充 chunk_index（从 Chroma id 解析）。
-    
+
     所有操作先 dry-run（默认），输出待修改项；--apply 后才写入。
     """
-    
+
     def __init__(self, sqlite_path: Path, chroma_path: Path):
         ...
-    
+
     def plan(self) -> dict:
         """dry-run: 返回将要修改的项，不写入任何数据。
         返回: {
@@ -157,7 +157,7 @@ class MetadataMigration:
             "sqlite_chunk_index_updates": 70 # 需要填充 chunk_index 的行数
         }
         """
-    
+
     def apply(self) -> dict:
         """执行迁移，返回实际修改数。先自动调用 db_backup。"""
 ```
@@ -238,7 +238,7 @@ PYTHONPATH=src python -m pytest tests/ -q
 class ConceptQuarantine:
     """
     识别和隔离伪概念/孤立概念。
-    
+
     分类规则（按优先级）：
     A. 伪概念 — 确定性规则，不需要 chunk 证据：
        - name 是纯问词: "如何", "为什么", "区别", "什么" (name 长度 ≤ 3 且全是 CJK 疑问词)
@@ -247,14 +247,14 @@ class ConceptQuarantine:
        - name 是纯标点或纯数字
     B. 孤立概念 — concept 无 chunk_concepts 行
     C. 无定义概念 — definition IS NULL 且 type IS NULL（LLM 从未验证过）
-    
+
     默认 dry-run，输出分类计数和受影响 concept_id 列表。
     --apply 后：
     - 伪概念：DELETE FROM concepts CASCADE (删除 concept + relations + aliases)
     - 孤立+无定义：移入 concept_quarantine 表（软删除，可恢复）
     - 孤立+有定义：保留，标记 concept_type='orphan'
     """
-    
+
     def plan(self) -> dict:
         """返回: {
             "pseudo_concepts": [
@@ -264,7 +264,7 @@ class ConceptQuarantine:
             "orphan_no_definition": [concept_id, ...],  # 100 个
             "orphan_with_definition": [concept_id, ...], # 41 个
         }"""
-    
+
     def apply(self, categories: list[str] = ["pseudo", "orphan_no_def"]) -> dict:
         """执行隔离。categories 控制哪些分类被处理。"""
 ```
@@ -415,17 +415,17 @@ ChromaDB 没有 SQL 那样的 foreign key。这里指：
 ```python
 class SafeMigration:
     """所有迁移操作的基类，提供自动备份 + 迁移后校验。"""
-    
+
     def __init__(self, sqlite_path: Path, chroma_path: Path, data_dir: Path):
         self.sqlite_path = sqlite_path
         self.chroma_path = chroma_path
         self.data_dir = data_dir
-    
+
     def pre_migration_backup(self) -> Path:
         """创建迁移前备份，返回备份路径。"""
         from nexus.knowledge.maintenance import create_backup
         return create_backup(self.data_dir)  # 内部调 sqlite backup + Chroma copy
-    
+
     def post_migration_verify(self) -> bool:
         """迁移后运行 db-check + retrieval golden set。"""
         # 运行 KnowledgeConsistencyAudit，验证 0 issues
