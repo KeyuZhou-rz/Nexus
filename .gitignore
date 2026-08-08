@@ -44,8 +44,11 @@ source .env
 # Streamlit secrets (contains API keys)
 .streamlit/secrets.toml
 
-# Agent tooling runtime state
-.codex/
+# Agent tooling runtime state (project agent definitions are source-controlled)
+.codex/*
+!.codex/agents/
+.codex/agents/**
+!.codex/agents/*.toml
 
 # Runtime data artifacts
 data/conversations/

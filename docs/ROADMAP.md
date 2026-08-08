@@ -45,7 +45,7 @@
 
 **决策（已冻结）**：分层不合并 —— `knowledge/`(SQLite, Ebbinghaus, 概念图谱) 为主存储；根级 `memory_*` 降级为别名词典 + 零成本弱项兜底；`state.json` 不再生成（已无数据，迁移风险≈0）。concept ID 对齐走 `concept_resolver` 三级降级（别名表→规范化→模糊匹配≥0.7）。图谱填充从 Chroma 70 chunks 回填 SQLite `chunks` 表 + 跑 `concept_extractor`，不重跑 LLM 解析。
 
-- [ ] **M1-1 设计冻结**（design，无代码）：本决策写入 ROADMAP，标 M1 `[~]`。验收：96 绿。
+- [x] **M1-1 设计冻结**（design，无代码）：分层、主存储和 concept ID 对齐决策已写入本节。
 - [x] **M1-2 SQLite chunks 回填**：新建 `knowledge/chunk_backfill.py` + `cli/concepts_backfill.py`，从 Chroma 回填 SQLite `chunks` 表 + 补 `documents`。验收：`SELECT COUNT(*) FROM chunks` ≥ 47。测试 `tests/test_chunk_backfill.py`。
 - [x] **M1-3 别名表 + concept_resolver**：`schema.sql` 加 `concept_aliases`(alias/course_id/concept_id/source, UNIQUE(alias,course_id))；新建 `concept_resolver.py` 三级 `resolve`；`sqlite_store` 加 `upsert_alias`/`get_alias`。测试 `tests/test_concept_resolver.py`。
 - [x] **M1-4 跑通 concept_extractor 填充图谱**（核心）：扩展回填 CLI，回填后调 `ConceptExtractor.extract_from_chunks → refine_with_llm(有 key) → persist`。验收：`concepts`>0、`chunk_concepts`>0、`GraphRetriever.retrieve([chunk_id])` 返 `has_content=True`。测试 `tests/test_concept_backfill.py`（stub LLM）。
@@ -299,6 +299,7 @@
 
 - [ ] **4E-5 并发 soak tests**
   - 长时间运行、并发 ingest/QA/backup 测试
+  - 进展：headless sync 已引入 single-flight lock；正在补过期锁竞态回归和调度器入口。
 
 ### 4F：P2 质量门禁与发布
 
@@ -325,8 +326,8 @@
   - README、Reference、Testing、迁移指南
   - (done: 2026-07-24 reconciliation documents current LLM enablement, runtime status, queues, and test count)
 
-- [ ] **4F-6 发布 0.2.0 候选版本**
-  - 全新目录验收
+- [~] **4F-6 发布 0.3.0 beta 候选版本**
+  - 当前版本 `0.3.0b1`；待完成全新目录验收和调度同步门禁。
 
 ---
 
