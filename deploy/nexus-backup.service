@@ -6,7 +6,8 @@ After=nexus-pipeline.service
 Type=oneshot
 WorkingDirectory=/path/to/Nexus
 Environment=PYTHONPATH=src
-ExecStart=python -m nexus.cli.db_backup
-StandardOutput=append:/path/to/Nexus/data/backup.log
-StandardError=append:/path/to/Nexus/data/backup.log
+Environment=NEXUS_DATA_DIR=/var/lib/nexus
+ExecStart=python -m nexus.cli.db_backup --sqlite-path /var/lib/nexus/nexus.db --db-dir /var/lib/nexus/chroma --output /var/lib/nexus/backups/nexus-{timestamp}.zip
+StandardOutput=append:/var/log/nexus/backup.log
+StandardError=append:/var/log/nexus/backup.log
 User=nexus

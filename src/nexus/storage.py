@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from .config import default_config
+from .config import default_config, ensure_private_runtime_dir
 from .io_utils import atomic_write_json
 from .models import FeedSource, Task
 from .schemas import validate_task_dict
@@ -30,7 +30,7 @@ def load_tasks(path: Path | None = None) -> list[Task]:
 def save_tasks(tasks: Iterable[Task], path: Path | None = None) -> None:
     """Saves tasks to JSON file."""
     path = _tasks_path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_runtime_dir(path.parent)
     payload = [task.to_dict() for task in tasks]
     for item in payload:
         errors = validate_task_dict(item)
@@ -59,6 +59,6 @@ def load_feeds(path: Path | None = None) -> list[FeedSource]:
 def save_feeds(feeds: Iterable[FeedSource], path: Path | None = None) -> None:
     """Saves feed configurations to JSON file."""
     path = _feeds_path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_runtime_dir(path.parent)
     payload = [feed.to_dict() for feed in feeds]
     atomic_write_json(path, payload)

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .config import ensure_private_runtime_dir
 from .io_utils import atomic_write_json
 from .models import FeedSource
 from .storage import save_feeds
@@ -15,8 +16,7 @@ SUPPORTED_FEED_KINDS = {"brightspace_ical", "brightspace_rss", "ical_file"}
 
 def initialize_runtime(data_dir: Path) -> dict[str, object]:
     """Create missing runtime snapshots without replacing existing data."""
-    root = Path(data_dir).expanduser()
-    root.mkdir(parents=True, exist_ok=True)
+    root = ensure_private_runtime_dir(data_dir)
     created: list[str] = []
     existing: list[str] = []
     warnings: list[str] = []

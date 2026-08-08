@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import stat
 
 from nexus.sync_service import run_sync
 
@@ -67,6 +68,7 @@ def test_run_sync_offline_persists_all_artifacts_in_requested_data_dir(
     )
     artifact_paths = [data_dir / name for name in artifact_names]
     assert [path.is_file() for path in artifact_paths] == [True, True, True, True]
+    assert stat.S_IMODE(data_dir.stat().st_mode) == 0o700
     assert {path.resolve().parent for path in artifact_paths} == {data_dir.resolve()}
     assert not ambient_data_dir.exists()
     assert not (data_dir / ".sync.lock").exists()

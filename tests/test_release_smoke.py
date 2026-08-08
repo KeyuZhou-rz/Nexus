@@ -46,6 +46,17 @@ def test_clean_room_offline_pipeline_and_runtime_commands(tmp_path: Path) -> Non
     assert (data_dir / "briefing.json").exists()
     assert (data_dir / "pipeline_report.json").exists()
 
+    sync = _run_cli(
+        "sync", "--data-dir", str(data_dir), "--no-google", data_dir=data_dir
+    )
+    assert sync.returncode == 0, sync.stderr
+    sync_payload = json.loads(sync.stdout)
+    assert sync_payload["status"] == "succeeded"
+    assert sync_payload["data_dir"] == str(data_dir)
+    assert json.loads((data_dir / "sync_receipt.json").read_text(encoding="utf-8")) == sync_payload
+    assert (data_dir / "tasks.json").exists()
+    assert not (data_dir / ".sync.lock").exists()
+
     doctor = _run_cli("doctor", "--no-google", data_dir=data_dir)
     assert doctor.returncode == 0, doctor.stderr
     doctor_payload = json.loads(doctor.stdout)

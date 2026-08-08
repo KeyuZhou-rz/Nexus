@@ -16,19 +16,35 @@ injection, billing, real-time webhooks, and automated MFA handling.
 ## Supported environment
 
 - Python 3.10-3.13
-- macOS and Linux as primary platforms
-- Windows is best-effort through a Python virtual environment
+- macOS and Linux on a local filesystem are the supported runtime platforms
+- One user-owned `data_dir` per machine, used by the Dashboard and every scheduler
+- Windows UI/import compatibility is best-effort; lock-dependent sync, ingest,
+  and backup commands are unavailable in this beta
 - Local Streamlit Dashboard
+
+Do not place `data_dir` on NFS, SMB, iCloud Drive, Dropbox, or another
+networked/synchronized filesystem. Do not share it across hosts or OS users.
+The release uses POSIX file locks and owner-only sidecars to protect local
+writes. When changing the service account, stop every Nexus process first and
+transfer ownership of the complete data directory.
 
 ## Install
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install nexus_dashboard-0.3.0b1-py3-none-any.whl
-nexus init --data-dir data --json
+python -m pip install nexus_dashboard-0.3.0b2-py3-none-any.whl
+# Keep every Nexus command on one explicit, absolute local runtime.
+export NEXUS_DATA_DIR="$(pwd -P)/nexus-data"
+nexus init --data-dir "$NEXUS_DATA_DIR" --json
 nexus dashboard
+# After Nexus has created nexus.db, this inherits the same runtime directory.
+nexus db-backup
 ```
+
+Keep `NEXUS_DATA_DIR` exported in every terminal or scheduler that runs Nexus.
+Both `nexus dashboard` and the default `nexus db-backup` paths inherit it; do
+not start either command with an unrelated working-directory-local `data/`.
 
 Install optional integrations only when needed:
 
@@ -56,7 +72,8 @@ the same local iCal parser used by a configured feed.
 
 - `nexus init` succeeds in a new directory.
 - At least one Brightspace feed or Google integration is configured.
-- `nexus pipeline` creates `briefing.json` and `pipeline_report.json`.
+- `nexus sync --no-google` creates `tasks.json`, `briefing.json`,
+  `pipeline_report.json`, and a successful `sync_receipt.json` in a clean runtime.
 - `nexus sync-status --json` reports no failed source.
 - `nexus dashboard` loads without starting sync or an LLM call.
 - `nexus context --json` contains tasks and stable source status.
@@ -64,6 +81,7 @@ the same local iCal parser used by a configured feed.
 - Home links at least one evidence-backed weak concept to a task in the same course.
 - A task added manually remains present after a subsequent pipeline run.
 - `nexus doctor` reports no failures.
+- `make release-check` and the bounded concurrency soak gate pass from a clean checkout.
 
 ## Release channels
 

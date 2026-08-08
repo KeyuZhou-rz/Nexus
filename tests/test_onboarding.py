@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import stat
 
 import pytest
 
@@ -17,6 +18,36 @@ def test_initialize_runtime_is_idempotent_and_preserves_existing_data(tmp_path: 
     assert first["created"] == ["feeds.json", "tasks.json"]
     assert second["created"] == []
     assert json.loads((tmp_path / "tasks.json").read_text(encoding="utf-8")) == [{"id": "keep"}]
+
+
+def test_initialize_runtime_creates_owner_only_data_dir(tmp_path: Path) -> None:
+    data_dir = tmp_path / "runtime"
+
+    initialize_runtime(data_dir)
+
+    assert stat.S_IMODE(data_dir.stat().st_mode) == 0o700
+
+
+def test_initialize_runtime_preserves_existing_directory_permissions(tmp_path: Path) -> None:
+    data_dir = tmp_path / "shared-runtime"
+    data_dir.mkdir(mode=0o750)
+    data_dir.chmod(0o750)
+
+    initialize_runtime(data_dir)
+
+    assert stat.S_IMODE(data_dir.stat().st_mode) == 0o750
+
+
+def test_initialize_runtime_does_not_chmod_symlink_target(tmp_path: Path) -> None:
+    target = tmp_path / "managed-elsewhere"
+    target.mkdir(mode=0o750)
+    target.chmod(0o750)
+    data_dir = tmp_path / "runtime-link"
+    data_dir.symlink_to(target, target_is_directory=True)
+
+    initialize_runtime(data_dir)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o750
 
 
 def test_upsert_feed_updates_same_url_and_preserves_other_feeds(tmp_path: Path) -> None:

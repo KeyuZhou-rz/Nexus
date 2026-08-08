@@ -10,6 +10,8 @@
     <string>-m</string>
     <string>nexus.cli.main</string>
     <string>sync</string>
+    <string>--data-dir</string>
+    <string>/Users/you/Library/Application Support/Nexus</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/path/to/Nexus</string>
@@ -17,6 +19,8 @@
   <dict>
     <key>PYTHONPATH</key>
     <string>src</string>
+    <key>NEXUS_DATA_DIR</key>
+    <string>/Users/you/Library/Application Support/Nexus</string>
   </dict>
   <key>StartCalendarInterval</key>
   <dict>
@@ -24,9 +28,9 @@
     <key>Minute</key><integer>0</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>/path/to/Nexus/data/pipeline_launchd.log</string>
+  <string>/Users/you/Library/Logs/Nexus/sync.log</string>
   <key>StandardErrorPath</key>
-  <string>/path/to/Nexus/data/pipeline_launchd.log</string>
+  <string>/Users/you/Library/Logs/Nexus/sync.log</string>
   <key>RunAtLoad</key><false/>
 </dict>
 </plist>

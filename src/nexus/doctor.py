@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import stat
 import sqlite3
 import sys
@@ -423,6 +424,21 @@ def run_doctor(config: AppConfig | None = None, include_google: bool = True) -> 
     warnings: list[str] = []
     components: dict[str, ComponentStatus] = {}
 
+    data_dir = Path(config.data_dir).expanduser()
+    data_dir_mode: str | None = None
+    if data_dir.exists() and os.name == "posix":
+        mode = stat.S_IMODE(data_dir.stat().st_mode)
+        data_dir_mode = f"{mode:04o}"
+        if data_dir.is_symlink():
+            warnings.append(
+                f"data_dir is a symlink and its target permissions must be audited: {data_dir}"
+            )
+        if mode & 0o077:
+            warnings.append(
+                f"data_dir is accessible by group/others ({mode:04o}); "
+                f"run chmod 700 {data_dir}"
+            )
+
     # Secret permission checks (cross-cutting)
     secret_paths = {
         ".env": Path(__file__).resolve().parents[2] / ".env",
@@ -465,7 +481,6 @@ def run_doctor(config: AppConfig | None = None, include_google: bool = True) -> 
     # Build legacy-compatible details dict
     sqlite_comp = components.get("sqlite")
     chroma_comp = components.get("chroma")
-    data_dir = Path(config.data_dir).expanduser()
     tasks_path = data_dir / "tasks.json"
 
     details: dict[str, object] = {
@@ -473,6 +488,7 @@ def run_doctor(config: AppConfig | None = None, include_google: bool = True) -> 
         "python_version": sys.version,
         "data_dir": str(config.data_dir),
         "data_dir_exists": data_dir.exists(),
+        "data_dir_mode": data_dir_mode,
         # legacy top-level keys
         "sqlite_path": str(sqlite_comp.details.get("path", "") if sqlite_comp else ""),
         "sqlite_status": sqlite_comp.details.get("status", "missing") if sqlite_comp else "missing",

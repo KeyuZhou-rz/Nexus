@@ -10,13 +10,16 @@ Phase 4 表: concepts / concept_relations / chunk_concepts / learning_events / c
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import stat
 import time
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
+from ..config import ensure_private_runtime_dir
 from .connection_registry import register_connection, unregister_connection
 
 
@@ -26,6 +29,34 @@ _LATEST_SCHEMA_VERSION = 9
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
+def _prepare_private_sqlite_path(db_path: Path) -> None:
+    """Create or restrict a SQLite file without following a final symlink."""
+    ensure_private_runtime_dir(db_path.parent)
+    flags = os.O_RDWR | os.O_CREAT
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        flags |= nofollow
+    elif db_path.is_symlink():  # pragma: no cover - POSIX supplies O_NOFOLLOW
+        raise ValueError(f"SQLite database path must not be a symlink: {db_path}")
+
+    try:
+        descriptor = os.open(db_path, flags, 0o600)
+    except OSError as exc:
+        if db_path.is_symlink():
+            raise ValueError(
+                f"SQLite database path must not be a symlink: {db_path}"
+            ) from exc
+        raise
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"SQLite database path must be a regular file: {db_path}")
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None:
+            fchmod(descriptor, 0o600)
+    finally:
+        os.close(descriptor)
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     """
     创建 SQLite 连接并配置必要的 PRAGMA。
@@ -33,6 +64,8 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     - foreign_keys=ON：确保 CASCADE DELETE 生效
     每次连接都必须设置，SQLite PRAGMA 不持久化到文件。
     """
+    db_path = Path(db_path).expanduser()
+    _prepare_private_sqlite_path(db_path)
     conn = sqlite3.connect(
         str(db_path), timeout=_SQLITE_BUSY_TIMEOUT_MS / 1000
     )
@@ -81,8 +114,7 @@ class SQLiteStore:
     """
 
     def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path = Path(db_path).expanduser()
         self._init_schema()
 
     def _init_schema(self) -> None:

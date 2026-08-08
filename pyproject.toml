@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nexus-dashboard"
-version = "0.3.0b1"
+version = "0.3.0b2"
 description = "Local-first learning context layer for academic tasks and memory"
 readme = "README.md"
 requires-python = ">=3.10"

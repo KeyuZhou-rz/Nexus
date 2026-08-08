@@ -5,6 +5,19 @@ import os
 from pathlib import Path
 
 
+def ensure_private_runtime_dir(path: Path) -> Path:
+    """Create a runtime directory with owner-only permissions.
+
+    Existing directories are deliberately left unchanged: deployments may
+    rely on ACLs or shared-group access that Nexus must not silently rewrite.
+    Passing ``mode`` to ``mkdir`` applies only when the leaf directory is new,
+    so this also avoids following a symlink with a later ``chmod``.
+    """
+    root = Path(path).expanduser()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return root
+
+
 def _load_dotenv() -> None:
     """
     Load .env file from project root into os.environ.

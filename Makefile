@@ -80,7 +80,7 @@ briefing-llm:
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
-.PHONY: test test-knowledge test-cli test-archive test-fast calibration context release-smoke release-check package
+.PHONY: test test-knowledge test-cli test-archive test-fast calibration context release-smoke soak soak-long release-check package wheel-smoke
 
 test:
 	$(PYTEST) tests/ -q
@@ -138,10 +138,30 @@ release-smoke:
 	$(PYTHON) -m nexus.cli.main calibration \
 		--fixture tests/fixtures/mastery_calibration.json --json
 
+SOAK_ITERATIONS ?= 50
+SOAK_WORKERS ?= 4
+SOAK_TIMEOUT_SECONDS ?= 20
+
+soak:
+	NEXUS_SOAK_ITERATIONS=$(SOAK_ITERATIONS) \
+	NEXUS_SOAK_WORKERS=$(SOAK_WORKERS) \
+	NEXUS_SOAK_TIMEOUT_SECONDS=$(SOAK_TIMEOUT_SECONDS) \
+	$(PYTEST) soak/test_concurrency_soak.py -q
+
+soak-long:
+	$(MAKE) soak SOAK_ITERATIONS=10000 SOAK_WORKERS=8 SOAK_TIMEOUT_SECONDS=1800
+
 package:
 	$(PYTHON) -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 
-release-check: test release-smoke package
+WHEEL_SMOKE_TIMEOUT_SECONDS ?= 180
+
+wheel-smoke: package
+	PYTHONPATH= python tests/scripts/wheel_smoke.py \
+		--dist-dir dist \
+		--timeout-seconds $(WHEEL_SMOKE_TIMEOUT_SECONDS)
+
+release-check: test release-smoke soak wheel-smoke
 
 # ─── DB Inspection ────────────────────────────────────────────────────────────
 

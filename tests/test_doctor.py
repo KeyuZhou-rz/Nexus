@@ -58,6 +58,24 @@ def test_doctor_reports_storage_status(tmp_path):
     assert any("SQLite database not initialized" in msg for msg in report.warnings)
 
 
+def test_doctor_warns_when_runtime_directory_is_not_owner_only(tmp_path):
+    data_dir = tmp_path / "shared-data"
+    data_dir.mkdir(mode=0o755)
+    data_dir.chmod(0o755)
+
+    report = run_doctor(
+        config=AppConfig(data_dir=data_dir, feeds_path=data_dir / "feeds.json"),
+        include_google=False,
+    )
+
+    assert report.details["data_dir_mode"] == "0755"
+    assert any(
+        "data_dir is accessible by group/others" in warning
+        and "chmod 700" in warning
+        for warning in report.warnings
+    )
+
+
 def test_doctor_does_not_warn_about_read_only_foreign_keys(tmp_path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()

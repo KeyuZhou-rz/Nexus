@@ -206,19 +206,32 @@ PYTHONPATH=src python -m pytest tests/test_knowledge_chunking.py -v
 NEXUS_DATA_DIR=/tmp/nexus-rc-data NEXUS_LLM_ENABLED=0 \
   PYTHONPATH=src python -m nexus.cli.main pipeline --skip-archive-sync --no-google
 NEXUS_DATA_DIR=/tmp/nexus-rc-data NEXUS_LLM_ENABLED=0 \
+  PYTHONPATH=src python -m nexus.cli.main sync --data-dir /tmp/nexus-rc-data --no-google
+NEXUS_DATA_DIR=/tmp/nexus-rc-data NEXUS_LLM_ENABLED=0 \
   PYTHONPATH=src python -m nexus.cli.main doctor --no-google
 NEXUS_DATA_DIR=/tmp/nexus-rc-data \
   PYTHONPATH=src python -m nexus.cli.main status --data-dir /tmp/nexus-rc-data
 ```
 
 自动化覆盖位于 `tests/test_release_smoke.py`，会使用临时目录并验证
-pipeline 输出、首次启动诊断以及 SQLite/Chroma 一致性审计。
+pipeline/sync 输出、同步回执、首次启动诊断以及 SQLite/Chroma 一致性审计。
 
 完整发布门禁还会检查合成 demo 闭环、隐私文件追踪和离线测评校准：
 
 ```bash
 make release-check
 ```
+
+`release-check` 同时执行有界的并发 soak：多进程 ingest-like 写入、
+QA-like SQLite WAL 读写、独占备份和 single-flight sync 竞争，最后验证
+live/backup SQLite 完整性、外键、JSON 原子性和锁清理。发布前长时间运行：
+
+```bash
+make soak-long
+```
+
+也可显式调整 `SOAK_ITERATIONS`、`SOAK_WORKERS` 和
+`SOAK_TIMEOUT_SECONDS`。soak 不访问网络、LLM、真实 connector 或仓库 `data/`。
 
 ### Assessment 离线校准
 

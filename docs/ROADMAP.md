@@ -50,7 +50,7 @@
 - [x] **M1-3 别名表 + concept_resolver**：`schema.sql` 加 `concept_aliases`(alias/course_id/concept_id/source, UNIQUE(alias,course_id))；新建 `concept_resolver.py` 三级 `resolve`；`sqlite_store` 加 `upsert_alias`/`get_alias`。测试 `tests/test_concept_resolver.py`。
 - [x] **M1-4 跑通 concept_extractor 填充图谱**（核心）：扩展回填 CLI，回填后调 `ConceptExtractor.extract_from_chunks → refine_with_llm(有 key) → persist`。验收：`concepts`>0、`chunk_concepts`>0、`GraphRetriever.retrieve([chunk_id])` 返 `has_content=True`。测试 `tests/test_concept_backfill.py`（stub LLM）。
 - [x] **M1-5 统一写口 memory_writer**：新建 `memory_writer.py`，`record_weak_point`(resolve→add_weak_point，命中记 struggled) + `apply_feedback_unified`(reject→remove+forgot，accept→mastered+correct_answer)。测试 `tests/test_memory_writer.py`。
-- [x] **M1-6 三个根级入口改走 memory_writer**：改 `cli/memory_extract.py`、`cli/memory_feedback.py`、`archive_sync/post_ingest.py`，移除 state.json 读写。验收：`grep -r "state.json" src/nexus/` 仅剩 state_store.py；`test_archive_post_ingest` 改断言到 SQLite user_profile。
+- [x] **M1-6 三个根级入口改走 memory_writer**：改 `cli/memory_extract.py`、`cli/memory_feedback.py`、`archive_sync/post_ingest.py`，移除 state.json 读写。验收：生产代码不再包含 `state_store.py`/`state.json` 路径；`test_archive_post_ingest` 改断言到 SQLite user_profile。
 - [x] **M1-7 UnifiedMemoryReader + briefing 改造**：新建 `knowledge/unified_memory.py`(`weak_points`/`review_queue`=get_decaying_concepts/`low_mastery_topics`)；`briefing._inject_learning_context` 用 reader 替代 `load_state`。验收：`grep load_state briefing.py` 无残留；`test_briefing_context` 改 monkeypatch reader。B1 前置。
 - [x] **M1-8 弃用标记 + 文档**：`state_store.py`/`memory_update.py` 已移除；当前记忆入口为 `conversation_store.py` / `memory_writer.py` / `knowledge/temporal_memory.py`；ROADMAP M1 标 `[x]`。验收：96 绿。
 
@@ -131,7 +131,7 @@
 
 ## Phase 4 — 生产可用性与 Progress 精度收口
 
-> 基线：schema v8、601 passed（正式 `tests/` 套件）、DB consistency 0 issues。
+> 当前发布基线：schema v9、699 passed（正式 `tests/` 套件）、DB consistency 0 issues。
 > 不做前端视觉设计。每个子项单独提交；每完成一个阶段跑定向测试、全量测试、CLI smoke 和 db-check。
 > 数据库、Chroma、凭据和 pycache 不进入提交。
 
@@ -139,10 +139,10 @@
 
 目标：新环境按文档安装后，可以可靠启动和诊断。
 
-- [x] **4A-1 重构依赖为 optional extras**
-  - 拆分 pyproject.toml：`core`(streamlit/chromadb/litellm/sqlite3)、`google`(google-api-client/google-auth)、`archive`(playwright/pypdf/pymupdf4llm)、`pdf`(pypdf/pymupdf4llm)、`llm`(litellm)
+- [x] **4A-1 重构依赖为 base + optional extras**
+  - `pyproject.toml` 基础依赖提供 dashboard/离线核心；`google`、`archive`、`pdf`、`llm` 为可选能力，`all` 聚合完整安装。
   - 消灭 requirements.txt（pyproject.toml extras 替代）
-  - 验收：`pip install -e .[core]` 可运行离线 QA、数据库命令和 pipeline
+  - 验收：`pip install -e .` 可运行离线 QA、数据库命令和 pipeline
   - (done: pyproject.toml — google/archive/pdf/llm/all extras 已定义；requirements.txt 已不存在)
 
 - [x] **4A-2 CI 增加真实 pip install + 矩阵构建**
@@ -297,9 +297,9 @@
   - 从 archive-only 扩展到 aggregation + ingest
   - (done: shared bounded-retry JSON queues with `.dead` manual-review files for archive, aggregation, and ingest)
 
-- [ ] **4E-5 并发 soak tests**
+- [x] **4E-5 并发 soak tests**
   - 长时间运行、并发 ingest/QA/backup 测试
-  - 进展：headless sync 已引入 single-flight lock；正在补过期锁竞态回归和调度器入口。
+  - 交付：`soak/test_concurrency_soak.py`、`make soak`、`make soak-long`；覆盖 SQLite WAL、共享 ingest lock、独占 backup 和 single-flight sync。
 
 ### 4F：P2 质量门禁与发布
 
@@ -327,7 +327,7 @@
   - (done: 2026-07-24 reconciliation documents current LLM enablement, runtime status, queues, and test count)
 
 - [~] **4F-6 发布 0.3.0 beta 候选版本**
-  - 当前版本 `0.3.0b1`；待完成全新目录验收和调度同步门禁。
+  - 当前版本 `0.3.0b2`；自动 clean-room、wheel 和调度同步门禁已接入，待真实 connector/scheduler 验收。
 
 ---
 

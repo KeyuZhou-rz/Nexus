@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
+import errno
 import json
 import os
 from pathlib import Path
@@ -11,7 +11,12 @@ import socket
 from typing import Any, Iterator
 from uuid import uuid4
 
-from .config import default_config
+try:  # ``fcntl`` is not available on Windows and some constrained runtimes.
+    import fcntl
+except ImportError:  # pragma: no cover - exercised by monkeypatch on POSIX CI
+    fcntl = None  # type: ignore[assignment]
+
+from .config import default_config, ensure_private_runtime_dir
 from .context_api import build_context
 from .io_utils import atomic_write_json
 from .pipeline import run_mvp_pipeline
@@ -22,12 +27,30 @@ SYNC_RECEIPT = "sync_receipt.json"
 LOCK_STALE_AFTER_SECONDS = 3600
 LOCK_GUARD_SUFFIX = ".acquire"
 LOCK_PROTOCOL = "flock-v1"
+LOCK_UNAVAILABLE_ERRNOS = frozenset(
+    value
+    for value in (
+        getattr(errno, "ENOLCK", None),
+        getattr(errno, "ENOSYS", None),
+        getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None),
+    )
+    if value is not None
+)
 
 
 class SyncBusyError(RuntimeError):
     def __init__(self, owner: dict[str, Any]) -> None:
         super().__init__("Another sync is already running")
         self.owner = owner
+
+
+class SyncPlatformUnsupportedError(RuntimeError):
+    """Raised when the runtime has no safe cross-process lock primitive."""
+
+
+class SyncLockUnavailableError(RuntimeError):
+    """Raised when the filesystem cannot provide the required process lock."""
 
 
 def run_sync(
@@ -44,7 +67,7 @@ def run_sync(
     run_id = uuid4().hex
 
     try:
-        root.mkdir(parents=True, exist_ok=True)
+        ensure_private_runtime_dir(root)
         with _sync_lock(root / SYNC_LOCK, run_id=run_id, trigger=trigger):
             report = run_mvp_pipeline(
                 data_dir=root,
@@ -210,12 +233,16 @@ def _sync_lock(path: Path, *, run_id: str, trigger: str) -> Iterator[None]:
 @contextmanager
 def _sync_lifetime_guard(path: Path) -> Iterator[None]:
     """Hold the authoritative process lock for one complete sync context."""
+    if fcntl is None:
+        raise SyncPlatformUnsupportedError(
+            "Single-flight sync requires POSIX fcntl.flock support"
+        )
     guard_path = path.with_name(f"{path.name}{LOCK_GUARD_SUFFIX}")
     descriptor = os.open(guard_path, os.O_CREAT | os.O_RDWR, 0o600)
     locked = False
     try:
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise SyncBusyError(_read_lock(path)) from None
         locked = True
@@ -223,9 +250,25 @@ def _sync_lifetime_guard(path: Path) -> Iterator[None]:
     finally:
         try:
             if locked:
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                _flock(descriptor, fcntl.LOCK_UN)
         finally:
             os.close(descriptor)
+
+
+def _flock(descriptor: int, operation: int) -> None:
+    """Apply flock without ever degrading to an unsafe marker-only lock."""
+    if fcntl is None:
+        raise SyncPlatformUnsupportedError(
+            "Single-flight sync requires POSIX fcntl.flock support"
+        )
+    try:
+        fcntl.flock(descriptor, operation)
+    except OSError as exc:
+        if exc.errno in LOCK_UNAVAILABLE_ERRNOS:
+            raise SyncLockUnavailableError(
+                "The data filesystem does not provide required flock semantics"
+            ) from exc
+        raise
 
 
 def _create_lock(path: Path, owner: dict[str, Any]) -> bool:

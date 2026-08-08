@@ -7,7 +7,8 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/path/to/Nexus
 Environment=PYTHONPATH=src
-ExecStart=python -m nexus.cli.main sync
-StandardOutput=append:/path/to/Nexus/data/pipeline.log
-StandardError=append:/path/to/Nexus/data/pipeline.log
+Environment=NEXUS_DATA_DIR=/var/lib/nexus
+ExecStart=python -m nexus.cli.main sync --data-dir /var/lib/nexus
+StandardOutput=append:/var/log/nexus/sync.log
+StandardError=append:/var/log/nexus/sync.log
 User=nexus

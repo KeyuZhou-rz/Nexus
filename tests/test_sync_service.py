@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import multiprocessing
 import os
@@ -11,10 +12,14 @@ from typing import Any
 
 import pytest
 
+import nexus.sync_service as sync_service
+from nexus.cli import sync as sync_cli
 from nexus.sync_service import (
     LOCK_PROTOCOL,
     LOCK_STALE_AFTER_SECONDS,
     SyncBusyError,
+    SyncLockUnavailableError,
+    SyncPlatformUnsupportedError,
     _sync_lock,
     load_sync_receipt,
     run_sync,
@@ -136,6 +141,70 @@ def test_run_sync_records_failure_without_leaking_exception_details(tmp_path: Pa
     assert receipt["status"] == "failed"
     assert receipt["error_type"] == "RuntimeError"
     assert "secret" not in json.dumps(receipt)
+    assert not (tmp_path / ".sync.lock").exists()
+
+
+def test_run_sync_reports_unsupported_platform_without_marker_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(sync_service, "fcntl", None)
+    monkeypatch.setattr(
+        sync_service,
+        "run_mvp_pipeline",
+        lambda **_: (_ for _ in ()).throw(AssertionError("pipeline must not run")),
+    )
+
+    receipt = run_sync(data_dir=tmp_path, include_google=False)
+
+    assert receipt["status"] == "failed"
+    assert receipt["error_type"] == SyncPlatformUnsupportedError.__name__
+    assert not (tmp_path / ".sync.lock").exists()
+    assert not (tmp_path / ".sync.lock.acquire").exists()
+
+
+def test_sync_cli_outputs_stable_unsupported_platform_failure(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(sync_service, "fcntl", None)
+
+    exit_code = sync_cli.main([
+        "--data-dir", str(tmp_path), "--no-google",
+    ])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["error_type"] == SyncPlatformUnsupportedError.__name__
+
+
+@pytest.mark.parametrize(
+    "error_number",
+    sorted({
+        errno.ENOLCK,
+        errno.ENOSYS,
+        errno.ENOTSUP,
+        errno.EOPNOTSUPP,
+    }),
+)
+def test_run_sync_reports_filesystem_lock_unavailable(
+    tmp_path: Path, monkeypatch, error_number: int
+) -> None:
+    assert sync_service.fcntl is not None
+    monkeypatch.setattr(
+        sync_service.fcntl,
+        "flock",
+        lambda *_: (_ for _ in ()).throw(OSError(error_number, "unsupported")),
+    )
+    monkeypatch.setattr(
+        sync_service,
+        "run_mvp_pipeline",
+        lambda **_: (_ for _ in ()).throw(AssertionError("pipeline must not run")),
+    )
+
+    receipt = run_sync(data_dir=tmp_path, include_google=False)
+
+    assert receipt["status"] == "failed"
+    assert receipt["error_type"] == SyncLockUnavailableError.__name__
     assert not (tmp_path / ".sync.lock").exists()
 
 

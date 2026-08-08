@@ -5,15 +5,19 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from nexus.config import default_config
 from nexus.io_utils import atomic_write_json
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create a checksummed SQLite and Chroma backup")
-    parser.add_argument("--sqlite-path", default="data/nexus.db")
-    parser.add_argument("--db-dir", default="data/chroma")
+    parser.add_argument("--sqlite-path", type=Path, default=None)
+    parser.add_argument("--db-dir", type=Path, default=None)
     parser.add_argument("--output", default=None,
-                        help="Backup archive path (default: data/backups/nexus-<timestamp>.zip)")
+                        help=(
+                            "Backup archive path; {timestamp} expands at runtime "
+                            "(default: <data-dir>/backups/nexus-<timestamp>.zip)"
+                        ))
     parser.add_argument("--force", action="store_true", help="Replace an existing backup archive")
     parser.add_argument(
         "--retain", type=int, default=0,
@@ -27,7 +31,13 @@ def main() -> int:
 
     from nexus.knowledge.maintenance import create_backup, verify_backup
 
-    report_path = Path(args.sqlite_path).parent / "backup_report.json"
+    data_dir = Path(default_config().data_dir).expanduser()
+    sqlite_path = args.sqlite_path or (data_dir / "nexus.db")
+    chroma_path = args.db_dir or (data_dir / "chroma")
+    timestamp = f"{datetime.now():%Y%m%d-%H%M%S}"
+    output_template = args.output or str(data_dir / "backups" / "nexus-{timestamp}.zip")
+    output_path = Path(output_template.replace("{timestamp}", timestamp))
+    report_path = sqlite_path.parent / "backup_report.json"
     if args.verify:
         report = verify_backup(Path(args.verify))
         _write_status_report(report_path, report, command="verify")
@@ -36,9 +46,9 @@ def main() -> int:
 
     try:
         report = create_backup(
-            Path(args.sqlite_path),
-            Path(args.db_dir),
-            Path(args.output or f"data/backups/nexus-{datetime.now():%Y%m%d-%H%M%S}.zip"),
+            sqlite_path,
+            chroma_path,
+            output_path,
             force=args.force,
         )
     except Exception as exc:
@@ -48,7 +58,7 @@ def main() -> int:
 
     # Phase 4E-3: retention cleanup
     if args.retain > 0:
-        _prune_backups(Path(args.output).parent if args.output else Path("data/backups"), args.retain)
+        _prune_backups(output_path.parent, args.retain)
 
     return 0 if report.get("ok") else 1
 

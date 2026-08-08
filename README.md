@@ -18,6 +18,12 @@ It features an AI-powered daily briefing that analyzes your incoming data to hig
 
 ## Installation
 
+The `0.3.0b2` beta supports Python 3.10-3.13 on macOS and Linux with a
+single-user data directory on a local filesystem. Windows can be used for
+best-effort UI/demo evaluation, but lock-dependent sync, ingest, and backup
+commands are not supported. Do not use NFS, SMB, iCloud Drive, Dropbox, or a
+runtime shared across hosts or OS users.
+
 1. **Download the Private Beta release or clone the repository:**
    ```bash
    cd nexus
@@ -108,22 +114,30 @@ export NEXUS_LLM_ENABLED="1"
 
 ## Usage
 
-### Run Integrated MVP Pipeline (Recommended)
-Single command to run archive sync + post-ingest + aggregation + briefing:
+### Run Safe Headless Sync (Recommended)
+
+Use the single-flight entrypoint for normal terminal, Dashboard, and scheduler
+runs:
 
 ```bash
-nexus pipeline
+nexus sync --data-dir data
 ```
 
-For day-to-day use, treat `nexus pipeline` as the primary entrypoint. The
-module form (`python -m nexus.cli.pipeline`) remains available for development.
+Browser archive sync is advanced and remains explicit:
+
+```bash
+nexus sync --data-dir data --include-archive
+```
+
+The lower-level `nexus pipeline` command remains available for development and
+manual orchestration.
 
 Output files:
 - `data/briefing.json`
 - `data/pipeline_report.json`
 
-For a scheduler, use the single-flight headless entrypoint. It does not open a
-browser or call an LLM unless the advanced archive option is explicitly set:
+The headless entrypoint does not open a browser or call an LLM unless the
+advanced archive option is explicitly set:
 
 ```bash
 nexus sync --data-dir data
@@ -269,7 +283,7 @@ nexus-google-auth
 - `src/nexus/cli/`: CLI implementations (`pipeline`, `briefing`, `ingest`, `query`, `memory`).
 - `src/nexus/aggregators/`: Modules for fetching data from Google and Brightspace.
 - `src/nexus/archive_sync/`: Brightspace scraping, attachment archiving, and post-ingest trigger.
-- `src/nexus/knowledge/`: Shared chunking/ingestion/query pipeline for Chroma.
+- `src/nexus/knowledge/`: SQLite-backed structured learning state plus per-course Chroma retrieval.
 - `src/nexus/intelligence/`: LLM logic for generating briefings.
 - `src/nexus/dashboard/`: The primary information dashboard.
 - `src/nexus/streamlit_app.py`: The legacy study and QA interface.

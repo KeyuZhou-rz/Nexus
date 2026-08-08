@@ -1,7 +1,7 @@
 """Cross-process coordination between ingestion and storage maintenance."""
 from __future__ import annotations
 
-import fcntl
+import errno
 import hashlib
 import os
 import time
@@ -9,9 +9,34 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+try:  # ``fcntl`` is absent on Windows and some constrained Python runtimes.
+    import fcntl
+except ImportError:  # pragma: no cover - exercised by monkeypatch on POSIX CI
+    fcntl = None  # type: ignore[assignment]
+
+
+LOCK_UNAVAILABLE_ERRNOS = frozenset(
+    value
+    for value in (
+        getattr(errno, "ENOLCK", None),
+        getattr(errno, "ENOSYS", None),
+        getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None),
+    )
+    if value is not None
+)
+
 
 class MaintenanceLockTimeout(TimeoutError):
     """Raised when a maintenance lock cannot be acquired before the deadline."""
+
+
+class MaintenanceLockUnavailableError(RuntimeError):
+    """Raised when safe cross-process maintenance locking is unavailable."""
+
+
+class MaintenanceLockPlatformUnsupportedError(MaintenanceLockUnavailableError):
+    """Raised when the runtime does not expose POSIX flock support."""
 
 
 def maintenance_lock_path(
@@ -58,6 +83,7 @@ def document_ingest_lock(
     """
     if timeout < 0:
         raise ValueError("timeout must not be negative")
+    lock_api = _require_lock_api()
     lock_path = document_ingest_lock_path(
         sqlite_path=sqlite_path,
         chroma_path=chroma_path,
@@ -67,10 +93,12 @@ def document_ingest_lock(
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     deadline = time.monotonic() + timeout
+    locked = False
     try:
         while True:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _flock(descriptor, lock_api.LOCK_EX | lock_api.LOCK_NB)
+                locked = True
                 break
             except BlockingIOError as exc:
                 if time.monotonic() >= deadline:
@@ -81,7 +109,8 @@ def document_ingest_lock(
         yield lock_path
     finally:
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            if locked:
+                _flock(descriptor, lock_api.LOCK_UN)
         finally:
             os.close(descriptor)
 
@@ -97,17 +126,20 @@ def maintenance_lock(
     """Acquire a shared ingest lock or exclusive maintenance lock."""
     if timeout < 0:
         raise ValueError("timeout must not be negative")
+    lock_api = _require_lock_api()
     lock_path = maintenance_lock_path(
         sqlite_path=sqlite_path, chroma_path=chroma_path
     )
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-    operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+    operation = lock_api.LOCK_EX if exclusive else lock_api.LOCK_SH
     deadline = time.monotonic() + timeout
+    locked = False
     try:
         while True:
             try:
-                fcntl.flock(descriptor, operation | fcntl.LOCK_NB)
+                _flock(descriptor, operation | lock_api.LOCK_NB)
+                locked = True
                 break
             except BlockingIOError as exc:
                 if time.monotonic() >= deadline:
@@ -119,6 +151,27 @@ def maintenance_lock(
         yield lock_path
     finally:
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            if locked:
+                _flock(descriptor, lock_api.LOCK_UN)
         finally:
             os.close(descriptor)
+
+
+def _require_lock_api():
+    if fcntl is None:
+        raise MaintenanceLockPlatformUnsupportedError(
+            "Maintenance locking requires POSIX fcntl.flock support"
+        )
+    return fcntl
+
+
+def _flock(descriptor: int, operation: int) -> None:
+    lock_api = _require_lock_api()
+    try:
+        lock_api.flock(descriptor, operation)
+    except OSError as exc:
+        if exc.errno in LOCK_UNAVAILABLE_ERRNOS:
+            raise MaintenanceLockUnavailableError(
+                "The data filesystem does not provide required flock semantics"
+            ) from exc
+        raise

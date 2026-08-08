@@ -9,6 +9,12 @@
     <string>/path/to/python</string>
     <string>-m</string>
     <string>nexus.cli.db_backup</string>
+    <string>--sqlite-path</string>
+    <string>/Users/you/Library/Application Support/Nexus/nexus.db</string>
+    <string>--db-dir</string>
+    <string>/Users/you/Library/Application Support/Nexus/chroma</string>
+    <string>--output</string>
+    <string>/Users/you/Library/Application Support/Nexus/backups/nexus-{timestamp}.zip</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/path/to/Nexus</string>
@@ -16,6 +22,8 @@
   <dict>
     <key>PYTHONPATH</key>
     <string>src</string>
+    <key>NEXUS_DATA_DIR</key>
+    <string>/Users/you/Library/Application Support/Nexus</string>
   </dict>
   <key>StartCalendarInterval</key>
   <dict>
@@ -24,9 +32,9 @@
     <key>Minute</key><integer>0</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>/path/to/Nexus/data/backup_launchd.log</string>
+  <string>/Users/you/Library/Logs/Nexus/backup.log</string>
   <key>StandardErrorPath</key>
-  <string>/path/to/Nexus/data/backup_launchd.log</string>
+  <string>/Users/you/Library/Logs/Nexus/backup.log</string>
   <key>RunAtLoad</key><false/>
 </dict>
 </plist>

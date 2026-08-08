@@ -3,4 +3,5 @@
 # Edit PROJECT_DIR to point at your checkout.
 
 PROJECT_DIR=/path/to/Nexus
-0 6 * * * cd $PROJECT_DIR && PYTHONPATH=src python -m nexus.cli.main sync >> data/pipeline_cron.log 2>&1
+NEXUS_DATA_DIR=/path/to/nexus-data
+0 6 * * * cd $PROJECT_DIR && PYTHONPATH=src python -m nexus.cli.main sync --data-dir $NEXUS_DATA_DIR >> $NEXUS_DATA_DIR/sync_cron.log 2>&1
