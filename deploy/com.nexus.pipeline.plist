@@ -6,7 +6,7 @@
   <string>com.nexus.pipeline</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/path/to/python</string>
+    <string>/Users/you/Library/Application Support/Nexus/venv/bin/python</string>
     <string>-m</string>
     <string>nexus.cli.main</string>
     <string>sync</string>
@@ -14,11 +14,9 @@
     <string>/Users/you/Library/Application Support/Nexus</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/path/to/Nexus</string>
+  <string>/Users/you/Library/Application Support/Nexus</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PYTHONPATH</key>
-    <string>src</string>
     <key>NEXUS_DATA_DIR</key>
     <string>/Users/you/Library/Application Support/Nexus</string>
   </dict>

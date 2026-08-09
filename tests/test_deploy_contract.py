@@ -38,3 +38,5 @@ def test_scheduler_documentation_requires_one_private_local_runtime() -> None:
     assert "same OS user" in guidance
     assert "NFS" in guidance
     assert "0700" in guidance
+    assert "Desktop" in guidance
+    assert "do not set `PYTHONPATH`" in guidance

@@ -13,10 +13,23 @@ sudo install -d -m 0700 -o nexus -g nexus /var/lib/nexus
 sudo install -d -m 0750 -o nexus -g nexus /var/log/nexus
 ```
 
-For launchd, create and restrict `~/Library/Application Support/Nexus` with
-`mkdir -p` followed by `chmod 700`, create `~/Library/Logs/Nexus`, then replace
-`/Users/you` in the template. Do not use NFS, SMB, iCloud Drive, Dropbox, or a
-directory shared by multiple users.
+For launchd, create and restrict `~/Library/Application Support/Nexus`, create
+`~/Library/Logs/Nexus`, and install the release wheel into a private virtual
+environment outside macOS-protected Desktop/Documents folders:
+
+```bash
+mkdir -p "$HOME/Library/Application Support/Nexus" "$HOME/Library/Logs/Nexus"
+chmod 700 "$HOME/Library/Application Support/Nexus"
+python3 -m venv "$HOME/Library/Application Support/Nexus/venv"
+"$HOME/Library/Application Support/Nexus/venv/bin/pip" install \
+  /absolute/path/to/nexus_dashboard-*.whl
+```
+
+Then replace `/Users/you` in both plist templates. The templates intentionally
+invoke the installed wheel and do not set `PYTHONPATH`: a LaunchAgent can be
+blocked by macOS privacy controls when an editable checkout or working directory
+lives under Desktop, Documents, or iCloud Drive. Do not use NFS, SMB, iCloud
+Drive, Dropbox, or a directory shared by multiple users for `NEXUS_DATA_DIR`.
 
 ## Schedules
 

@@ -6,7 +6,7 @@
   <string>com.nexus.backup</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/path/to/python</string>
+    <string>/Users/you/Library/Application Support/Nexus/venv/bin/python</string>
     <string>-m</string>
     <string>nexus.cli.db_backup</string>
     <string>--sqlite-path</string>
@@ -17,11 +17,9 @@
     <string>/Users/you/Library/Application Support/Nexus/backups/nexus-{timestamp}.zip</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/path/to/Nexus</string>
+  <string>/Users/you/Library/Application Support/Nexus</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PYTHONPATH</key>
-    <string>src</string>
     <key>NEXUS_DATA_DIR</key>
     <string>/Users/you/Library/Application Support/Nexus</string>
   </dict>

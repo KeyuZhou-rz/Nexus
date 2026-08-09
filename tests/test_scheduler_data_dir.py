@@ -78,6 +78,13 @@ def test_launchd_backup_matches_sync_runtime_and_user_log_dir() -> None:
         backup = plistlib.load(handle)
 
     data_dir = "/Users/you/Library/Application Support/Nexus"
+    installed_python = f"{data_dir}/venv/bin/python"
+    assert sync["ProgramArguments"][0] == installed_python
+    assert backup["ProgramArguments"][0] == installed_python
+    assert sync["WorkingDirectory"] == data_dir
+    assert backup["WorkingDirectory"] == data_dir
+    assert "PYTHONPATH" not in sync["EnvironmentVariables"]
+    assert "PYTHONPATH" not in backup["EnvironmentVariables"]
     assert sync["EnvironmentVariables"]["NEXUS_DATA_DIR"] == data_dir
     assert backup["EnvironmentVariables"]["NEXUS_DATA_DIR"] == data_dir
     arguments = backup["ProgramArguments"]
