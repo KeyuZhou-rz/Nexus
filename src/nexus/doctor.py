@@ -382,14 +382,17 @@ def _check_brightspace(config: AppConfig) -> ComponentStatus:
         comp.configured = True
         comp.details["status"] = f"{len(enabled_feeds)} feeds enabled"
 
-        # Check each enabled feed
+        # Report only non-secret shape metadata.  Feed URLs may contain bearer
+        # tokens (Brightspace calendar subscriptions commonly do), while names
+        # and course labels may contain private student information.  Doctor
+        # output is frequently copied into bug reports and CI logs, so never
+        # echo those values here.
         feed_statuses = []
         for feed in enabled_feeds:
             feed_statuses.append({
-                "name": feed.name,
                 "kind": feed.kind,
-                "url": feed.url,
-                "course": feed.course,
+                "url_configured": bool(feed.url),
+                "course_configured": bool(feed.course),
             })
         comp.details["feeds"] = feed_statuses
 

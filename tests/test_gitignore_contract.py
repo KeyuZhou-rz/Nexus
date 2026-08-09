@@ -22,3 +22,8 @@ def test_codex_agent_roles_are_tracked_but_runtime_files_remain_ignored() -> Non
     assert _is_ignored(ROOT / ".codex/agents/secret.env")
     assert _is_ignored(ROOT / ".codex/agents/cache/token")
     assert _is_ignored(ROOT / ".codex/session-state.json")
+
+
+def test_private_beta_runtime_directory_is_ignored() -> None:
+    assert _is_ignored(ROOT / "nexus-data/sync_receipt.json")
+    assert _is_ignored(ROOT / "nexus-data/feeds.json")

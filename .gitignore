@@ -28,6 +28,9 @@ data/**
 tasks.json
 *.local.json
 
+# The private-beta quickstart creates this local runtime at the repository root.
+nexus-data/
+
 # OAuth / API credentials (root or nested)
 *client_secret*.json
 *credentials*.json

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
 from pathlib import Path
 import sys
 from types import ModuleType
@@ -8,6 +10,8 @@ from nexus.config import AppConfig
 from nexus.doctor import run_doctor
 from nexus.config import default_config
 from nexus.knowledge.sqlite_store import SQLiteStore
+from nexus.models import FeedSource
+from nexus.storage import save_feeds
 
 
 def test_doctor_reports_missing_feeds_warning(tmp_path):
@@ -39,6 +43,42 @@ def test_doctor_details_include_paths(tmp_path):
     report = run_doctor(config=cfg, include_google=False)
     assert report.details["tasks_exists"] is True
     assert report.details["tasks_size"] >= 2
+
+
+def test_doctor_redacts_private_feed_values(tmp_path):
+    data_dir = tmp_path / "data"
+    secret_url = "https://brightspace.example.test/feed.ics?token=do-not-print"
+    private_name = "Private Course Name"
+    private_course = "PRIVATE-101"
+    save_feeds(
+        [
+            FeedSource(
+                kind="brightspace_ical",
+                name=private_name,
+                url=secret_url,
+                course=private_course,
+            )
+        ],
+        data_dir / "feeds.json",
+    )
+
+    report = run_doctor(
+        config=AppConfig(data_dir=data_dir, feeds_path=data_dir / "feeds.json"),
+        include_google=False,
+    )
+    serialized = json.dumps(asdict(report))
+
+    assert secret_url not in serialized
+    assert "do-not-print" not in serialized
+    assert private_name not in serialized
+    assert private_course not in serialized
+    assert report.components["brightspace"].details["feeds"] == [
+        {
+            "kind": "brightspace_ical",
+            "url_configured": True,
+            "course_configured": True,
+        }
+    ]
 
 
 def test_default_config_honors_data_dir_env(monkeypatch, tmp_path):
