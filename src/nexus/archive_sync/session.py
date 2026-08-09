@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 
+from nexus.io_utils import atomic_write_json
+
 DEFAULT_SESSION_PATH = Path(__file__).resolve().parents[3] / "data" / "brightspace_session.json"
 
 
@@ -34,5 +36,6 @@ def load_session(path: Path | None = None) -> list[dict]:
 def save_session(cookies: list[dict], path: Path | None = None) -> None:
     """Persist browser cookies to disk for future sessions."""
     path = _resolve_path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cookies, indent=2), encoding="utf-8")
+    atomic_write_json(path, cookies)
+    if os.name == "posix":
+        path.chmod(0o600)

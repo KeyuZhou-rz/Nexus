@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
+import stat
 
 from nexus.archive_sync.archive_utils import (
     build_archive_filename,
@@ -41,6 +43,8 @@ def test_session_save_and_load_respect_nexus_data_dir(tmp_path, monkeypatch):
     expected_path = tmp_path / "brightspace_session.json"
     assert expected_path.exists()
     assert load_session() == cookies
+    if os.name == "posix":
+        assert stat.S_IMODE(expected_path.stat().st_mode) == 0o600
 
 
 def test_session_explicit_path_overrides_env_var(tmp_path, monkeypatch):
