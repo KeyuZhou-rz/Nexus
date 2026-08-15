@@ -131,7 +131,7 @@
 
 ## Phase 4 — 生产可用性与 Progress 精度收口
 
-> 当前发布基线：schema v9、699 passed（正式 `tests/` 套件）、DB consistency 0 issues。
+> 当前发布基线：schema v9、718 passed（正式 `tests/` 套件）、DB consistency 0 issues。
 > 不做前端视觉设计。每个子项单独提交；每完成一个阶段跑定向测试、全量测试、CLI smoke 和 db-check。
 > 数据库、Chroma、凭据和 pycache 不进入提交。
 
