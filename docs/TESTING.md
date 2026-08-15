@@ -244,6 +244,11 @@ PYTHONPATH=src python -m nexus.cli.main calibration \
 
 默认门禁为 accuracy 至少 `0.8`、ECE 不超过 `0.2`；失败时命令返回非零状态。
 
+`tests/fixtures/assessment_cases.json` 另行覆盖正确、部分正确、错误、遗忘、
+提示注入和课件标准与常识冲突。该案例矩阵验证课件证据、隐藏 rubric、参考答案和
+学生答案始终位于独立边界内，并且只有经过验证的评分事件才能写入 mastery；它不把
+固定离线输出冒充为真实模型的语义评分质量。
+
 ---
 
 ## Makefile 变量参考

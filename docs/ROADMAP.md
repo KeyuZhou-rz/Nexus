@@ -316,8 +316,9 @@
   - 已完成运行时 source-ID/required-citation gate，未知或缺失引用降级为有来源的课件摘录（`tests/test_qa_citation_gate.py`）。
   - 待完成：对自然语言结论做语义蕴含验证，而非仅验证引用协议。
 
-- [ ] **4F-3 Assessment 案例扩展**
-  - 正确、部分正确、错误、提示注入和课件冲突案例
+- [x] **4F-3 Assessment 案例扩展**
+  - 正确、部分正确、错误、遗忘、提示注入和课件冲突案例。
+  - 交付：`tests/fixtures/assessment_cases.json` 与数据驱动的评分边界、证据绑定和 mastery 事件契约测试。
 
 - [x] **4F-4 数据库迁移与备份恢复兼容测试**
   - (done: schema migration concurrency, maintenance backup/restore, and safe migration tests)
