@@ -102,7 +102,7 @@ def build_dashboard_state(
     available_sources = sorted({task.source for task in tasks if task.source})
     available_tags = sorted({tag for task in tasks for tag in task.tags})
 
-    actionable = [task for task in tasks if task.due_at]
+    actionable = [task for task in tasks if task.due_at and task.status != "done"]
     updates = [task for task in tasks if _is_update_task(task)]
     updates.sort(key=lambda task: _sort_dt(task, now_local), reverse=True)
 
@@ -239,7 +239,7 @@ def _build_upcoming_groups(tasks: list[Task], now_local: datetime) -> list[Dashb
         "Next 7 Days": [],
         "Later": [],
     }
-    for task in sorted([task for task in tasks if task.due_at], key=lambda task: _sort_dt(task, now_local)):
+    for task in sorted([task for task in tasks if task.due_at and task.status != "done"], key=lambda task: _sort_dt(task, now_local)):
         due = _localize(task.due_at, now_local)
         if due is None:
             continue

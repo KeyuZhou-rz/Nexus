@@ -5,6 +5,7 @@ Designed to be safe without an LLM: pure functions, no network, no persistence.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -40,13 +41,15 @@ class Judgment:
 
 
 def estimate_effort_hours(task: Task) -> float:
+    # Longer tags first so "midterm"/"final" win over the shorter "exam".
+    ordered = sorted(EFFORT_HOURS_BY_TAG.items(), key=lambda kv: -len(kv[0]))
     tags = {t.lower() for t in (task.tags or [])}
-    for tag, hours in EFFORT_HOURS_BY_TAG.items():
+    for tag, hours in ordered:
         if tag in tags:
             return hours
     title = (task.title or "").lower()
-    for tag, hours in EFFORT_HOURS_BY_TAG.items():
-        if tag in title:
+    for tag, hours in ordered:
+        if re.search(rf"\b{re.escape(tag)}\b", title):
             return hours
     return DEFAULT_EFFORT_HOURS
 
@@ -86,7 +89,9 @@ def build_judgment(
     label = _task_label(anchor)
     effort = estimate_effort_hours(anchor)
     days_left = max(0, (due.date() - now_local.date()).days)
-    if days_left == 0:
+    if overdue:
+        forecast = f"{label} 按类型估算 {effort:g}h，已过期"
+    elif days_left == 0:
         forecast = f"{label} 按类型估算 {effort:g}h，今天截止"
     else:
         forecast = f"{label} 按类型估算 {effort:g}h，还剩 {days_left} 天（约 {effort / days_left:.1f}h/天）"

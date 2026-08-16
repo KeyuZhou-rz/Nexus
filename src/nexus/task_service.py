@@ -105,7 +105,7 @@ def apply_completions(tasks: list[Task], completions: dict[str, dict]) -> list[T
     """Re-apply persisted completion state onto freshly-aggregated tasks."""
     for task in tasks:
         entry = completions.get(task.id)
-        if not entry:
+        if not isinstance(entry, dict):
             continue
         task.status = "done"
         done_at_raw = entry.get("done_at")

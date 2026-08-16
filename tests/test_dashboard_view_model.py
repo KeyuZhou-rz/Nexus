@@ -52,6 +52,29 @@ def test_build_dashboard_state_prioritizes_overdue_and_today():
     assert [group.label for group in state.upcoming_groups][:2] == ["Overdue", "Today"]
 
 
+def test_build_dashboard_state_excludes_done_tasks_from_active_views():
+    now = datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc)
+    done = Task(
+        id="done",
+        title="Done task",
+        due_at=now - timedelta(hours=1),
+        source="brightspace",
+        course="CS202_OS",
+        tags=[],
+        status="done",
+    )
+    open_task = _task(title="Open task", due_at=now + timedelta(hours=3))
+
+    state = build_dashboard_state([done, open_task], generated_at=now)
+
+    assert state.snapshot.overdue == 0
+    assert state.snapshot.due_today == 1
+    assert [item.title for item in state.focus_items] == ["Open task"]
+    assert [item.title for g in state.upcoming_groups for item in g.items] == ["Open task"]
+    # tasks_table still lists every task (Tasks tab has its own status filter)
+    assert {row["title"] for row in state.tasks_table} == {"Done task", "Open task"}
+
+
 def test_build_dashboard_state_collects_recent_updates_and_briefing():
     now = datetime(2026, 4, 15, 10, 0, tzinfo=timezone.utc)
     tasks = [
