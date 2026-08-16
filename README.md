@@ -167,7 +167,8 @@ nexus demo --data-dir /tmp/nexus-demo --json
 NEXUS_DATA_DIR=/tmp/nexus-demo nexus dashboard
 ```
 
-`nexus ui` retains the legacy study application during the Private Beta.
+The information dashboard is the single local UI; knowledge Q&A runs through
+`nexus query` and `nexus context`.
 
 The Home view deliberately keeps two parallel tracks: the task timeline answers
 "when", while Learning Focus answers "what knowledge needs attention and which
@@ -286,7 +287,6 @@ nexus-google-auth
 - `src/nexus/knowledge/`: SQLite-backed structured learning state plus per-course Chroma retrieval.
 - `src/nexus/intelligence/`: LLM logic for generating briefings.
 - `src/nexus/dashboard/`: The primary information dashboard.
-- `src/nexus/streamlit_app.py`: The legacy study and QA interface.
 - `data/`: Local storage for tasks, cache, and configuration (ignored by Git).
 
 ## Privacy, Security, and Release Notes

@@ -22,7 +22,6 @@ def test_unified_cli_help() -> None:
     assert "doctor" in result.stdout
     assert "db-check" in result.stdout
     assert "cache" in result.stdout
-    assert "ui" in result.stdout
     assert "dashboard" in result.stdout
     assert "demo" in result.stdout
     assert "sync" in result.stdout

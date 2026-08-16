@@ -12,7 +12,7 @@ SQLITE_PATH  ?= data/nexus.db
 .PHONY: ui dashboard doctor
 
 ui:
-	$(PYTHON) -m streamlit run src/nexus/streamlit_app.py
+	$(PYTHON) -m streamlit run src/nexus/dashboard_app.py
 
 dashboard:
 	$(PYTHON) -m streamlit run src/nexus/dashboard_app.py

@@ -13,8 +13,8 @@ make dashboard       # 启动信息面板（http://localhost:8501）
 make test            # 运行正式测试套件（默认只收集 tests/）
 ```
 
-`make ui` uses `python -m streamlit`, ensuring the UI runs with the same Python
-environment as the project dependencies instead of an unrelated `streamlit`
+`make dashboard` uses `python -m streamlit`, ensuring the UI runs with the same
+Python environment as the project dependencies instead of an unrelated `streamlit`
 executable found on `PATH`.
 
 首次启用可选集成前，先检查当前环境；`--no-google` 适用于尚未配置 Google
@@ -49,16 +49,17 @@ python -m playwright install chromium
 ## 前端界面
 
 ```bash
-make ui
+make dashboard
 ```
 
-打开 `http://localhost:8501`，包含三个 Tab：
+打开 `http://localhost:8501`，包含四个 Tab：
 
 | Tab | 功能 |
 |-----|------|
-| 📋 Dashboard | 任务聚合、Google Calendar、每日 Briefing |
-| 🎓 Study Assistant | 知识问答（基于 ChromaDB + LLM），需先 ingest 数据 |
-| 📊 Learning Progress | 掌握度追踪、遗忘曲线、Gap 扫描、冲刺计划、考后复盘 |
+| Home | 今日判断、Focus、Upcoming、Learning Focus、Briefing、Updates |
+| Tasks | 全量任务表、手动添加、标记完成、按 course/source/status/tag 过滤 |
+| Status | pipeline 状态、来源健康、学习记忆摘要 |
+| Setup | 初始化运行目录、保存 Brightspace Feed |
 
 ---
 
@@ -107,9 +108,9 @@ make query QUERY="What is a process context switch?"
 make query QUERY="trap handling" COURSE_ID=CS202_OS
 ```
 
-### Step 4：在前端对话测试
+### Step 4：通过 CLI 问答测试
 
-启动 `make ui`，进入 **Study Assistant** Tab，直接对话即可。
+知识问答走 CLI（Dashboard 不含对话界面）：`make query QUERY="..." COURSE_ID=CS202_OS`。
 
 ---
 

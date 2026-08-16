@@ -24,7 +24,6 @@ COMMANDS = {
     "cache": ("nexus.cli.cache", "List or clear parser cache entries"),
     "mastery-migrate": ("nexus.cli.mastery_migrate", "Migrate legacy mastery evidence"),
     "sessions": ("nexus.cli.sessions", "Finalize idle learning sessions"),
-    "ui": ("nexus.cli.ui", "Run the legacy Streamlit study application"),
     "memory-extract": ("nexus.cli.memory_extract", "Extract weak points from conversations"),
     "memory-feedback": ("nexus.cli.memory_feedback", "Apply feedback to a weak point"),
     "memory-query": ("nexus.cli.memory_query", "Query conversation memory"),

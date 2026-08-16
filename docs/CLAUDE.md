@@ -6,7 +6,7 @@ LLM Vision, stores as semantic chunks in ChromaDB, retrieves relevant
 context for personalized Q&A.
 
 ## Commands
-- `make ui`              # Run Streamlit app
+- `make dashboard`       # Run the Streamlit dashboard
 - `make test`            # Run all tests
 - `make ingest`          # Ingest PDFs/DOCX from data/testDataFile/
 - `make query`           # Query the knowledge base
@@ -37,7 +37,7 @@ src/nexus/
   aggregators/    → Google Calendar / Brightspace data sources
   archive_sync/   → Playwright scraper for Brightspace course materials
   intelligence/   → Briefing generation + LLM utilities
-  streamlit_app.py → Main Streamlit UI
+  dashboard_app.py → Streamlit entry (wraps dashboard/app.py)
   pipeline.py     → Task pipeline orchestration
   config.py       → Configuration management (env vars)
 ```
