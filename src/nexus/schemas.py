@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-TASK_SCHEMA_VERSION = "1.1"
+TASK_SCHEMA_VERSION = "1.2"
 ARCHIVE_RESULT_SCHEMA_VERSION = "1.0"
 
 
@@ -41,6 +41,13 @@ def validate_task_dict(payload: dict[str, Any]) -> list[str]:
             datetime.fromisoformat(str(received_at))
         except ValueError:
             errors.append("received_at must be ISO-8601 or null")
+
+    done_at = payload.get("done_at")
+    if done_at is not None:
+        try:
+            datetime.fromisoformat(str(done_at))
+        except ValueError:
+            errors.append("done_at must be ISO-8601 or null")
 
     tags = payload.get("tags", [])
     if not isinstance(tags, list) or not all(isinstance(item, str) for item in tags):

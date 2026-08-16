@@ -11,6 +11,7 @@ from .config import AppConfig, default_config
 from .failure_queue import failure_key, update_failure_queue
 from .models import FeedSource, Task
 from .storage import load_feeds, load_tasks, save_tasks
+from .task_service import apply_completions, load_completions
 from .utils import dedupe_tasks
 
 
@@ -229,6 +230,7 @@ def run_aggregation(
             source_status=source_status, failure_queue=queue_report,
         )
 
+    tasks = apply_completions(tasks, load_completions(data_dir))
     save_tasks(tasks, tasks_path)
     queue_report = _update_aggregation_failure_queue(
         data_dir, failures, resolved_failures, warnings
@@ -294,6 +296,7 @@ def sync_google_calendar(
         errors.append(f"Google Calendar sync error: {exc}")
         
     tasks = _dedupe(tasks)
+    tasks = apply_completions(tasks, load_completions(data_dir))
     save_tasks(tasks, tasks_path)
     return AggregationResult(
         tasks=tasks,

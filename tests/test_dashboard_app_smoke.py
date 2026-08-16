@@ -22,7 +22,8 @@ def test_information_dashboard_renders_complete_demo_runtime(monkeypatch, tmp_pa
     assert not app.exception
     assert [tab.label for tab in app.tabs] == ["Home", "Tasks", "Status", "Setup"]
     assert {button.label for button in app.button} == {
-        "Add task", "Initialize local data", "Save source", "Sync now"
+        "Add task", "Initialize local data", "Save source", "Sync now",
+        "Add work block", "Mark done",
     }
     assert any("Learning Focus" in markdown.value for markdown in app.markdown)
 

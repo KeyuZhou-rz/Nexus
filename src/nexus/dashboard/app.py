@@ -11,8 +11,9 @@ from ..context_api import build_context
 from ..models import FeedSource
 from ..onboarding import initialize_runtime, upsert_feed
 from ..storage import load_tasks, tasks_last_updated
+from ..intelligence.workload import build_judgment
 from ..sync_service import load_sync_receipt, run_sync
-from ..task_service import add_manual_task
+from ..task_service import add_manual_task, load_completions, mark_task_done
 from .styles import DASHBOARD_CSS
 from .view_model import (
     build_dashboard_state,
@@ -50,6 +51,7 @@ def main() -> None:
         generated_at=now_local,
         last_updated=tasks_last_updated(),
     )
+    judgment = build_judgment(tasks, done_ids=set(load_completions(data_dir)), now=now_local)
 
     _render_sidebar(data_dir=data_dir, briefing_path=briefing_path, report_path=report_path, state=state)
     _render_header(state)
@@ -57,10 +59,10 @@ def main() -> None:
     tab_home, tab_tasks, tab_status, tab_setup = st.tabs(["Home", "Tasks", "Status", "Setup"])
 
     with tab_home:
-        _render_home(state)
+        _render_home(state, judgment=judgment, tasks=tasks, data_dir=data_dir)
 
     with tab_tasks:
-        _render_tasks(state, data_dir=data_dir)
+        _render_tasks(state, data_dir=data_dir, tasks=tasks)
 
     with tab_status:
         _render_status(state, briefing_path=briefing_path, report_path=report_path)
@@ -132,7 +134,41 @@ def _render_header(state) -> None:
     )
 
 
-def _render_home(state) -> None:
+def _render_judgment(judgment, tasks, data_dir) -> None:
+    st.markdown('<div class="section-title">今日判断</div>', unsafe_allow_html=True)
+    if judgment is None or not judgment.deadline:
+        st.info("暂无可判断的截止事项。同步数据后这里会给出今日判断。")
+        return
+    st.markdown('<div class="panel"><div class="panel-kicker">Judgment</div>', unsafe_allow_html=True)
+    st.markdown(f"**{judgment.deadline}**")
+    if judgment.upcoming:
+        st.markdown("这周你还有：")
+        for line in judgment.upcoming:
+            st.markdown(f"- {line}")
+    if judgment.forecast:
+        st.markdown(f"*{judgment.forecast}*")
+    if judgment.suggestion:
+        st.markdown(f"**建议**：{judgment.suggestion}")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if judgment.anchor_task_id:
+        anchor = next((t for t in tasks if t.id == judgment.anchor_task_id), None)
+        if anchor is not None and st.button("Add work block", key=f"wb_{judgment.anchor_task_id}"):
+            block_due = datetime.combine(datetime.now().date(), time(22, 0)).astimezone()
+            add_manual_task(
+                data_dir,
+                title=f"工作块：{anchor.title[:40]}",
+                due_at=block_due,
+                course=anchor.course,
+                tags=["work_block"],
+                notes=f"今日判断建议：先完成 {anchor.title[:60]} 的第一步",
+            )
+            st.success("已加入今日工作块。")
+            st.rerun()
+
+
+def _render_home(state, *, judgment, tasks, data_dir) -> None:
+    _render_judgment(judgment, tasks, data_dir)
     metric_cols = st.columns(4)
     metric_cols[0].metric("Total Tasks", state.snapshot.total_tasks)
     metric_cols[1].metric("Overdue", state.snapshot.overdue)
@@ -190,7 +226,19 @@ def _render_home(state) -> None:
                 st.markdown(render_task_card(item), unsafe_allow_html=True)
 
 
-def _render_tasks(state, *, data_dir: Path) -> None:
+def _render_tasks(state, *, data_dir: Path, tasks) -> None:
+    with st.expander("Mark a task done", expanded=False):
+        open_tasks = [t for t in tasks if t.status != "done"]
+        if open_tasks:
+            options = {f"{t.title[:50]} ({t.id})": t.id for t in open_tasks}
+            choice = st.selectbox("Open task", list(options.keys()))
+            if st.button("Mark done"):
+                mark_task_done(data_dir, options[choice])
+                st.success("已标记完成。")
+                st.rerun()
+        else:
+            st.caption("没有未完成任务。")
+
     with st.expander("Add task", expanded=False):
         with st.form("manual_task", clear_on_submit=True):
             title = st.text_input("Title", placeholder="Review chapter 4")

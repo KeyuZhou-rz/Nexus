@@ -27,6 +27,7 @@ class Task:
     tags: list[str] = field(default_factory=list)
     snippet: str | None = None
     received_at: datetime | None = None
+    done_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serializes task to dictionary."""
@@ -43,6 +44,7 @@ class Task:
             "priority": self.priority,
             "tags": self.tags,
             "received_at": self.received_at.isoformat() if self.received_at else None,
+            "done_at": self.done_at.isoformat() if self.done_at else None,
         }
 
     @classmethod
@@ -63,6 +65,9 @@ class Task:
             tags=list(data.get("tags", [])),
             received_at=datetime.fromisoformat(data["received_at"])
             if data.get("received_at")
+            else None,
+            done_at=datetime.fromisoformat(data["done_at"])
+            if data.get("done_at")
             else None,
         )
 
