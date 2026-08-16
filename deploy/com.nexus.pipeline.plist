@@ -20,6 +20,8 @@
     <key>NEXUS_DATA_DIR</key>
     <string>/Users/you/Library/Application Support/Nexus</string>
   </dict>
+  <key>Umask</key>
+  <integer>63</integer>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key><integer>6</integer>

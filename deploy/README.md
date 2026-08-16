@@ -19,7 +19,7 @@ environment outside macOS-protected Desktop/Documents folders:
 
 ```bash
 mkdir -p "$HOME/Library/Application Support/Nexus" "$HOME/Library/Logs/Nexus"
-chmod 700 "$HOME/Library/Application Support/Nexus"
+chmod 700 "$HOME/Library/Application Support/Nexus" "$HOME/Library/Logs/Nexus"
 python3 -m venv "$HOME/Library/Application Support/Nexus/venv"
 "$HOME/Library/Application Support/Nexus/venv/bin/pip" install \
   /absolute/path/to/nexus_dashboard-*.whl
@@ -28,7 +28,8 @@ python3 -m venv "$HOME/Library/Application Support/Nexus/venv"
 Then replace `/Users/you` in both plist templates. The templates intentionally
 invoke the installed wheel and do not set `PYTHONPATH`: a LaunchAgent can be
 blocked by macOS privacy controls when an editable checkout or working directory
-lives under Desktop, Documents, or iCloud Drive. Do not use NFS, SMB, iCloud
+lives under Desktop, Documents, or iCloud Drive. Their `Umask` is `077`, so new
+runtime artifacts and scheduler logs remain owner-only. Do not use NFS, SMB, iCloud
 Drive, Dropbox, or a directory shared by multiple users for `NEXUS_DATA_DIR`.
 
 ## Schedules

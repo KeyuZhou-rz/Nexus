@@ -40,3 +40,4 @@ def test_scheduler_documentation_requires_one_private_local_runtime() -> None:
     assert "0700" in guidance
     assert "Desktop" in guidance
     assert "do not set `PYTHONPATH`" in guidance
+    assert "`Umask` is `077`" in guidance

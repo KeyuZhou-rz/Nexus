@@ -87,6 +87,8 @@ def test_launchd_backup_matches_sync_runtime_and_user_log_dir() -> None:
     assert "PYTHONPATH" not in backup["EnvironmentVariables"]
     assert sync["EnvironmentVariables"]["NEXUS_DATA_DIR"] == data_dir
     assert backup["EnvironmentVariables"]["NEXUS_DATA_DIR"] == data_dir
+    assert sync["Umask"] == 0o77
+    assert backup["Umask"] == 0o77
     arguments = backup["ProgramArguments"]
     assert arguments[arguments.index("--sqlite-path") + 1] == f"{data_dir}/nexus.db"
     assert arguments[arguments.index("--db-dir") + 1] == f"{data_dir}/chroma"
