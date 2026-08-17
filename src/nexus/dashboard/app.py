@@ -16,7 +16,12 @@ from ..academic_state import display_course, refresh_from_snapshot, tasks_from_o
 from ..changes import acknowledge_change, change_key, list_inbox_changes
 from ..course_state import build_course_states
 from ..intelligence.workload import build_judgment, resolve_effort
-from ..tonight_plan import build_tonight_plan
+from ..tonight_plan import (
+    build_tonight_plan,
+    load_plan_decision,
+    next_plan_focus_id,
+    save_plan_decision,
+)
 from ..utils import localize_dt
 from ..sync_service import load_sync_receipt, run_sync
 from ..task_service import (
@@ -66,11 +71,18 @@ def main() -> None:
         completions=completions,
     )
     changes = list_inbox_changes(data_dir, limit=5, tasks=snapshot)
+    plan_decision = load_plan_decision(data_dir, now=now_local)
+    focus_id = judgment.anchor_task_id
+    if plan_decision and any(
+        task.id == plan_decision.get("task_id") and getattr(task, "status", "open") != "done"
+        for task in tasks
+    ):
+        focus_id = str(plan_decision["task_id"])
     plan = build_tonight_plan(
         tasks,
         now=now_local,
         completions=completions,
-        focus_id=judgment.anchor_task_id,
+        focus_id=focus_id,
     )
     courses = build_course_states(tasks, completions=completions, now=now_local)
     state = build_dashboard_state(
@@ -90,7 +102,7 @@ def main() -> None:
     tab_home, tab_tasks, tab_setup = st.tabs(["Tonight", "Tasks", "Setup"])
 
     with tab_home:
-        _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses)
+        _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses, plan_decision)
 
     with tab_tasks:
         _render_tasks(state, data_dir=data_dir, tasks=tasks)
@@ -151,7 +163,7 @@ def _render_sidebar(*, data_dir: Path, state, include_google: bool) -> None:
                 st.caption("同步未完成，打开 Setup 查看来源。")
 
 
-def _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses) -> None:
+def _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses, plan_decision) -> None:
     left, right = st.columns([1.15, 1], gap="large")
     with left:
         if judgment is None or not judgment.available:
@@ -176,12 +188,38 @@ def _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses) -
                 items = "".join(f"<li>{_html(item.text)}</li>" for item in info)
                 blocks.append(f"<p>世界变化</p><ul>{items}</ul>")
             st.markdown(f'<div class="briefing">{"".join(blocks)}</div>', unsafe_allow_html=True)
+        _render_plan_actions(plan, tasks, data_dir, plan_decision)
         _render_change_decisions(changes, data_dir)
         _render_add_task(data_dir, form_key="tonight_add_task")
         _render_obligation_blocks(judgment, tasks, data_dir)
     with right:
         _render_course_states(courses)
         _render_schedule(state)
+
+
+def _render_plan_actions(plan, tasks, data_dir: Path, plan_decision) -> None:
+    if plan is None or not plan.available or not plan.task_id:
+        return
+    accepted = (
+        isinstance(plan_decision, dict)
+        and plan_decision.get("status") == "accepted"
+        and plan_decision.get("task_id") == plan.task_id
+    )
+    if accepted:
+        st.caption("已接受今晚计划。计时请点下面同一条的开始做。")
+    elif plan.reason:
+        st.caption(plan.reason)
+    alt_id = next_plan_focus_id(tasks, plan.task_id)
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button("接受今晚计划", disabled=accepted, key="accept_tonight_plan"):
+            save_plan_decision(data_dir, plan, status="accepted")
+            st.rerun()
+    with cols[1]:
+        if st.button("换一条", disabled=alt_id is None, key="adjust_tonight_plan"):
+            adjusted = build_tonight_plan(tasks, focus_id=alt_id)
+            save_plan_decision(data_dir, adjusted, status="adjusted")
+            st.rerun()
 
 
 def _render_change_decisions(changes, data_dir: Path) -> None:

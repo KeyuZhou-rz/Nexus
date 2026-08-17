@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from nexus.models import Task
-from nexus.tonight_plan import TonightPlan, build_tonight_plan
+from nexus.tonight_plan import (
+    TonightPlan,
+    build_tonight_plan,
+    load_plan_decision,
+    next_plan_focus_id,
+    save_plan_decision,
+)
 
 
 def _task(
@@ -131,3 +138,33 @@ def test_to_dict_keys() -> None:
     assert empty["text"] is None
     assert empty["task_id"] is None
     assert isinstance(TonightPlan(**{**empty, "window_start": None, "window_end": None}), TonightPlan)
+
+
+def test_accept_persists_for_today_only(tmp_path: Path) -> None:
+    now = datetime(2026, 8, 17, 20, 0).astimezone()
+    homework = _task("hw", "CS homework", now + timedelta(days=1), tags=["assignment"], course="CS")
+    plan = build_tonight_plan([homework], now=now)
+    saved = save_plan_decision(tmp_path, plan, status="accepted", now=now)
+    assert saved["status"] == "accepted"
+    assert saved["for_date"] == "2026-08-17"
+    assert load_plan_decision(tmp_path, now=now)["task_id"] == "hw"
+    tomorrow = now + timedelta(days=1)
+    assert load_plan_decision(tmp_path, now=tomorrow) is None
+    assert not (tmp_path / "google_token.json").exists()
+
+
+def test_adjust_cycles_to_the_other_open_obligation() -> None:
+    now = datetime(2026, 8, 17, 20, 0).astimezone()
+    first = _task("a", "EE homework", now + timedelta(days=1), tags=["assignment"], course="EE")
+    second = _task("b", "CS homework", now + timedelta(days=2), tags=["assignment"], course="CS")
+    assert next_plan_focus_id([first, second], "a") == "b"
+    assert next_plan_focus_id([first, second], "b") == "a"
+    assert next_plan_focus_id([first], "a") is None
+
+
+def test_adjust_skips_completed_task() -> None:
+    now = datetime(2026, 8, 17, 20, 0).astimezone()
+    first = _task("a", "EE homework", now + timedelta(days=1), tags=["assignment"], course="EE")
+    second = _task("b", "CS homework", now + timedelta(days=2), tags=["assignment"], course="CS")
+    done = {"a": {"done_at": now.isoformat()}}
+    assert next_plan_focus_id([first, second], "b", completions=done) is None

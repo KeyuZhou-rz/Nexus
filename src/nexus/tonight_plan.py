@@ -1,8 +1,10 @@
 """Tonight plan — one suggested work window. Suggestion only; no calendar write."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from .academic_state import is_obligation_candidate
@@ -13,10 +15,12 @@ from .intelligence.workload import (
     effort_key,
     resolve_effort,
 )
+from .io_utils import atomic_write_json
 from .models import Task
 from .utils import localize_dt
 
 _FALLBACK_HOURS = 1.0
+PLAN_DECISION_FILENAME = "tonight_plan.json"
 
 
 @dataclass
@@ -211,3 +215,61 @@ def _item_phrase(task: Task) -> str:
 
 def _hhmm(value: datetime) -> str:
     return value.strftime("%H:%M")
+
+
+def next_plan_focus_id(
+    tasks: list[Task],
+    current_id: str | None,
+    completions: dict | None = None,
+) -> str | None:
+    """Return the next open obligation id, wrapping around. None if no alternative."""
+    done = _done_ids(completions)
+    open_ids = [
+        task.id
+        for task in tasks
+        if _is_open(task, done) and is_obligation_candidate(task)
+    ]
+    if len(open_ids) < 2:
+        return None
+    if current_id not in open_ids:
+        return open_ids[0]
+    return open_ids[(open_ids.index(current_id) + 1) % len(open_ids)]
+
+
+def load_plan_decision(data_dir: Path, *, now: datetime | None = None) -> dict[str, Any] | None:
+    """Today's accepted/adjusted plan, or None if stale or missing."""
+    path = Path(data_dir).expanduser() / PLAN_DECISION_FILENAME
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    now_local = now or datetime.now().astimezone()
+    if payload.get("for_date") != now_local.date().isoformat():
+        return None
+    if not payload.get("task_id"):
+        return None
+    return payload
+
+
+def save_plan_decision(
+    data_dir: Path,
+    plan: TonightPlan,
+    *,
+    status: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist a local tonight decision. Does not write any calendar."""
+    now_local = now or datetime.now().astimezone()
+    payload = {
+        "schema_version": "1.0",
+        "status": status,
+        "for_date": now_local.date().isoformat(),
+        "updated_at": now_local.isoformat(),
+        **plan.to_dict(),
+    }
+    atomic_write_json(Path(data_dir).expanduser() / PLAN_DECISION_FILENAME, payload)
+    return payload

@@ -26,7 +26,9 @@ def test_information_dashboard_renders_complete_demo_runtime(monkeypatch, tmp_pa
     )
     assert {button.label for button in app.button} <= {
         "Add task", "Save source", "Sync", "开始做", "完成", "知道了",
+        "接受今晚计划", "换一条",
     }
+    assert any(button.label == "接受今晚计划" for button in app.button)
     assert not any(button.label == "Add work block" for button in app.button)
     assert any("截止" in markdown.value for markdown in app.markdown)
     assert any("本周日程" in markdown.value for markdown in app.markdown)

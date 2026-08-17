@@ -144,3 +144,22 @@ def test_tonight_and_tasks_share_open_obligations(monkeypatch, tmp_path: Path) -
         assert title in markdown
     starts = [button for button in app.button if button.label == "开始做"]
     assert len(starts) == len(titles)
+
+
+def test_accept_tonight_plan_does_not_start_timer(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "week"
+    create_demo_runtime(data_dir)
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
+
+    app = AppTest.from_file(APP_PATH).run(timeout=30)
+    next(button for button in app.button if button.label == "接受今晚计划").click()
+    app.run(timeout=30)
+
+    assert not app.exception
+    assert any("已接受今晚计划" in item.value for item in app.caption)
+    assert not any("计时中" in item.value for item in app.markdown)
+    saved = json.loads((data_dir / "tonight_plan.json").read_text(encoding="utf-8"))
+    assert saved["status"] == "accepted"
+    assert saved["task_id"]
+    assert not load_completions(data_dir).get(saved["task_id"], {}).get("started_at")
