@@ -2,16 +2,30 @@
 
 v1 kinds are iCal due change / new assignment / disappeared. Created items
 are already ingested; only due_changed and disappeared need a student choice.
+Gmail is not an obligation source. Course-like mail can appear as a change.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .academic_state import recent_changes
+from .models import Task
 
 _NEEDS_DECISION = frozenset({"due_changed", "disappeared"})
+_MAIL_SIGNAL = re.compile(
+    r"(assignment|homework|exam|midterm|final|deadline|due date|syllabus|"
+    r"visa|equipment.{0,24}due|截止|作业|考试|期中|期末)",
+    re.IGNORECASE,
+)
+_MAIL_NOISE = re.compile(
+    r"(newsletter|hiring|we are hiring|nvidia|gartner|wolfram|"
+    r"book of the year|loan receipt|return receipt|developer news|"
+    r"career development newsletter|see what's trending)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -39,6 +53,7 @@ def list_inbox_changes(
     *,
     limit: int = 8,
     decisions_only: bool = False,
+    tasks: Iterable[Task] | None = None,
 ) -> list[ChangeItem]:
     """Read obligation_changes and classify which ones need a student decision."""
     items: list[ChangeItem] = []
@@ -57,4 +72,44 @@ def list_inbox_changes(
         if decisions_only and not item.needs_decision:
             continue
         items.append(item)
+    if tasks is not None:
+        for item in mail_change_items(tasks, limit=limit):
+            if decisions_only and not item.needs_decision:
+                continue
+            items.append(item)
+    return items[:limit]
+
+
+def mail_change_items(tasks: Iterable[Task], *, limit: int = 5) -> list[ChangeItem]:
+    """Course-like Gmail only. Newsletters and receipts stay out of Tonight."""
+    items: list[ChangeItem] = []
+    for task in tasks:
+        classified = _classify_mail(task)
+        if classified is None:
+            continue
+        items.append(classified)
+        if len(items) >= limit:
+            break
     return items
+
+
+def _classify_mail(task: Task) -> ChangeItem | None:
+    if task.source != "gmail":
+        return None
+    tags = {str(tag).lower() for tag in (task.tags or [])}
+    title = (task.title or "").strip()
+    blob = f"{title} {task.snippet or ''}"
+    if _MAIL_NOISE.search(blob):
+        return None
+    tagged = bool(tags & {"course_notification", "announcement"})
+    if not tagged and not _MAIL_SIGNAL.search(blob):
+        return None
+    short = title[:48] + ("…" if len(title) > 48 else "")
+    needs_decision = not re.search(r"\bvisa\b|has been received", title, re.IGNORECASE)
+    return ChangeItem(
+        kind="mail",
+        title=title,
+        detail=task.course,
+        text=f"邮件：{short}",
+        needs_decision=needs_decision,
+    )

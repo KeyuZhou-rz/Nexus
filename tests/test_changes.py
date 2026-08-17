@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from nexus.academic_state import persist_obligations
-from nexus.changes import list_inbox_changes
+from nexus.changes import list_inbox_changes, mail_change_items
 from nexus.models import Task
 
 
@@ -119,3 +119,63 @@ def test_change_item_to_dict(tmp_path: Path) -> None:
     assert payload["title"]
     assert payload["text"]
     assert payload["obligation_id"]
+
+
+def test_mail_signals_skip_newsletters_and_keep_due_notices() -> None:
+    due = datetime(2026, 8, 17, 9, 0, tzinfo=timezone.utc)
+    mail = [
+        Task(id="gmail:1", title="NVIDIA Developer News", due_at=None, source="gmail", tags=["email", "unread", "general"]),
+        Task(id="gmail:2", title="Keyu, we are hiring", due_at=None, source="gmail", tags=["email", "unread", "general"]),
+        Task(
+            id="gmail:3",
+            title="Your IT equipment is about to become due",
+            due_at=None,
+            source="gmail",
+            tags=["email", "unread", "general"],
+        ),
+        Task(
+            id="gmail:4",
+            title="Your Student Visa Information has been received",
+            due_at=None,
+            source="gmail",
+            tags=["email", "unread", "general"],
+        ),
+        Task(
+            id="gmail:5",
+            title="Homework 2 posted",
+            due_at=due,
+            source="gmail",
+            tags=["email", "unread", "course_notification"],
+        ),
+    ]
+    items = mail_change_items(mail)
+    titles = [item.title for item in items]
+    assert "NVIDIA Developer News" not in titles
+    assert "Keyu, we are hiring" not in titles
+    assert any("equipment" in item.title for item in items)
+    assert any(item.kind == "mail" and item.needs_decision for item in items)
+    visa = next(item for item in items if "Visa" in item.title)
+    assert visa.needs_decision is False
+    homework = next(item for item in items if "Homework" in item.title)
+    assert homework.needs_decision is True
+    assert all(item.text.startswith("邮件：") for item in items)
+
+
+def test_list_inbox_changes_can_include_mail(tmp_path: Path) -> None:
+    persist_obligations(
+        tmp_path,
+        [_task(id_="bspace_ical:a", title="Homework 1", due_at=datetime(2026, 9, 4, 23, 59, tzinfo=timezone.utc))],
+    )
+    mail = [
+        Task(
+            id="gmail:eq",
+            title="Your IT equipment is about to become due",
+            due_at=None,
+            source="gmail",
+            tags=["email", "general"],
+        )
+    ]
+    items = list_inbox_changes(tmp_path, limit=8, tasks=mail)
+    kinds = {item.kind for item in items}
+    assert "created" in kinds
+    assert "mail" in kinds

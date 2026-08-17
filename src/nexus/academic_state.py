@@ -195,6 +195,12 @@ def persist_obligations(
     }
 
 
+def refresh_from_snapshot(data_dir: Path, snapshot: list[Task]) -> list[Task]:
+    """Upsert the collector cache into obligations, then project Tonight's list."""
+    persist_obligations(data_dir, snapshot)
+    return tasks_from_obligations(data_dir, snapshot)
+
+
 def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
     """Project persisted obligations back onto Task objects for Tonight."""
     from .knowledge.sqlite_store import SQLiteStore

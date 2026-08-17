@@ -10,8 +10,8 @@ from ..config import default_config
 from ..context_api import build_context, persist_next_action
 from ..models import FeedSource
 from ..onboarding import connect_calendar_feed
-from ..storage import load_tasks, tasks_last_updated
-from ..academic_state import tasks_from_obligations
+from ..storage import load_feeds, load_tasks, tasks_last_updated
+from ..academic_state import refresh_from_snapshot, tasks_from_obligations
 from ..changes import list_inbox_changes
 from ..course_state import build_course_states
 from ..intelligence.workload import build_judgment, resolve_effort
@@ -46,7 +46,10 @@ def main() -> None:
 
     completions = load_completions(data_dir)
     snapshot = apply_completions(load_tasks(), completions)
-    tasks = tasks_from_obligations(data_dir, snapshot)
+    try:
+        tasks = refresh_from_snapshot(data_dir, snapshot)
+    except Exception:
+        tasks = tasks_from_obligations(data_dir, snapshot)
     briefing_payload = load_briefing_payload(briefing_path)
     pipeline_report = load_pipeline_report(report_path)
     now_local = datetime.now().astimezone()
@@ -61,7 +64,7 @@ def main() -> None:
         learning_focus=learning_context.get("focus") if isinstance(learning_context.get("focus"), list) else None,
         completions=completions,
     )
-    changes = list_inbox_changes(data_dir, limit=5)
+    changes = list_inbox_changes(data_dir, limit=5, tasks=snapshot)
     plan = build_tonight_plan(
         tasks,
         now=now_local,
@@ -81,7 +84,7 @@ def main() -> None:
         anchor_task_id=judgment.anchor_task_id,
     )
 
-    _render_sidebar(data_dir=data_dir, state=state)
+    _render_sidebar(data_dir=data_dir, state=state, include_google=_google_authorized(data_dir))
 
     tab_home, tab_tasks, tab_setup = st.tabs(["Tonight", "Tasks", "Setup"])
 
@@ -95,13 +98,22 @@ def main() -> None:
         _render_setup(data_dir, state)
 
 
-def _render_sidebar(*, data_dir: Path, state) -> None:
+def _google_authorized(data_dir: Path) -> bool:
+    root = Path(data_dir).expanduser()
+    return (root / "google_client_secret.json").is_file() and (root / "google_token.json").is_file()
+
+
+def _render_sidebar(*, data_dir: Path, state, include_google: bool) -> None:
     with st.sidebar:
         st.markdown("### Nexus")
         st.caption(state.last_updated_text)
         if st.button("Sync", type="primary", use_container_width=True):
             with st.spinner("Updating…"):
-                receipt = run_sync(data_dir=data_dir, trigger="dashboard", include_google=False)
+                receipt = run_sync(
+                    data_dir=data_dir,
+                    trigger="dashboard",
+                    include_google=include_google,
+                )
             st.session_state["sync_notice"] = receipt.get("status")
             st.rerun()
         notice = st.session_state.pop("sync_notice", None)
@@ -562,6 +574,25 @@ def _render_setup(data_dir: Path, state) -> None:
             st.warning(text)
         else:
             st.error(text)
+
+    st.markdown("### 已接来源")
+    st.caption(f"数据目录：`{data_dir}`。侧栏 Sync 会拉已授权的 Gmail / Calendar，以及已保存的 Brightspace 日历。")
+    _render_sync_table(state)
+    google_ready = _google_authorized(data_dir)
+    if google_ready:
+        st.caption("Gmail / Calendar 已授权。点 Sync 会一并更新。")
+    else:
+        st.caption("Gmail / Calendar 未授权。在终端运行 `python -m nexus.google_auth` 后再 Sync。")
+
+    feeds = load_feeds(data_dir / "feeds.json")
+    if feeds:
+        st.markdown("### 已保存的课程日历")
+        for feed in feeds:
+            course = f" · {feed.course}" if feed.course else ""
+            st.caption(f"{feed.name} · {feed.kind}{course}")
+    session = data_dir / "brightspace_session.json"
+    if session.is_file():
+        st.caption("本机还有 Brightspace 登录会话。完整课件抓取用：`nexus sync --include-archive`。")
 
     st.markdown("### 课程日历")
     st.caption("从 Brightspace 复制日历订阅链接。保存后立刻更新今晚的判断。")

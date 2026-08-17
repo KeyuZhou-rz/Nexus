@@ -81,6 +81,27 @@ def test_dashboard_sync_button_uses_shared_sync_service(monkeypatch, tmp_path: P
     assert calls == [{"data_dir": data_dir, "trigger": "dashboard", "include_google": False}]
 
 
+def test_dashboard_sync_includes_google_when_authorized(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "demo"
+    create_demo_runtime(data_dir)
+    (data_dir / "google_client_secret.json").write_text("{}", encoding="utf-8")
+    (data_dir / "google_token.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
+    calls = []
+
+    def fake_sync(**kwargs):
+        calls.append(kwargs)
+        return {"status": "succeeded", "summary": {"task_count": 3}}
+
+    monkeypatch.setattr("nexus.dashboard.app.run_sync", fake_sync)
+    app = AppTest.from_file(APP_PATH).run(timeout=30)
+    next(item for item in app.button if item.label == "Sync").click()
+    app.run(timeout=30)
+
+    assert calls == [{"data_dir": data_dir, "trigger": "dashboard", "include_google": True}]
+
+
 def test_dashboard_setup_syncs_feed_without_google(monkeypatch, tmp_path: Path) -> None:
     data_dir = tmp_path / "demo"
     create_demo_runtime(data_dir)

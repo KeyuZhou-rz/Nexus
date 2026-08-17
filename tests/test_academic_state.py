@@ -8,6 +8,7 @@ from nexus.academic_state import (
     obligation_id_for_task,
     persist_obligations,
     recent_changes,
+    refresh_from_snapshot,
     tasks_from_obligations,
 )
 from nexus.aggregators.brightspace import BrightspaceAggregator, FeedConfig
@@ -213,3 +214,21 @@ def test_open_obligation_never_labelled_high_without_available_time(tmp_path: Pa
     assert float(row["estimated_hours"]) > 0
     assert row["risk_band"] in {"unscored", "overdue"}
     assert row["risk_band"] != "high"
+
+
+def test_refresh_from_snapshot_writes_then_projects(tmp_path: Path) -> None:
+    due = datetime(2026, 9, 4, 23, 59, tzinfo=timezone.utc)
+    homework = _task(id_="bspace_ical:hw", title="Homework 9", due_at=due)
+    holiday = Task(
+        id="gcal:holiday",
+        title="Chinese Valentine's Day",
+        due_at=due,
+        source="gcal",
+        course="Holidays in China",
+        tags=["calendar"],
+    )
+    live = refresh_from_snapshot(tmp_path, [homework, holiday])
+    assert [task.title for task in live] == ["Homework 9"]
+    rows = SQLiteStore(tmp_path / "nexus.db").list_obligations()
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Homework 9"
