@@ -6,13 +6,17 @@ Gmail is not an obligation source. Course-like mail can appear as a change.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
 from .academic_state import recent_changes
+from .io_utils import atomic_write_json
 from .models import Task
+
+ACK_FILENAME = "inbox_ack.json"
 
 _NEEDS_DECISION = frozenset({"due_changed", "disappeared"})
 _MAIL_SIGNAL = re.compile(
@@ -77,7 +81,41 @@ def list_inbox_changes(
             if decisions_only and not item.needs_decision:
                 continue
             items.append(item)
-    return items[:limit]
+    acked = load_acknowledged_keys(data_dir)
+    unique: list[ChangeItem] = []
+    seen: set[str] = set()
+    for item in items:
+        key = change_key(item)
+        if key in acked or key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique[:limit]
+
+
+def change_key(item: ChangeItem) -> str:
+    return f"{item.kind}:{item.obligation_id or item.title}"
+
+
+def load_acknowledged_keys(data_dir: Path) -> set[str]:
+    path = Path(data_dir).expanduser() / ACK_FILENAME
+    if not path.is_file():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return set()
+    keys = data.get("keys") if isinstance(data, dict) else data
+    if not isinstance(keys, list):
+        return set()
+    return {str(item) for item in keys if str(item).strip()}
+
+
+def acknowledge_change(data_dir: Path, key: str) -> None:
+    root = Path(data_dir).expanduser()
+    keys = load_acknowledged_keys(root)
+    keys.add(key)
+    atomic_write_json(root / ACK_FILENAME, {"keys": sorted(keys)})
 
 
 def mail_change_items(tasks: Iterable[Task], *, limit: int = 5) -> list[ChangeItem]:

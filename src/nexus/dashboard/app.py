@@ -11,8 +11,9 @@ from ..context_api import build_context, persist_next_action
 from ..models import FeedSource
 from ..onboarding import connect_calendar_feed
 from ..storage import load_feeds, load_tasks, tasks_last_updated
-from ..academic_state import refresh_from_snapshot, tasks_from_obligations
-from ..changes import list_inbox_changes
+
+from ..academic_state import display_course, refresh_from_snapshot, tasks_from_obligations
+from ..changes import acknowledge_change, change_key, list_inbox_changes
 from ..course_state import build_course_states
 from ..intelligence.workload import build_judgment, resolve_effort
 from ..tonight_plan import build_tonight_plan
@@ -170,18 +171,31 @@ def _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses) -
                 blocks.append(f"<p>{_html(judgment.pace)}</p>")
             if judgment.forecast:
                 blocks.append(f"<p>{_html(judgment.forecast)}</p>")
-            if changes:
-                items = "".join(
-                    f"<li>{_html('需要决定 · ' + item.text if item.needs_decision else item.text)}</li>"
-                    for item in changes
-                )
+            info = [item for item in changes if not item.needs_decision]
+            if info:
+                items = "".join(f"<li>{_html(item.text)}</li>" for item in info)
                 blocks.append(f"<p>世界变化</p><ul>{items}</ul>")
             st.markdown(f'<div class="briefing">{"".join(blocks)}</div>', unsafe_allow_html=True)
+        _render_change_decisions(changes, data_dir)
         _render_add_task(data_dir, form_key="tonight_add_task")
         _render_obligation_blocks(judgment, tasks, data_dir)
     with right:
         _render_course_states(courses)
         _render_schedule(state)
+
+
+def _render_change_decisions(changes, data_dir: Path) -> None:
+    pending = [item for item in changes if item.needs_decision]
+    if not pending:
+        return
+    st.markdown('<div class="section-title">需要决定</div>', unsafe_allow_html=True)
+    st.caption("改期、消失或有学业信号的邮件。点知道了表示你已经看过。")
+    for item in pending:
+        cols = st.columns([4, 1])
+        cols[0].markdown(item.text)
+        if cols[1].button("知道了", key=f"ack_{change_key(item)}"):
+            acknowledge_change(data_dir, change_key(item))
+            st.rerun()
 
 
 def _open_obligations(tasks) -> list:
@@ -253,11 +267,23 @@ def _render_task_block(task, judgment, completions, data_dir, now_local) -> None
     elapsed = _elapsed_minutes(entry) if started else None
     recommended = judgment is not None and task.id == judgment.anchor_task_id
     hours, _basis = resolve_effort(task, completions)
+    remaining = getattr(task, "remaining_hours", None)
+    spent = getattr(task, "spent_hours", None)
+    estimated = getattr(task, "estimated_hours", None)
     kind = "week-block recommended" if recommended else "week-block"
     badge = "建议今晚" if recommended else ""
     meta_parts = [_block_when(task, now_local)]
-    if hours:
+    course = display_course(task.course)
+    if course:
+        meta_parts.append(course)
+    if remaining is not None:
+        meta_parts.append(f"剩 {remaining:g}h")
+    elif estimated is not None:
+        meta_parts.append(f"预计 {estimated:g}h")
+    elif hours:
         meta_parts.append(f"预计 {hours:g}h")
+    if spent:
+        meta_parts.append(f"已用 {spent:g}h")
     if started and elapsed is not None:
         meta_parts.append(f"计时中 · {elapsed} 分钟")
     meta = " · ".join(part for part in meta_parts if part)
@@ -327,10 +353,11 @@ def _render_course_states(courses) -> None:
         if course.next_due_at is not None:
             due = course.next_title or "下一件"
         risk = "有逾期" if course.risk_band == "overdue" else f"剩 {course.remaining_hours:g}h"
+        label = display_course(course.course) or course.course
         pace_html = f'<div class="week-block-meta">{_html(course.pace)}</div>' if course.pace else ""
         st.markdown(
             f'<div class="week-block">'
-            f'<div class="week-block-title">{_html(course.course)}</div>'
+            f'<div class="week-block-title">{_html(label)}</div>'
             f'<div class="week-block-meta">{course.open_count} 件 · {_html(risk)} · {_html(due)}</div>'
             f"{pace_html}"
             "</div>",

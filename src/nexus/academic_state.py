@@ -65,6 +65,21 @@ def normalize_course(value: str | None) -> str:
     return _SPACE.sub(" ", (value or "").strip()).casefold()
 
 
+def display_course(value: str | None) -> str:
+    """Short label for LMS course dumps; identity still uses normalize_course."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    first = raw.split(",")[0].strip()
+    first = re.sub(r"\s+\d{2,}[-_]\d+.*$", "", first).strip()
+    bracket = re.search(r"《([^》]+)》", first)
+    if bracket:
+        first = bracket.group(1).strip()
+    if len(first) > 40:
+        return first[:39] + "…"
+    return first
+
+
 def normalize_title(value: str | None) -> str:
     text = _TITLE_JUNK.sub(" ", (value or "").strip().casefold())
     return _SPACE.sub(" ", text).strip()
@@ -225,6 +240,7 @@ def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
         else:
             base = next((by_id[item] for item in source_ids if item in by_id), None)
         due_at = _parse_due(row.get("due_at"))
+        hours = _hours_from_row(row)
         if base is None:
             projected.append(
                 Task(
@@ -235,6 +251,7 @@ def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
                     course=row.get("course"),
                     status="open",
                     tags=[str(row.get("kind") or "assignment")],
+                    **hours,
                 )
             )
             continue
@@ -251,6 +268,7 @@ def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
                 tags=list(base.tags),
                 snippet=base.snippet,
                 received_at=base.received_at,
+                **hours,
             )
         )
     return projected
@@ -301,6 +319,26 @@ def _parse_source_ids(raw: Any) -> list[str]:
     if isinstance(parsed, list):
         return [str(item) for item in parsed]
     return []
+
+
+def _hours_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "estimated_hours": _as_float(row.get("estimated_hours")),
+        "spent_hours": _as_float(row.get("spent_hours")),
+        "remaining_hours": _as_float(row.get("remaining_hours")),
+        "risk_band": row.get("risk_band"),
+    }
+
+
+def _as_float(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_due(raw: Any) -> datetime | None:

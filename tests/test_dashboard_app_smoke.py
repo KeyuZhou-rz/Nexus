@@ -21,8 +21,11 @@ def test_information_dashboard_renders_complete_demo_runtime(monkeypatch, tmp_pa
 
     assert not app.exception
     assert [tab.label for tab in app.tabs] == ["Tonight", "Tasks", "Setup"]
-    assert {button.label for button in app.button} == {
-        "Add task", "Save source", "Sync", "开始做", "完成",
+    assert {"Add task", "Save source", "Sync", "开始做", "完成"}.issubset(
+        {button.label for button in app.button}
+    )
+    assert {button.label for button in app.button} <= {
+        "Add task", "Save source", "Sync", "开始做", "完成", "知道了",
     }
     assert not any(button.label == "Add work block" for button in app.button)
     assert any("截止" in markdown.value for markdown in app.markdown)

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from nexus.academic_state import persist_obligations
-from nexus.changes import list_inbox_changes, mail_change_items
+from nexus.changes import acknowledge_change, change_key, list_inbox_changes, mail_change_items
 from nexus.models import Task
 
 
@@ -179,3 +179,13 @@ def test_list_inbox_changes_can_include_mail(tmp_path: Path) -> None:
     kinds = {item.kind for item in items}
     assert "created" in kinds
     assert "mail" in kinds
+
+
+def test_acknowledge_hides_decision(tmp_path: Path) -> None:
+    _seed_inbox(tmp_path)
+    items = list_inbox_changes(tmp_path, limit=10, decisions_only=True)
+    assert items
+    first = items[0]
+    acknowledge_change(tmp_path, change_key(first))
+    later = list_inbox_changes(tmp_path, limit=10, decisions_only=True)
+    assert change_key(first) not in {change_key(item) for item in later}

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from nexus.academic_state import (
+    display_course,
     obligation_id_for_task,
     persist_obligations,
     recent_changes,
@@ -232,3 +233,14 @@ def test_refresh_from_snapshot_writes_then_projects(tmp_path: Path) -> None:
     rows = SQLiteStore(tmp_path / "nexus.db").list_obligations()
     assert len(rows) == 1
     assert rows[0]["title"] == "Homework 9"
+    assert live[0].remaining_hours is not None
+    assert live[0].estimated_hours is not None
+    assert live[0].risk_band in {"unscored", "overdue"}
+
+
+def test_display_course_shortens_lms_dump() -> None:
+    raw = "CAREER DEVELOPMENT ONLINE COURSE, 741-50768-7553-CAREER DEVELOPM, _Project Sites"
+    assert display_course(raw) == "CAREER DEVELOPMENT ONLINE COURSE"
+    civic = "Fall 2025 Civic Education 2 -《马克思主义：理论、方法与德性》, 190-420694-7553-Fall 2025 Civic"
+    assert "马克思主义" in display_course(civic)
+    assert "," not in display_course(civic)

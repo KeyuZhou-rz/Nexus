@@ -28,6 +28,10 @@ class Task:
     snippet: str | None = None
     received_at: datetime | None = None
     done_at: datetime | None = None
+    estimated_hours: float | None = None
+    spent_hours: float | None = None
+    remaining_hours: float | None = None
+    risk_band: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serializes task to dictionary."""
