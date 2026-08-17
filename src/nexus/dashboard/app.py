@@ -11,8 +11,11 @@ from ..context_api import build_context, persist_next_action
 from ..models import FeedSource
 from ..onboarding import connect_calendar_feed
 from ..storage import load_tasks, tasks_last_updated
-from ..academic_state import recent_changes, tasks_from_obligations
+from ..academic_state import tasks_from_obligations
+from ..changes import list_inbox_changes
+from ..course_state import build_course_states
 from ..intelligence.workload import build_judgment, resolve_effort
+from ..tonight_plan import build_tonight_plan
 from ..utils import localize_dt
 from ..sync_service import load_sync_receipt, run_sync
 from ..task_service import (
@@ -58,7 +61,14 @@ def main() -> None:
         learning_focus=learning_context.get("focus") if isinstance(learning_context.get("focus"), list) else None,
         completions=completions,
     )
-    changes = recent_changes(data_dir, limit=5)
+    changes = list_inbox_changes(data_dir, limit=5)
+    plan = build_tonight_plan(
+        tasks,
+        now=now_local,
+        completions=completions,
+        focus_id=judgment.anchor_task_id,
+    )
+    courses = build_course_states(tasks, completions=completions, now=now_local)
     state = build_dashboard_state(
         tasks,
         briefing_payload=briefing_payload,
@@ -76,7 +86,7 @@ def main() -> None:
     tab_home, tab_tasks, tab_setup = st.tabs(["Tonight", "Tasks", "Setup"])
 
     with tab_home:
-        _render_briefing(judgment, tasks, data_dir, state, changes)
+        _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses)
 
     with tab_tasks:
         _render_tasks(state, data_dir=data_dir, tasks=tasks)
@@ -103,7 +113,7 @@ def _render_sidebar(*, data_dir: Path, state) -> None:
             st.caption("同步未完成，打开 Setup 查看来源。")
 
 
-def _render_briefing(judgment, tasks, data_dir, state, changes) -> None:
+def _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses) -> None:
     left, right = st.columns([1.15, 1], gap="large")
     with left:
         if judgment is None or not judgment.available:
@@ -115,19 +125,25 @@ def _render_briefing(judgment, tasks, data_dir, state, changes) -> None:
             )
         else:
             blocks = ['<p class="briefing-kicker">Nexus</p>', f'<p class="headline">{_html(judgment.deadline)}</p>']
+            if plan is not None and plan.available and plan.text:
+                blocks.append(f"<p class=\"suggestion\">{_html(plan.text)}</p>")
+            elif judgment.suggestion:
+                blocks.append(f"<p class=\"suggestion\">建议：{_html(judgment.suggestion)}</p>")
             if judgment.pace:
                 blocks.append(f"<p>{_html(judgment.pace)}</p>")
             if judgment.forecast:
                 blocks.append(f"<p>{_html(judgment.forecast)}</p>")
-            if judgment.suggestion:
-                blocks.append(f"<p class=\"suggestion\">建议：{_html(judgment.suggestion)}</p>")
             if changes:
-                items = "".join(f"<li>{_html(item['text'])}</li>" for item in changes)
+                items = "".join(
+                    f"<li>{_html('需要决定 · ' + item.text if item.needs_decision else item.text)}</li>"
+                    for item in changes
+                )
                 blocks.append(f"<p>世界变化</p><ul>{items}</ul>")
             st.markdown(f'<div class="briefing">{"".join(blocks)}</div>', unsafe_allow_html=True)
         _render_add_task(data_dir, form_key="tonight_add_task")
         _render_obligation_blocks(judgment, tasks, data_dir)
     with right:
+        _render_course_states(courses)
         _render_schedule(state)
 
 
@@ -263,6 +279,26 @@ def _elapsed_minutes(entry: dict) -> int | None:
     now = datetime.now(started.tzinfo) if started.tzinfo else datetime.now()
     minutes = int((now - started).total_seconds() // 60)
     return max(0, minutes)
+
+
+def _render_course_states(courses) -> None:
+    if not courses:
+        return
+    st.markdown('<div class="section-title">课程状态</div>', unsafe_allow_html=True)
+    for course in courses[:4]:
+        due = "无截止"
+        if course.next_due_at is not None:
+            due = course.next_title or "下一件"
+        risk = "有逾期" if course.risk_band == "overdue" else f"剩 {course.remaining_hours:g}h"
+        pace_html = f'<div class="week-block-meta">{_html(course.pace)}</div>' if course.pace else ""
+        st.markdown(
+            f'<div class="week-block">'
+            f'<div class="week-block-title">{_html(course.course)}</div>'
+            f'<div class="week-block-meta">{course.open_count} 件 · {_html(risk)} · {_html(due)}</div>'
+            f"{pace_html}"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def _render_schedule(state) -> None:

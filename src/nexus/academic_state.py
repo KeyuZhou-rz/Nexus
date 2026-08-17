@@ -267,6 +267,7 @@ def recent_changes(data_dir: Path, *, limit: int = 5) -> list[dict[str, Any]]:
                 "title": title,
                 "detail": row.get("detail"),
                 "text": _change_text(row["kind"], str(title or ""), row.get("detail")),
+                "obligation_id": row.get("obligation_id"),
             }
         )
     return lines
