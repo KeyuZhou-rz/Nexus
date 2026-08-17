@@ -58,7 +58,7 @@ def run_sync(
     data_dir: Path | None = None,
     trigger: str = "cli",
     include_archive: bool = False,
-    include_google: bool = True,
+    include_google: bool = False,
     archive_timeout: int = 420,
 ) -> dict[str, Any]:
     """Run one non-interactive sync and persist a privacy-bounded receipt."""
@@ -77,6 +77,9 @@ def run_sync(
                 use_llm=False,
             )
             context = build_context(data_dir=root)
+            next_action = context.get("next_action")
+            if isinstance(next_action, dict):
+                atomic_write_json(root / "judgment.json", next_action)
             receipt = _build_receipt(
                 run_id=run_id,
                 trigger=trigger,

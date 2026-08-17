@@ -44,9 +44,77 @@ html, body, [data-testid="stAppViewContainer"] {
 
 .block-container {
     padding-top: 2rem;
-    padding-left: 2.5rem;
-    padding-right: 2.5rem;
-    max-width: 1280px;
+    padding-left: 2rem;
+    padding-right: 2rem;
+    max-width: 1180px;
+}
+
+.briefing {
+    background: var(--panel-strong);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 28px 30px 22px;
+    box-shadow: 0 16px 40px rgba(74, 57, 32, 0.06);
+    font-size: 18px;
+    line-height: 1.65;
+}
+
+.briefing p { margin: 0 0 1.1em; }
+.briefing ul { margin: 0 0 1.2em; padding-left: 1.2em; }
+.briefing li { margin: 0.25em 0; }
+.briefing-kicker {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 1.2em !important;
+}
+.briefing .headline {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 1.1em !important;
+}
+.briefing .suggestion { font-weight: 600; }
+.briefing-muted { color: var(--muted); }
+
+.week-block {
+    background: rgba(255, 255, 255, 0.56);
+    border: 1px solid var(--border);
+    border-left: 5px solid var(--accent);
+    border-radius: 16px;
+    padding: 14px 16px 10px;
+    margin: 12px 0 4px;
+}
+.week-block.recommended {
+    background: var(--accent-soft);
+    border-left-color: var(--accent);
+}
+.week-block-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+.week-block-title {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.35;
+}
+.week-block-badge {
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+}
+.week-block-meta {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 6px;
+}
+
+.timer-panel {
+    margin: 16px 0 8px;
 }
 
 .hero {
@@ -121,6 +189,12 @@ html, body, [data-testid="stAppViewContainer"] {
     letter-spacing: 0.1em;
     color: var(--muted);
     margin-bottom: 8px;
+}
+
+.judgment-card {
+    border-left: 6px solid var(--accent);
+    background: var(--panel-strong);
+    box-shadow: 0 16px 40px rgba(34, 111, 84, 0.10);
 }
 
 .task-card {

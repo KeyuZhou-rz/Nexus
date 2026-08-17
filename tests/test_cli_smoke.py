@@ -51,6 +51,12 @@ def test_unified_cli_dispatches_context_help() -> None:
     assert "--course-id" in result.stdout
 
 
+def test_unified_cli_dispatches_next_help() -> None:
+    result = _run("-m", "nexus.cli.main", "next", "--help")
+    assert result.returncode == 0
+    assert "--data-dir" in result.stdout
+
+
 def test_unified_cli_dispatches_sync_status_help() -> None:
     result = _run("-m", "nexus.cli.main", "sync-status", "--help")
     assert result.returncode == 0
@@ -61,6 +67,7 @@ def test_unified_cli_dispatches_sync_help() -> None:
     result = _run("-m", "nexus.cli.main", "sync", "--help")
     assert result.returncode == 0
     assert "--include-archive" in result.stdout
+    assert "--google" in result.stdout
 
 
 def test_unified_cli_dispatches_dashboard_help() -> None:
@@ -93,8 +100,21 @@ def test_demo_command_creates_complete_runtime(tmp_path) -> None:
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["synthetic"] is True
-    assert payload["task_count"] == 2
+    assert payload["task_count"] == 4
     assert payload["evidence_count"] == 1
+
+
+def test_next_command_prints_and_persists_judgment(tmp_path) -> None:
+    data_dir = tmp_path / "demo"
+    created = _run("-m", "nexus.cli.main", "demo", "--data-dir", str(data_dir), "--json")
+    assert created.returncode == 0, created.stderr
+    result = _run("-m", "nexus.cli.main", "next", "--data-dir", str(data_dir), "--json")
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["available"] is True
+    assert payload["suggestion"]
+    saved = json.loads((data_dir / "judgment.json").read_text(encoding="utf-8"))
+    assert saved["task_id"] == payload["task_id"]
 
 
 def test_sync_status_reports_isolated_empty_runtime(tmp_path) -> None:
@@ -207,7 +227,7 @@ def test_new_dispatcher_commands_are_importable() -> None:
 
     from nexus.cli.main import COMMANDS
 
-    for name in ("concepts-backfill", "retro", "scan", "sprint"):
+    for name in ("concepts-backfill", "retro", "scan", "sprint", "next"):
         assert name in COMMANDS, f"{name} missing from COMMANDS"
         module_name, _ = COMMANDS[name]
         module = importlib.import_module(module_name)

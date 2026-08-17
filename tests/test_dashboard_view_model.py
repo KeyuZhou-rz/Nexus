@@ -36,6 +36,22 @@ def _task(
     )
 
 
+def test_build_dashboard_state_hides_anchor_from_focus_and_upcoming():
+    now = datetime(2026, 4, 15, 10, 0, tzinfo=timezone.utc)
+    overdue = _task(title="Overdue task", due_at=now - timedelta(hours=2))
+    today = _task(title="Today task", due_at=now + timedelta(hours=3))
+    state = build_dashboard_state(
+        [overdue, today],
+        generated_at=now,
+        anchor_task_id=overdue.id,
+        briefing_payload={"todo": [{"text_en": "Finish Overdue task tonight"}], "schedule": [{"text_en": "Office hour"}]},
+    )
+    assert [item.title for item in state.focus_items] == ["Today task"]
+    assert [item.title for g in state.upcoming_groups for item in g.items] == ["Overdue task", "Today task"]
+    assert state.briefing_lines == ["Office hour"]
+    assert state.focus_items[0].task_id == today.id
+
+
 def test_build_dashboard_state_prioritizes_overdue_and_today():
     now = datetime(2026, 4, 15, 10, 0, tzinfo=timezone.utc)
     tasks = [

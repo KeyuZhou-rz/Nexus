@@ -40,6 +40,9 @@ def test_build_context_is_stable_and_read_only_for_empty_runtime(tmp_path: Path)
     assert payload["scope"]["course_id"] == "CS202_OS"
     assert payload["tasks"]["count"] == 1
     assert payload["tasks"]["items"][0]["id"] == "gcal:1"
+    assert payload["next_action"]["available"] is True
+    assert payload["next_action"]["task_id"] == "gcal:1"
+    assert payload["next_action"]["suggestion"]
     assert payload["sync"]["sources"]["google"]["status"] == "succeeded"
     assert payload["sync"]["sources"]["google"]["configured"] is False
     assert payload["learning"]["available"] is False
@@ -50,6 +53,7 @@ def test_context_can_be_serialized_for_an_assistant(tmp_path: Path) -> None:
     payload = build_context(data_dir=tmp_path)
     encoded = json.dumps(payload, ensure_ascii=False)
     assert "knowledge_store_not_initialized" in encoded
+    assert payload["next_action"]["available"] is False
 
 
 def test_context_exposes_bounded_learning_evidence_without_question_text(tmp_path: Path) -> None:

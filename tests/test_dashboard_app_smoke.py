@@ -20,12 +20,22 @@ def test_information_dashboard_renders_complete_demo_runtime(monkeypatch, tmp_pa
     app = AppTest.from_file(APP_PATH).run(timeout=30)
 
     assert not app.exception
-    assert [tab.label for tab in app.tabs] == ["Home", "Tasks", "Status", "Setup"]
+    assert [tab.label for tab in app.tabs] == ["Tonight", "Tasks", "Setup"]
     assert {button.label for button in app.button} == {
-        "Add task", "Initialize local data", "Save source", "Sync now",
-        "Add work block", "Mark done",
+        "Add task", "Save source", "Sync", "开始做", "完成",
     }
-    assert any("Learning Focus" in markdown.value for markdown in app.markdown)
+    assert not any(button.label == "Add work block" for button in app.button)
+    assert any("截止" in markdown.value for markdown in app.markdown)
+    assert any("本周日程" in markdown.value for markdown in app.markdown)
+    assert any("Overdue" in markdown.value or "Today" in markdown.value or "Tomorrow" in markdown.value for markdown in app.markdown)
+
+
+def test_dashboard_shows_schedule_module_when_no_deadlines(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
+    app = AppTest.from_file(APP_PATH).run(timeout=30)
+    assert not app.exception
+    assert any("本周日程" in markdown.value for markdown in app.markdown)
 
 
 def test_dashboard_manual_task_form_writes_user_owned_task(monkeypatch, tmp_path: Path) -> None:
@@ -65,8 +75,29 @@ def test_dashboard_sync_button_uses_shared_sync_service(monkeypatch, tmp_path: P
 
     monkeypatch.setattr("nexus.dashboard.app.run_sync", fake_sync)
     app = AppTest.from_file(APP_PATH).run(timeout=30)
-    next(item for item in app.button if item.label == "Sync now").click()
+    next(item for item in app.button if item.label == "Sync").click()
     app.run(timeout=30)
 
-    assert calls == [{"data_dir": data_dir, "trigger": "dashboard"}]
-    assert any("Sync complete" in success.value for success in app.success)
+    assert calls == [{"data_dir": data_dir, "trigger": "dashboard", "include_google": False}]
+
+
+def test_dashboard_setup_syncs_feed_without_google(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "demo"
+    create_demo_runtime(data_dir)
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
+    calls = []
+
+    def fake_sync(**kwargs):
+        calls.append(kwargs)
+        return {"status": "succeeded", "summary": {"task_count": 4}}
+
+    monkeypatch.setattr("nexus.dashboard.app.run_sync", fake_sync)
+    app = AppTest.from_file(APP_PATH).run(timeout=30)
+    next(item for item in app.text_input if item.label == "Name").input("Circuits")
+    next(item for item in app.text_input if item.label == "Feed URL").input("https://example.edu/cal.ics")
+    next(item for item in app.button if item.label == "Save source").click()
+    app.run(timeout=30)
+
+    assert calls == [{"data_dir": data_dir, "trigger": "setup", "include_google": False}]
+    assert any("tonight" in success.value.lower() for success in app.success)

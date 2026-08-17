@@ -30,6 +30,26 @@ def test_sync_cli_emits_json_and_maps_status_to_exit_code(
     assert captured.err == ""
 
 
+def test_sync_cli_defaults_to_skipping_google(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        "nexus.cli.sync.run_sync",
+        lambda **kwargs: calls.append(kwargs) or {"ok": True, "status": "succeeded"},
+    )
+    assert main(["--data-dir", str(tmp_path)]) == 0
+    assert calls[0]["include_google"] is False
+
+
+def test_sync_cli_google_flag_enables_google(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        "nexus.cli.sync.run_sync",
+        lambda **kwargs: calls.append(kwargs) or {"ok": True, "status": "succeeded"},
+    )
+    assert main(["--data-dir", str(tmp_path), "--google"]) == 0
+    assert calls[0]["include_google"] is True
+
+
 def test_sync_cli_forwards_explicit_execution_policy(tmp_path: Path, monkeypatch, capsys) -> None:
     calls = []
     monkeypatch.setattr(

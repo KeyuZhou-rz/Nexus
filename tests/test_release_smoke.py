@@ -91,7 +91,7 @@ def test_synthetic_demo_closes_sync_memory_and_context_loop(tmp_path: Path) -> N
     assert demo.returncode == 0, demo.stderr
     demo_payload = json.loads(demo.stdout)
     assert demo_payload["synthetic"] is True
-    assert demo_payload["task_count"] == 2
+    assert demo_payload["task_count"] == 4
     assert demo_payload["evidence_count"] == 1
 
     sync = _run_cli("sync-status", "--data-dir", str(data_dir), "--json", data_dir=data_dir)
@@ -106,7 +106,8 @@ def test_synthetic_demo_closes_sync_memory_and_context_loop(tmp_path: Path) -> N
     )
     assert context.returncode == 0, context.stderr
     context_payload = json.loads(context.stdout)
-    assert context_payload["tasks"]["count"] == 2
+    assert context_payload["tasks"]["count"] == 4
+    assert context_payload["next_action"]["task_id"] == "demo:homework-1"
     assert context_payload["briefing"]["available"] is True
     assert context_payload["learning"]["available"] is True
     assert context_payload["learning"]["evidence"][0]["source"] == "demo_assessment"

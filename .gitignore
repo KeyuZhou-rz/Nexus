@@ -30,6 +30,7 @@ tasks.json
 
 # The private-beta quickstart creates this local runtime at the repository root.
 nexus-data/
+nexus-practice/
 
 # OAuth / API credentials (root or nested)
 *client_secret*.json

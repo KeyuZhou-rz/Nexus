@@ -62,6 +62,11 @@ def _context() -> dict:
             "evidence": [{"source": "quiz"}],
             "focus": [{"related_task": {"id": "task-1"}}, {"related_task": None}],
         },
+        "next_action": {
+            "available": True,
+            "task_id": "task-1",
+            "suggestion": "先做 Lab",
+        },
     }
 
 
@@ -85,6 +90,8 @@ def test_run_sync_writes_privacy_bounded_receipt(tmp_path: Path, monkeypatch) ->
     }
     saved = json.loads((tmp_path / "sync_receipt.json").read_text(encoding="utf-8"))
     assert saved == receipt
+    judgment = json.loads((tmp_path / "judgment.json").read_text(encoding="utf-8"))
+    assert judgment["task_id"] == "task-1"
     assert not (tmp_path / ".sync.lock").exists()
     assert "question" not in json.dumps(receipt)
 

@@ -8,10 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from .config import default_config
+from .intelligence.workload import build_judgment
+from .io_utils import atomic_write_json
 from .learning_focus import build_learning_focus
 from .runtime_status import build_runtime_status
 from .storage import load_tasks, tasks_last_updated
 from .sync_control import build_sync_status
+from .academic_state import tasks_from_obligations
+from .task_service import apply_completions, completed_task_ids, load_completions
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -103,7 +107,9 @@ def build_context(
         config.feeds_path = root / "feeds.json"
     generated_at = now or datetime.now(timezone.utc)
     tasks_path = root / "tasks.json"
-    tasks = load_tasks(tasks_path)
+    completions = load_completions(root)
+    snapshot = apply_completions(load_tasks(tasks_path), completions)
+    tasks = tasks_from_obligations(root, snapshot)
     if course_id:
         tasks = [task for task in tasks if task.course == course_id]
 
@@ -117,6 +123,14 @@ def build_context(
     learning = _learning_context(root / "nexus.db", course_id)
     if learning.get("available"):
         learning["focus"] = build_learning_focus(tasks, learning)
+
+    next_action = build_judgment(
+        tasks,
+        done_ids=completed_task_ids(completions),
+        now=generated_at,
+        learning_focus=learning.get("focus") if isinstance(learning.get("focus"), list) else None,
+        completions=completions,
+    ).to_dict()
 
     return {
         "schema_version": "1.0",
@@ -137,6 +151,7 @@ def build_context(
             "count": len(tasks),
             "items": [task.to_dict() for task in sorted(tasks, key=_task_sort_key)[:50]],
         },
+        "next_action": next_action,
         "briefing": {
             "available": bool(briefing),
             "generated_at": briefing.get("generated_at"),
@@ -146,6 +161,18 @@ def build_context(
         },
         "learning": learning,
 }
+
+
+def persist_next_action(
+    *,
+    data_dir: Path,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Write the live next-action document to ``judgment.json``."""
+    payload = build_context(data_dir=data_dir, now=now).get("next_action")
+    next_action = payload if isinstance(payload, dict) else {"available": False}
+    atomic_write_json(Path(data_dir).expanduser() / "judgment.json", next_action)
+    return next_action
 
 
 def _sync_receipt_summary(receipt: dict[str, Any]) -> dict[str, Any] | None:

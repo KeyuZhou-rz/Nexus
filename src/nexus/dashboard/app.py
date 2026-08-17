@@ -1,31 +1,39 @@
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from ..config import default_config
-from ..context_api import build_context
+from ..context_api import build_context, persist_next_action
 from ..models import FeedSource
-from ..onboarding import initialize_runtime, upsert_feed
+from ..onboarding import connect_calendar_feed
 from ..storage import load_tasks, tasks_last_updated
-from ..intelligence.workload import build_judgment
+from ..academic_state import recent_changes, tasks_from_obligations
+from ..intelligence.workload import build_judgment, resolve_effort
+from ..utils import localize_dt
 from ..sync_service import load_sync_receipt, run_sync
-from ..task_service import add_manual_task, load_completions, mark_task_done
+from ..task_service import (
+    add_manual_task,
+    apply_completions,
+    completed_task_ids,
+    load_completions,
+    mark_task_done,
+    start_task,
+)
 from .styles import DASHBOARD_CSS
 from .view_model import (
     build_dashboard_state,
     load_briefing_payload,
     load_pipeline_report,
-    render_learning_focus_card,
     render_task_card,
 )
 
 
 def main() -> None:
-    st.set_page_config(page_title="Nexus Dashboard", page_icon="🧭", layout="wide")
+    st.set_page_config(page_title="Nexus", page_icon="🧭", layout="wide")
     st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
     config = default_config()
@@ -33,7 +41,9 @@ def main() -> None:
     briefing_path = data_dir / "briefing.json"
     report_path = data_dir / "pipeline_report.json"
 
-    tasks = load_tasks()
+    completions = load_completions(data_dir)
+    snapshot = apply_completions(load_tasks(), completions)
+    tasks = tasks_from_obligations(data_dir, snapshot)
     briefing_payload = load_briefing_payload(briefing_path)
     pipeline_report = load_pipeline_report(report_path)
     now_local = datetime.now().astimezone()
@@ -41,6 +51,14 @@ def main() -> None:
     sync_sources = context.get("sync", {}).get("sources", {})
     sync_receipt = load_sync_receipt(data_dir)
     learning_context = context.get("learning", {})
+    judgment = build_judgment(
+        tasks,
+        done_ids=completed_task_ids(completions),
+        now=now_local,
+        learning_focus=learning_context.get("focus") if isinstance(learning_context.get("focus"), list) else None,
+        completions=completions,
+    )
+    changes = recent_changes(data_dir, limit=5)
     state = build_dashboard_state(
         tasks,
         briefing_payload=briefing_payload,
@@ -50,197 +68,228 @@ def main() -> None:
         learning_context=learning_context,
         generated_at=now_local,
         last_updated=tasks_last_updated(),
+        anchor_task_id=judgment.anchor_task_id,
     )
-    judgment = build_judgment(tasks, done_ids=set(load_completions(data_dir)), now=now_local)
 
-    _render_sidebar(data_dir=data_dir, briefing_path=briefing_path, report_path=report_path, state=state)
-    _render_header(state)
+    _render_sidebar(data_dir=data_dir, state=state)
 
-    tab_home, tab_tasks, tab_status, tab_setup = st.tabs(["Home", "Tasks", "Status", "Setup"])
+    tab_home, tab_tasks, tab_setup = st.tabs(["Tonight", "Tasks", "Setup"])
 
     with tab_home:
-        _render_home(state, judgment=judgment, tasks=tasks, data_dir=data_dir)
+        _render_briefing(judgment, tasks, data_dir, state, changes)
 
     with tab_tasks:
         _render_tasks(state, data_dir=data_dir, tasks=tasks)
-
-    with tab_status:
-        _render_status(state, briefing_path=briefing_path, report_path=report_path)
 
     with tab_setup:
         _render_setup(data_dir, state)
 
 
-def _render_sidebar(*, data_dir: Path, briefing_path: Path, report_path: Path, state) -> None:
+def _render_sidebar(*, data_dir: Path, state) -> None:
     with st.sidebar:
-        st.markdown("### Snapshot")
+        st.markdown("### Nexus")
         st.caption(state.last_updated_text)
-        if state.pipeline_ok is True:
-            st.markdown('<div class="status-good">Pipeline healthy</div>', unsafe_allow_html=True)
-        elif state.pipeline_ok is False:
-            st.markdown('<div class="status-bad">Pipeline needs attention</div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="status-warn">No pipeline report yet</div>', unsafe_allow_html=True)
-
-        if st.button("Sync now", type="primary", use_container_width=True):
-            with st.spinner("Syncing configured sources..."):
-                receipt = run_sync(data_dir=data_dir, trigger="dashboard")
-            st.session_state["sync_notice"] = {
-                "status": receipt.get("status"),
-                "task_count": receipt.get("summary", {}).get("task_count", 0),
-            }
+        if st.button("Sync", type="primary", use_container_width=True):
+            with st.spinner("Updating…"):
+                receipt = run_sync(data_dir=data_dir, trigger="dashboard", include_google=False)
+            st.session_state["sync_notice"] = receipt.get("status")
             st.rerun()
-
         notice = st.session_state.pop("sync_notice", None)
-        if isinstance(notice, dict):
-            if notice.get("status") == "succeeded":
-                st.success(f"Sync complete. {notice.get('task_count', 0)} tasks in context.")
-            elif notice.get("status") == "busy":
-                st.warning("A sync is already running.")
-            else:
-                st.error("Sync finished with errors. Check Status for details.")
-
-        st.divider()
-        st.markdown("### Data Sources")
-        st.caption(f"`{data_dir}`")
-        st.write(f"Tasks: `{data_dir / 'tasks.json'}`")
-        st.write(f"Briefing: `{briefing_path}`")
-        st.write(f"Report: `{report_path}`")
-
-        st.divider()
-        st.markdown("### What This App Does")
-        st.caption("Dashboard for tasks, briefing, source health, and learning memory.")
-        st.caption("Setup writes source configuration. Tasks can also add user-owned local items.")
+        if notice == "succeeded":
+            st.caption("已更新。")
+        elif notice == "busy":
+            st.caption("正在同步。")
+        elif notice:
+            st.caption("同步未完成，打开 Setup 查看来源。")
 
 
-def _render_header(state) -> None:
-    chip_values = [
-        f"{state.snapshot.overdue} overdue",
-        f"{state.snapshot.due_today} due today",
-        f"{state.snapshot.next_seven_days} in 7 days",
-        f"{state.snapshot.recent_updates} recent updates",
+def _render_briefing(judgment, tasks, data_dir, state, changes) -> None:
+    left, right = st.columns([1.15, 1], gap="large")
+    with left:
+        if judgment is None or not judgment.available:
+            st.markdown(
+                '<div class="briefing"><p class="briefing-kicker">Nexus</p>'
+                "<p>还没有作业或考试截止。</p>"
+                "<p class=\"briefing-muted\">到 Setup 贴上课程日历，或用下面的 Add task 加上一条。</p></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            blocks = ['<p class="briefing-kicker">Nexus</p>', f'<p class="headline">{_html(judgment.deadline)}</p>']
+            if judgment.pace:
+                blocks.append(f"<p>{_html(judgment.pace)}</p>")
+            if judgment.forecast:
+                blocks.append(f"<p>{_html(judgment.forecast)}</p>")
+            if judgment.suggestion:
+                blocks.append(f"<p class=\"suggestion\">建议：{_html(judgment.suggestion)}</p>")
+            if changes:
+                items = "".join(f"<li>{_html(item['text'])}</li>" for item in changes)
+                blocks.append(f"<p>世界变化</p><ul>{items}</ul>")
+            st.markdown(f'<div class="briefing">{"".join(blocks)}</div>', unsafe_allow_html=True)
+        _render_add_task(data_dir, form_key="tonight_add_task")
+        _render_obligation_blocks(judgment, tasks, data_dir)
+    with right:
+        _render_schedule(state)
+
+
+def _open_obligations(tasks) -> list:
+    return [
+        task
+        for task in tasks
+        if getattr(task, "status", "open") != "done"
+        and "work_block" not in {str(tag).lower() for tag in (task.tags or [])}
     ]
-    chips_html = "".join(f'<div class="chip">{value}</div>' for value in chip_values)
+
+
+def _render_obligation_blocks(judgment, tasks, data_dir) -> None:
+    now_local = datetime.now().astimezone()
+    open_tasks = _open_obligations(tasks)
+    if not open_tasks:
+        st.caption("没有未完成的义务。用上面的 Add task 加上作业或考试。")
+        return
+
+    horizon = now_local + timedelta(days=7)
+    this_week: list = []
+    later: list = []
+    undated: list = []
+    for task in open_tasks:
+        due = localize_dt(task.due_at, now_local)
+        if due is None:
+            undated.append(task)
+        elif due <= horizon:
+            this_week.append(task)
+        else:
+            later.append(task)
+
+    def sort_key(task):
+        recommended = 0 if judgment is not None and task.id == judgment.anchor_task_id else 1
+        due = localize_dt(task.due_at, now_local)
+        stamp = due.timestamp() if due is not None else float("inf")
+        return (recommended, stamp)
+
+    this_week.sort(key=sort_key)
+    later.sort(key=sort_key)
+    completions = load_completions(data_dir)
+    running = any(
+        isinstance(completions.get(task.id), dict)
+        and completions[task.id].get("started_at")
+        and not completions[task.id].get("done_at")
+        for task in open_tasks
+    )
+    if running:
+        st.caption("计时绑在你点开始做的那一条上。做完点同一条的完成。")
+    else:
+        st.caption("和 Tasks 是同一份未完成义务。每条都可以开始做。")
+
+    if this_week:
+        st.markdown('<div class="section-title">这周你还有：</div>', unsafe_allow_html=True)
+        for task in this_week:
+            _render_task_block(task, judgment, completions, data_dir, now_local)
+    if later:
+        st.markdown('<div class="section-title">更晚：</div>', unsafe_allow_html=True)
+        for task in later:
+            _render_task_block(task, judgment, completions, data_dir, now_local)
+    if undated:
+        st.markdown('<div class="section-title">未定期：</div>', unsafe_allow_html=True)
+        for task in undated:
+            _render_task_block(task, judgment, completions, data_dir, now_local)
+
+
+def _render_task_block(task, judgment, completions, data_dir, now_local) -> None:
+    entry = completions.get(task.id) if isinstance(completions.get(task.id), dict) else {}
+    started = bool(entry.get("started_at") and not entry.get("done_at"))
+    elapsed = _elapsed_minutes(entry) if started else None
+    recommended = judgment is not None and task.id == judgment.anchor_task_id
+    hours, _basis = resolve_effort(task, completions)
+    kind = "week-block recommended" if recommended else "week-block"
+    badge = "建议今晚" if recommended else ""
+    meta_parts = [_block_when(task, now_local)]
+    if hours:
+        meta_parts.append(f"预计 {hours:g}h")
+    if started and elapsed is not None:
+        meta_parts.append(f"计时中 · {elapsed} 分钟")
+    meta = " · ".join(part for part in meta_parts if part)
+    badge_html = f'<div class="week-block-badge">{_html(badge)}</div>' if badge else ""
+    meta_html = f'<div class="week-block-meta">{_html(meta)}</div>' if meta else ""
     st.markdown(
-        (
-            '<div class="hero">'
-            '<div class="eyebrow">Dashboard V1</div>'
-            f'<h1 class="hero-title">{state.greeting}</h1>'
-            f'<div class="hero-sub">{state.last_updated_text}. {state.pipeline_summary}</div>'
-            f'<div class="chip-row">{chips_html}</div>'
-            "</div>"
-        ),
+        f'<div class="{kind}">'
+        f'<div class="week-block-head">'
+        f'<div class="week-block-title">{_html(task.title)}</div>'
+        f"{badge_html}"
+        "</div>"
+        f"{meta_html}"
+        "</div>",
         unsafe_allow_html=True,
     )
-
-
-def _render_judgment(judgment, tasks, data_dir) -> None:
-    st.markdown('<div class="section-title">今日判断</div>', unsafe_allow_html=True)
-    if judgment is None or not judgment.deadline:
-        st.info("暂无可判断的截止事项。同步数据后这里会给出今日判断。")
-        return
-    st.markdown('<div class="panel"><div class="panel-kicker">Judgment</div>', unsafe_allow_html=True)
-    st.markdown(f"**{judgment.deadline}**")
-    if judgment.upcoming:
-        st.markdown("这周你还有：")
-        for line in judgment.upcoming:
-            st.markdown(f"- {line}")
-    if judgment.forecast:
-        st.markdown(f"*{judgment.forecast}*")
-    if judgment.suggestion:
-        st.markdown(f"**建议**：{judgment.suggestion}")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    if judgment.anchor_task_id:
-        anchor = next((t for t in tasks if t.id == judgment.anchor_task_id), None)
-        if anchor is not None and st.button("Add work block", key=f"wb_{judgment.anchor_task_id}"):
-            block_due = datetime.combine(datetime.now().date(), time(22, 0)).astimezone()
-            add_manual_task(
-                data_dir,
-                title=f"工作块：{anchor.title[:40]}",
-                due_at=block_due,
-                course=anchor.course,
-                tags=["work_block"],
-                notes=f"今日判断建议：先完成 {anchor.title[:60]} 的第一步",
-            )
-            st.success("已加入今日工作块。")
+    action_cols = st.columns(2)
+    with action_cols[0]:
+        if st.button("开始做", key=f"start_{task.id}", disabled=started):
+            start_task(data_dir, task.id)
+            persist_next_action(data_dir=data_dir)
+            st.rerun()
+    with action_cols[1]:
+        if st.button(
+            "完成",
+            key=f"done_{task.id}",
+            type="primary" if recommended or started else "secondary",
+        ):
+            mark_task_done(data_dir, task.id)
+            persist_next_action(data_dir=data_dir)
             st.rerun()
 
 
-def _render_home(state, *, judgment, tasks, data_dir) -> None:
-    _render_judgment(judgment, tasks, data_dir)
-    metric_cols = st.columns(4)
-    metric_cols[0].metric("Total Tasks", state.snapshot.total_tasks)
-    metric_cols[1].metric("Overdue", state.snapshot.overdue)
-    metric_cols[2].metric("Due Today", state.snapshot.due_today)
-    metric_cols[3].metric("Recent Updates", state.snapshot.recent_updates)
-
-    left_col, right_col = st.columns([1.25, 1], gap="large")
-
-    with left_col:
-        st.markdown('<div class="section-title">Focus</div>', unsafe_allow_html=True)
-        if not state.focus_items:
-            st.info("No action items yet. Sync data or wait for the next update cycle.")
-        else:
-            for item in state.focus_items:
-                st.markdown(render_task_card(item), unsafe_allow_html=True)
-
-        st.markdown('<div class="section-title">Upcoming</div>', unsafe_allow_html=True)
-        if not state.upcoming_groups:
-            st.info("No scheduled items in the current snapshot.")
-        else:
-            for group in state.upcoming_groups:
-                st.markdown(f'<div class="group-label">{group.label}</div>', unsafe_allow_html=True)
-                for item in group.items[:6]:
-                    st.markdown(render_task_card(item), unsafe_allow_html=True)
-
-    with right_col:
-        _render_learning_focus(state)
-
-        st.markdown('<div class="section-title">Briefing</div>', unsafe_allow_html=True)
-        if state.briefing_lines:
-            st.markdown('<div class="panel"><div class="panel-kicker">Today\'s summary</div>', unsafe_allow_html=True)
-            for line in state.briefing_lines:
-                st.write(f"- {line}")
-            st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            st.markdown(
-                '<div class="panel"><div class="panel-kicker">Today\'s summary</div>'
-                '<div class="mini-note">No briefing snapshot yet.</div></div>',
-                unsafe_allow_html=True,
-            )
-
-        if state.briefing_warnings:
-            for warning in state.briefing_warnings:
-                st.warning(warning)
-
-        _render_sync_summary(state)
-        st.markdown('<div class="section-title">Updates</div>', unsafe_allow_html=True)
-        if not state.update_items:
-            st.markdown(
-                '<div class="panel"><div class="mini-note">No new course announcements or grade updates.</div></div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            for item in state.update_items:
-                st.markdown(render_task_card(item), unsafe_allow_html=True)
+def _block_when(task, now_local: datetime) -> str:
+    due = localize_dt(task.due_at, now_local)
+    if due is None:
+        return "未设截止"
+    if due < now_local:
+        return "已过期"
+    days = (due.date() - now_local.date()).days
+    if days == 0:
+        return "今天"
+    if days == 1:
+        return "明天"
+    weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    return weekdays[due.weekday()]
 
 
-def _render_tasks(state, *, data_dir: Path, tasks) -> None:
-    with st.expander("Mark a task done", expanded=False):
-        open_tasks = [t for t in tasks if t.status != "done"]
-        if open_tasks:
-            options = {f"{t.title[:50]} ({t.id})": t.id for t in open_tasks}
-            choice = st.selectbox("Open task", list(options.keys()))
-            if st.button("Mark done"):
-                mark_task_done(data_dir, options[choice])
-                st.success("已标记完成。")
-                st.rerun()
-        else:
-            st.caption("没有未完成任务。")
+def _elapsed_minutes(entry: dict) -> int | None:
+    raw = entry.get("started_at")
+    if not raw:
+        return None
+    try:
+        started = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return None
+    now = datetime.now(started.tzinfo) if started.tzinfo else datetime.now()
+    minutes = int((now - started).total_seconds() // 60)
+    return max(0, minutes)
 
+
+def _render_schedule(state) -> None:
+    st.markdown('<div class="section-title">本周日程</div>', unsafe_allow_html=True)
+    groups = []
+    for group in state.upcoming_groups:
+        items = [item for item in group.items if "work_block" not in item.tags]
+        if items:
+            groups.append((group.label, items))
+    if not groups:
+        st.caption("没有带来截止日的日程。同步课程日历后会按过期 / 今天 / 明天分组显示。")
+        return
+    for label, items in groups:
+        st.markdown(f'<div class="group-label">{label}</div>', unsafe_allow_html=True)
+        for item in items[:8]:
+            st.markdown(render_task_card(item), unsafe_allow_html=True)
+
+
+def _html(value: str | None) -> str:
+    from html import escape
+
+    return escape(value or "")
+
+
+def _render_add_task(data_dir: Path, *, form_key: str) -> None:
     with st.expander("Add task", expanded=False):
-        with st.form("manual_task", clear_on_submit=True):
+        with st.form(form_key, clear_on_submit=True):
             title = st.text_input("Title", placeholder="Review chapter 4")
             course_col, priority_col = st.columns(2)
             course = course_col.text_input("Course", placeholder="CS202_OS")
@@ -278,16 +327,25 @@ def _render_tasks(state, *, data_dir: Path, tasks) -> None:
             except ValueError as exc:
                 st.error(str(exc))
             else:
-                st.success("Task added.")
+                persist_next_action(data_dir=data_dir)
+                st.success("已加入义务，Tonight 和 Tasks 会一起更新。")
                 st.rerun()
+
+
+def _render_tasks(state, *, data_dir: Path, tasks) -> None:
+    st.caption("和 Tonight 同一份未完成义务。完成请在 Tonight 点。")
+    _render_add_task(data_dir, form_key="manual_task")
 
     filter_cols = st.columns(4)
     course = filter_cols[0].selectbox("Course", ["All"] + state.available_courses, index=0)
     source = filter_cols[1].selectbox("Source", ["All"] + state.available_sources, index=0)
-    status = filter_cols[2].selectbox("Status", ["All", "open", "in_progress", "done", "blocked"], index=0)
+    status = filter_cols[2].selectbox("Status", ["open", "done", "All"], index=0)
     tag = filter_cols[3].selectbox("Tag", ["All"] + state.available_tags, index=0)
 
-    rows = state.tasks_table
+    rows = [
+        row for row in state.tasks_table
+        if "work_block" not in {part.strip() for part in row["tags"].split(",") if part.strip()}
+    ]
     if course != "All":
         rows = [row for row in rows if row["course"] == course]
     if source != "All":
@@ -297,9 +355,14 @@ def _render_tasks(state, *, data_dir: Path, tasks) -> None:
     if tag != "All":
         rows = [row for row in rows if tag in {part.strip() for part in row["tags"].split(",") if part.strip()}]
 
-    st.caption(f"{len(rows)} task(s) in current view")
+    if status == "open":
+        st.caption(f"{len(rows)} 件未完成")
+    elif status == "done":
+        st.caption(f"{len(rows)} 件已完成")
+    else:
+        st.caption(f"{len(rows)} 件")
     if not rows:
-        st.info("No tasks match the current filters.")
+        st.info("没有未完成的任务。" if status == "open" else "没有符合条件的任务。")
         return
 
     st.dataframe(
@@ -438,7 +501,7 @@ def _render_learning_summary(state, *, show_evidence: bool = False) -> None:
 
 
 def _render_learning_focus(state) -> None:
-    st.markdown('<div class="section-title">Learning Focus</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">依据 · 弱项</div>', unsafe_allow_html=True)
     learning = state.learning_context
     if not learning or not learning.get("available"):
         st.info("Learning memory is not initialized yet.")
@@ -453,20 +516,19 @@ def _render_learning_focus(state) -> None:
 
 
 def _render_setup(data_dir: Path, state) -> None:
-    st.markdown('<div class="section-title">Local runtime</div>', unsafe_allow_html=True)
-    st.caption(str(data_dir))
-    if st.button("Initialize local data", type="secondary", use_container_width=False):
-        result = initialize_runtime(data_dir)
-        if result["ready"]:
-            st.success("Local runtime is ready.")
+    notice = st.session_state.pop("setup_notice", None)
+    if isinstance(notice, dict):
+        kind = notice.get("kind")
+        text = str(notice.get("text") or "")
+        if kind == "success":
+            st.success(text)
+        elif kind == "warning":
+            st.warning(text)
         else:
-            for warning in result["warnings"]:
-                st.error(str(warning))
+            st.error(text)
 
-    st.markdown('<div class="section-title">Source readiness</div>', unsafe_allow_html=True)
-    _render_sync_table(state)
-
-    st.markdown('<div class="section-title">Brightspace feed</div>', unsafe_allow_html=True)
+    st.markdown("### 课程日历")
+    st.caption("从 Brightspace 复制日历订阅链接。保存后立刻更新今晚的判断。")
     with st.form("brightspace_feed_setup", clear_on_submit=True):
         kind_label = st.radio(
             "Feed type",
@@ -492,11 +554,28 @@ def _render_setup(data_dir: Path, state) -> None:
             course=course or None,
         )
         try:
-            result = upsert_feed(data_dir, feed)
+            result = connect_calendar_feed(data_dir, feed, sync=run_sync)
         except ValueError as exc:
             st.error(str(exc))
         else:
-            st.success(f"Source {result['action']}.")
+            receipt = result.get("sync") if isinstance(result.get("sync"), dict) else {}
+            action = result["feed"]["action"]
+            if receipt.get("status") == "succeeded":
+                count = receipt.get("summary", {}).get("task_count", 0)
+                st.session_state["setup_notice"] = {
+                    "kind": "success",
+                    "text": f"Source {action}. Synced {count} tasks. Open Home for tonight's next action.",
+                }
+            elif receipt.get("status") == "busy":
+                st.session_state["setup_notice"] = {
+                    "kind": "warning",
+                    "text": f"Source {action}. A sync is already running.",
+                }
+            else:
+                st.session_state["setup_notice"] = {
+                    "kind": "error",
+                    "text": f"Source {action}, but sync did not finish. Check Status.",
+                }
             st.rerun()
 
 

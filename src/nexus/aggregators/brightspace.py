@@ -130,7 +130,7 @@ class BrightspaceAggregator(Aggregator):
                     if not is_assignment:
                         continue
                 
-                seed = uid or f"{summary}|{due_at}|{course}|{feed.url}"
+                seed = uid or f"{summary}|{course}|{feed.url}"
                 tags = ["brightspace", "deadline"]
                 if feed.audience == "llm":
                     tags.append("llm_only")

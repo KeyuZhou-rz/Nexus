@@ -11,7 +11,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run integrated Nexus MVP pipeline.")
     parser.add_argument("--skip-archive-sync", action="store_true", help="Skip Playwright archive sync step")
     parser.add_argument("--archive-timeout", type=int, default=420, help="Archive sync timeout seconds")
-    parser.add_argument("--no-google", action="store_true", help="Disable Google aggregators")
+    parser.add_argument(
+        "--google",
+        action="store_true",
+        help="Also fetch Gmail and Calendar (off by default)",
+    )
+    parser.add_argument(
+        "--no-google",
+        action="store_true",
+        help="Skip Gmail and Calendar (default; kept for existing scripts)",
+    )
     parser.add_argument("--llm", action="store_true", help="Enable LLM in briefing (disabled by default)")
     parser.add_argument("--window-days", type=int, default=7, help="Briefing window in days")
     parser.add_argument("--briefing-output", type=str, default=None, help="Override briefing output path")
@@ -21,7 +30,7 @@ def main() -> None:
     report = run_mvp_pipeline(
         run_archive_sync=not args.skip_archive_sync,
         archive_timeout=args.archive_timeout,
-        include_google=not args.no_google,
+        include_google=bool(args.google) and not args.no_google,
         use_llm=args.llm,
         window_days=args.window_days,
         briefing_output=Path(args.briefing_output) if args.briefing_output else None,

@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse
 
+from typing import Any, Callable
+
 from .config import ensure_private_runtime_dir
 from .io_utils import atomic_write_json
 from .models import FeedSource
@@ -100,3 +102,19 @@ def upsert_feed(data_dir: Path, feed: FeedSource) -> dict[str, object]:
         "feed_count": len(feeds),
         "feeds_path": str(feeds_path),
     }
+
+
+def connect_calendar_feed(
+    data_dir: Path,
+    feed: FeedSource,
+    *,
+    sync: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    """Save one calendar/announcement feed and immediately refresh tasks.
+
+    First-run sync stays off Google so holiday calendars and inbox noise
+    cannot drown the LMS deadlines the student just connected.
+    """
+    saved = upsert_feed(data_dir, feed)
+    receipt = sync(data_dir=data_dir, trigger="setup", include_google=False)
+    return {"feed": saved, "sync": receipt}

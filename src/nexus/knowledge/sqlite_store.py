@@ -25,7 +25,7 @@ from .connection_registry import register_connection, unregister_connection
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_LATEST_SCHEMA_VERSION = 9
+_LATEST_SCHEMA_VERSION = 12
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -269,6 +269,54 @@ class SQLiteStore:
                 conn.execute("ALTER TABLE exam_records ADD COLUMN pre_exam_mastery_snapshot TEXT")
             if "pre_exam_snapshot_at" not in columns:
                 conn.execute("ALTER TABLE exam_records ADD COLUMN pre_exam_snapshot_at TIMESTAMP")
+            return
+        if version == 10:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS obligations (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    course TEXT,
+                    kind TEXT NOT NULL,
+                    due_at TEXT,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    source_ids TEXT NOT NULL DEFAULT '[]',
+                    primary_task_id TEXT,
+                    last_seen_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_obligations_due ON obligations(due_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_obligations_course ON obligations(course)"
+            )
+            return
+        if version == 11:
+            columns = SQLiteStore._table_columns(conn, "obligations")
+            for name, definition in (
+                ("estimated_hours", "REAL"),
+                ("spent_hours", "REAL"),
+                ("remaining_hours", "REAL"),
+                ("risk_band", "TEXT"),
+            ):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE obligations ADD COLUMN {name} {definition}")
+            return
+        if version == 12:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS obligation_changes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    obligation_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    detail TEXT,
+                    created_at TEXT NOT NULL
+                )"""
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_obligation_changes_created "
+                "ON obligation_changes(created_at)"
+            )
             return
         raise RuntimeError(f"Unsupported schema migration: {version}")
 
@@ -1584,3 +1632,98 @@ class SQLiteStore:
                 (exam_id,),
             ).fetchone()
             return dict(row) if row else None
+
+    def upsert_obligation(
+        self,
+        *,
+        obligation_id: str,
+        title: str,
+        course: str | None,
+        kind: str,
+        due_at: str | None,
+        status: str,
+        source_ids: list[str],
+        primary_task_id: str | None,
+        estimated_hours: float | None = None,
+        spent_hours: float | None = None,
+        remaining_hours: float | None = None,
+        risk_band: str | None = None,
+    ) -> None:
+        now = time.strftime("%Y-%m-%dT%H:%M:%S")
+        payload = json.dumps(list(source_ids), ensure_ascii=False)
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO obligations(
+                       id, title, course, kind, due_at, status,
+                       source_ids, primary_task_id,
+                       estimated_hours, spent_hours, remaining_hours, risk_band,
+                       last_seen_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       title=excluded.title,
+                       course=excluded.course,
+                       kind=excluded.kind,
+                       due_at=excluded.due_at,
+                       status=excluded.status,
+                       source_ids=excluded.source_ids,
+                       primary_task_id=excluded.primary_task_id,
+                       estimated_hours=excluded.estimated_hours,
+                       spent_hours=excluded.spent_hours,
+                       remaining_hours=excluded.remaining_hours,
+                       risk_band=excluded.risk_band,
+                       last_seen_at=excluded.last_seen_at,
+                       updated_at=excluded.updated_at""",
+                (
+                    obligation_id, title, course, kind, due_at, status,
+                    payload, primary_task_id,
+                    estimated_hours, spent_hours, remaining_hours, risk_band,
+                    now, now,
+                ),
+            )
+
+    def get_obligation(self, obligation_id: str) -> dict[str, Any] | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT * FROM obligations WHERE id = ?",
+                (obligation_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_obligations(self, *, statuses: list[str] | None = None) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            if statuses:
+                placeholders = ",".join("?" * len(statuses))
+                rows = conn.execute(
+                    f"SELECT * FROM obligations WHERE status IN ({placeholders}) "
+                    "ORDER BY due_at IS NULL, due_at",
+                    statuses,
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM obligations ORDER BY due_at IS NULL, due_at"
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+    def record_obligation_change(
+        self,
+        *,
+        obligation_id: str,
+        kind: str,
+        detail: str | None = None,
+    ) -> None:
+        created = time.strftime("%Y-%m-%dT%H:%M:%S")
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO obligation_changes(
+                       obligation_id, kind, detail, created_at
+                   ) VALUES (?, ?, ?, ?)""",
+                (obligation_id, kind, detail, created),
+            )
+
+    def list_obligation_changes(self, *, limit: int = 10) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM obligation_changes ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]

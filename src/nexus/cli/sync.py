@@ -19,7 +19,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Also run advanced browser-based Brightspace archive sync",
     )
     parser.add_argument("--archive-timeout", type=int, default=420)
-    parser.add_argument("--no-google", action="store_true", help="Skip Gmail and Calendar")
+    parser.add_argument(
+        "--google",
+        action="store_true",
+        help="Also fetch Gmail and Calendar (off by default)",
+    )
+    parser.add_argument(
+        "--no-google",
+        action="store_true",
+        help="Skip Gmail and Calendar (default; kept for existing scripts)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -27,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
             data_dir=args.data_dir,
             trigger="cli",
             include_archive=args.include_archive,
-            include_google=not args.no_google,
+            include_google=bool(args.google) and not args.no_google,
             archive_timeout=args.archive_timeout,
         )
     except Exception as exc:

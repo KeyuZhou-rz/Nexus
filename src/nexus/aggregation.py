@@ -232,6 +232,12 @@ def run_aggregation(
 
     tasks = apply_completions(tasks, load_completions(data_dir))
     save_tasks(tasks, tasks_path)
+    try:
+        from .academic_state import persist_obligations
+
+        persist_obligations(data_dir, tasks, reconcile_missing=True)
+    except Exception as exc:
+        warnings.append(f"Could not persist obligations: {exc}")
     queue_report = _update_aggregation_failure_queue(
         data_dir, failures, resolved_failures, warnings
     )

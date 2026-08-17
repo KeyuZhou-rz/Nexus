@@ -21,6 +21,7 @@ class DashboardItem:
     url: str | None
     snippet: str | None
     tags: list[str] = field(default_factory=list)
+    task_id: str | None = None
 
 
 @dataclass
@@ -90,6 +91,7 @@ def build_dashboard_state(
     learning_context: dict[str, Any] | None = None,
     generated_at: datetime | None = None,
     last_updated: datetime | None = None,
+    anchor_task_id: str | None = None,
 ) -> DashboardState:
     now_local = (generated_at or datetime.now().astimezone())
     briefing_payload = briefing_payload or {}
@@ -119,7 +121,11 @@ def build_dashboard_state(
         actionable,
         key=lambda task: (_focus_rank(task, now_local), _sort_dt(task, now_local)),
     )
-    focus_items = [_to_item(task, now_local) for task in focus_candidates[:6]]
+    focus_items = [
+        _to_item(task, now_local)
+        for task in focus_candidates[:6]
+        if not anchor_task_id or task.id != anchor_task_id
+    ]
 
     upcoming_groups = _build_upcoming_groups(tasks, now_local)
     update_items = [_to_item(task, now_local, bucket="update") for task in updates[:8]]
@@ -146,7 +152,7 @@ def build_dashboard_state(
         focus_items=focus_items,
         upcoming_groups=upcoming_groups,
         update_items=update_items,
-        briefing_lines=_briefing_lines(briefing_payload),
+        briefing_lines=_briefing_lines(briefing_payload, hide_title=_anchor_title(tasks, anchor_task_id)),
         briefing_warnings=list(briefing_payload.get("warnings") or []),
         pipeline_ok=pipeline_ok,
         pipeline_summary=pipeline_summary,
@@ -218,20 +224,38 @@ def _pipeline_summary(pipeline_ok: bool | None, steps: list[dict[str, Any]]) -> 
     return "No pipeline report found yet."
 
 
-def _briefing_lines(payload: dict[str, Any]) -> list[str]:
+def _briefing_lines(payload: dict[str, Any], hide_title: str | None = None) -> list[str]:
     lines: list[str] = []
+    needle = (hide_title or "").strip().casefold()
     for key in ("todo", "schedule"):
         items = payload.get(key) or []
         for item in items[:3]:
             if not isinstance(item, dict):
                 continue
             text = str(item.get("text_en") or item.get("text_zh") or "").strip()
-            if text:
-                lines.append(text)
+            if not text:
+                continue
+            if needle and needle in text.casefold():
+                continue
+            lines.append(text)
     return lines[:4]
 
 
-def _build_upcoming_groups(tasks: list[Task], now_local: datetime) -> list[DashboardGroup]:
+def _anchor_title(tasks: list[Task], anchor_task_id: str | None) -> str | None:
+    if not anchor_task_id:
+        return None
+    for task in tasks:
+        if task.id == anchor_task_id:
+            title = (task.title or "").strip()
+            return title or None
+    return None
+
+
+def _build_upcoming_groups(
+    tasks: list[Task],
+    now_local: datetime,
+    hide_task_id: str | None = None,
+) -> list[DashboardGroup]:
     groups: dict[str, list[DashboardItem]] = {
         "Overdue": [],
         "Today": [],
@@ -240,6 +264,8 @@ def _build_upcoming_groups(tasks: list[Task], now_local: datetime) -> list[Dashb
         "Later": [],
     }
     for task in sorted([task for task in tasks if task.due_at and task.status != "done"], key=lambda task: _sort_dt(task, now_local)):
+        if hide_task_id and task.id == hide_task_id:
+            continue
         due = _localize(task.due_at, now_local)
         if due is None:
             continue
@@ -273,6 +299,7 @@ def _to_item(task: Task, now_local: datetime, bucket: str | None = None) -> Dash
         url=task.url,
         snippet=task.snippet,
         tags=list(task.tags),
+        task_id=task.id,
     )
 
 

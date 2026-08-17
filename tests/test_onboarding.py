@@ -7,7 +7,7 @@ import stat
 import pytest
 
 from nexus.models import FeedSource
-from nexus.onboarding import initialize_runtime, upsert_feed, validate_feed
+from nexus.onboarding import connect_calendar_feed, initialize_runtime, upsert_feed, validate_feed
 
 
 def test_initialize_runtime_is_idempotent_and_preserves_existing_data(tmp_path: Path) -> None:
@@ -65,6 +65,25 @@ def test_upsert_feed_updates_same_url_and_preserves_other_feeds(tmp_path: Path) 
     assert result["feed_count"] == 2
     assert payload[0]["name"] == "Operating Systems"
     assert payload[1]["name"] == "News"
+
+
+def test_connect_calendar_feed_syncs_without_google(tmp_path: Path) -> None:
+    calls: list[dict] = []
+
+    def fake_sync(**kwargs):
+        calls.append(kwargs)
+        return {"status": "succeeded", "summary": {"task_count": 1}}
+
+    result = connect_calendar_feed(
+        tmp_path,
+        FeedSource("brightspace_ical", "Circuits", "https://example.edu/cal.ics", "EE251"),
+        sync=fake_sync,
+    )
+
+    assert result["feed"]["action"] == "created"
+    assert calls == [{"data_dir": tmp_path, "trigger": "setup", "include_google": False}]
+    saved = json.loads((tmp_path / "feeds.json").read_text(encoding="utf-8"))
+    assert saved[0]["course"] == "EE251"
 
 
 def test_validate_feed_rejects_insecure_remote_urls() -> None:

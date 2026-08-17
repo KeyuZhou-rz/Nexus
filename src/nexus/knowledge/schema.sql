@@ -359,3 +359,34 @@ CREATE INDEX IF NOT EXISTS idx_query_log_session      ON concept_query_log(sessi
 CREATE INDEX IF NOT EXISTS idx_query_log_concept_time ON concept_query_log(concept_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_exam_records_course    ON exam_records(course_id);
 CREATE INDEX IF NOT EXISTS idx_retrospectives_exam    ON exam_retrospectives(exam_id);
+
+-- ════════════════════════════════════════════════
+-- Academic obligations (S1): due_at is not part of the primary key
+-- ════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS obligations (
+    id              TEXT PRIMARY KEY,
+    title           TEXT NOT NULL,
+    course          TEXT,
+    kind            TEXT NOT NULL,
+    due_at          TEXT,
+    status          TEXT NOT NULL DEFAULT 'open',
+    source_ids      TEXT NOT NULL DEFAULT '[]',
+    primary_task_id TEXT,
+    estimated_hours REAL,
+    spent_hours     REAL,
+    remaining_hours REAL,
+    risk_band       TEXT,
+    last_seen_at    TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_obligations_due ON obligations(due_at);
+CREATE INDEX IF NOT EXISTS idx_obligations_course ON obligations(course);
+
+CREATE TABLE IF NOT EXISTS obligation_changes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    obligation_id   TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    detail          TEXT,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_obligation_changes_created ON obligation_changes(created_at);

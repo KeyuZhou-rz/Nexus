@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -12,8 +12,10 @@ from nexus.storage import load_tasks, save_tasks
 from nexus.task_service import (
     add_manual_task,
     apply_completions,
+    completed_task_ids,
     load_completions,
     mark_task_done,
+    start_task,
 )
 
 
@@ -72,6 +74,47 @@ def test_mark_task_done_records_completion_and_reflects_status(tmp_path: Path) -
     assert saved[0].status == "done"
     assert saved[0].done_at is not None
     assert "gcal:abc" in load_completions(tmp_path)
+
+
+def test_apply_completions_ignores_started_only_entries(tmp_path: Path) -> None:
+    due = datetime(2026, 8, 8, 9, 0, tzinfo=timezone.utc)
+    save_tasks(
+        [Task(id="hw:1", title="CS homework", due_at=due, source="manual", tags=["assignment"])],
+        tmp_path / "tasks.json",
+    )
+    start_task(tmp_path, "hw:1")
+    applied = apply_completions(load_tasks(tmp_path / "tasks.json"), load_completions(tmp_path))
+    assert applied[0].status == "open"
+
+
+def test_started_task_is_not_completed_until_done(tmp_path: Path) -> None:
+    due = datetime(2026, 8, 8, 9, 0, tzinfo=timezone.utc)
+    save_tasks(
+        [Task(id="hw:1", title="CS homework", due_at=due, source="manual", tags=["assignment"])],
+        tmp_path / "tasks.json",
+    )
+    start_task(tmp_path, "hw:1")
+    assert completed_task_ids(load_completions(tmp_path)) == set()
+    mark_task_done(tmp_path, "hw:1")
+    assert completed_task_ids(load_completions(tmp_path)) == {"hw:1"}
+
+
+def test_start_then_done_records_elapsed_effort(tmp_path: Path) -> None:
+    due = datetime(2026, 8, 8, 9, 0, tzinfo=timezone.utc)
+    save_tasks(
+        [Task(id="hw:1", title="CS homework", due_at=due, source="manual", tags=["assignment"])],
+        tmp_path / "tasks.json",
+    )
+    started = datetime(2026, 8, 7, 10, 0, tzinfo=timezone.utc)
+    start_task(tmp_path, "hw:1", now=started)
+    start_task(tmp_path, "hw:1", now=started + timedelta(hours=1))
+    marked = mark_task_done(tmp_path, "hw:1", now=started + timedelta(hours=2))
+
+    entry = load_completions(tmp_path)["hw:1"]
+    assert marked is not None
+    assert entry["started_at"] == started.isoformat()
+    assert entry["effort_minutes"] == 120
+    assert entry["effort_key"] == "assignment"
 
 
 def test_apply_completions_restores_done_on_fresh_source_task(tmp_path: Path) -> None:

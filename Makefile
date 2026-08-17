@@ -80,7 +80,13 @@ briefing-llm:
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
-.PHONY: test test-knowledge test-cli test-archive test-fast calibration context release-smoke soak soak-long release-check package wheel-smoke
+.PHONY: practice test test-knowledge test-cli test-archive test-fast calibration context release-smoke soak soak-long release-check package wheel-smoke
+
+practice:
+	$(PYTHON) -m nexus.cli.main demo --data-dir nexus-practice --force --json
+	@echo ""
+	@echo "Open with:"
+	@echo "  NEXUS_DATA_DIR=\"$$(pwd)/nexus-practice\" nexus dashboard"
 
 test:
 	$(PYTEST) tests/ -q
