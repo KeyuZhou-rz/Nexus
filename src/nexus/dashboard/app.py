@@ -103,6 +103,17 @@ def _google_authorized(data_dir: Path) -> bool:
     return (root / "google_client_secret.json").is_file() and (root / "google_token.json").is_file()
 
 
+def _project_data_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "data"
+
+
+def _google_authorized_elsewhere(data_dir: Path) -> bool:
+    project = _project_data_dir()
+    if project.resolve() == Path(data_dir).expanduser().resolve():
+        return False
+    return _google_authorized(project)
+
+
 def _render_sidebar(*, data_dir: Path, state, include_google: bool) -> None:
     with st.sidebar:
         st.markdown("### Nexus")
@@ -114,15 +125,29 @@ def _render_sidebar(*, data_dir: Path, state, include_google: bool) -> None:
                     trigger="dashboard",
                     include_google=include_google,
                 )
-            st.session_state["sync_notice"] = receipt.get("status")
+            google = (receipt.get("sources") or {}).get("google") if isinstance(receipt.get("sources"), dict) else {}
+            st.session_state["sync_notice"] = {
+                "status": receipt.get("status"),
+                "pulled_google": bool(include_google),
+                "google_status": google.get("status") if isinstance(google, dict) else None,
+            }
             st.rerun()
         notice = st.session_state.pop("sync_notice", None)
-        if notice == "succeeded":
-            st.caption("已更新。")
-        elif notice == "busy":
-            st.caption("正在同步。")
-        elif notice:
-            st.caption("同步未完成，打开 Setup 查看来源。")
+        if isinstance(notice, str):
+            notice = {"status": notice}
+        if isinstance(notice, dict):
+            status = notice.get("status")
+            if status == "succeeded":
+                if notice.get("pulled_google"):
+                    st.caption("已更新，含 Gmail / Calendar。")
+                elif _google_authorized_elsewhere(data_dir):
+                    st.caption("已更新，但没拉 Gmail：当前是练习目录，授权在 data/。用 nexus dashboard 打开 data/ 再 Sync。")
+                else:
+                    st.caption("已更新，没拉 Gmail（当前目录没有 Google 授权）。")
+            elif status == "busy":
+                st.caption("正在同步。")
+            elif status:
+                st.caption("同步未完成，打开 Setup 查看来源。")
 
 
 def _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses) -> None:
@@ -581,6 +606,8 @@ def _render_setup(data_dir: Path, state) -> None:
     google_ready = _google_authorized(data_dir)
     if google_ready:
         st.caption("Gmail / Calendar 已授权。点 Sync 会一并更新。")
+    elif _google_authorized_elsewhere(data_dir):
+        st.caption("当前目录没有 Gmail 授权。本机授权在项目 data/。练习目录不会拉真邮件，请用 `nexus dashboard` 打开 data/ 再 Sync。")
     else:
         st.caption("Gmail / Calendar 未授权。在终端运行 `python -m nexus.google_auth` 后再 Sync。")
 

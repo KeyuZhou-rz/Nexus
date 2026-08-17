@@ -79,6 +79,7 @@ def test_dashboard_sync_button_uses_shared_sync_service(monkeypatch, tmp_path: P
     app.run(timeout=30)
 
     assert calls == [{"data_dir": data_dir, "trigger": "dashboard", "include_google": False}]
+    assert any("没拉 Gmail" in item.value for item in app.caption)
 
 
 def test_dashboard_sync_includes_google_when_authorized(monkeypatch, tmp_path: Path) -> None:
