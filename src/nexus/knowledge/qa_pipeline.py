@@ -38,7 +38,12 @@ from pathlib import Path
 from typing import Any
 
 from .assessment import AssessmentAttempt, AssessmentGrade, AssessmentTarget
-from .context_assembler import assemble_messages, estimate_tokens, validate_citation_protocol
+from .context_assembler import (
+    assemble_messages,
+    estimate_tokens,
+    validate_citation_protocol,
+    validate_citation_support,
+)
 from .concept_resolver import ConceptResolver
 from .graph_retriever import GraphRetriever
 from .llm_client import KnowledgeLLMClient, LLMOutput
@@ -528,6 +533,20 @@ class QAPipeline:
                     input_tokens=output.input_tokens,
                     output_tokens=output.output_tokens,
                 )
+            elif teaching_mode == "answer":
+                support_check = validate_citation_support(
+                    output.content, retrieval.chunks,
+                )
+                if not support_check["ok"]:
+                    warnings.append(
+                        "回答未通过引用校验（结论未被课件支持），已改为展示可验证的课件摘录。"
+                    )
+                    output = LLMOutput(
+                        content=_retrieval_only_answer(retrieval.chunks),
+                        model_used="citation-gated",
+                        input_tokens=output.input_tokens,
+                        output_tokens=output.output_tokens,
+                    )
 
         # ── Step 6: 记录日志 + 更新 session 活动 ──
         chunk_ids = [c.chunk_id for c in retrieval.chunks]

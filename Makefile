@@ -117,6 +117,7 @@ test-knowledge:
 	          tests/test_query_collection_compatibility.py \
 	          tests/test_retrieval_golden.py \
 	          tests/test_qa_prompt_quality.py \
+	          tests/test_qa_citation_gate.py \
 	          tests/test_qa_pipeline_mastery.py \
 	          tests/test_chunk_backfill.py \
 	          tests/test_p0_storage_retrieval.py \

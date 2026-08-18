@@ -13,6 +13,7 @@ from nexus.knowledge.context_assembler import (
     assemble_messages,
     build_source_map,
     validate_citation_protocol,
+    validate_citation_support,
 )
 from nexus.knowledge.prompts import SOCRATIC_GUIDANCE, TEACHING_MODE_GUIDANCE
 from nexus.knowledge.qa_pipeline import QAPipeline
@@ -203,6 +204,112 @@ class TestAssembleMessagesWithMastery:
         result = validate_citation_protocol("没有引用。", [_chunk()], require_citation=True)
         assert not result["ok"]
         assert result["missing"] is True
+
+    def test_citation_support_accepts_paraphrase_of_cited_chunk(self):
+        chunks = [_chunk("A deadlock requires circular wait.")]
+        result = validate_citation_support(
+            "Circular wait is required for a deadlock [S1].", chunks
+        )
+        assert result["ok"] is True
+        assert result["unsupported"] == []
+        assert result["method"] == "rule"
+
+        chinese = validate_citation_support(
+            "死锁需要循环等待 [S1]。",
+            [_chunk("死锁的四个必要条件是：互斥、持有并等待、不可剥夺、循环等待")],
+        )
+        assert chinese["ok"] is True
+
+    def test_citation_support_rejects_unrelated_and_chinese_hallucination(self):
+        chunks = [_chunk("死锁的四个必要条件是：互斥、持有并等待、不可剥夺、循环等待")]
+        result = validate_citation_support("死锁是内存不足引起的 [S1]。", chunks)
+        assert result["ok"] is False
+        assert result["unsupported"][0]["cited"] == ["S1"]
+        assert result["unsupported"][0]["reason"] == "结论未被课件支持"
+
+    def test_citation_support_nli_override_and_rule_fallback(self):
+        chunks = [_chunk("A deadlock requires circular wait.")]
+        answer = "A deadlock requires circular wait [S1]."
+        overridden = validate_citation_support(
+            answer, chunks, nli_fn=lambda claim, evidence, cited: False
+        )
+        assert overridden["ok"] is False
+        assert overridden["method"] == "nli"
+
+        def boom(claim, evidence, cited):
+            raise RuntimeError("nli unavailable")
+
+        fallback = validate_citation_support(answer, chunks, nli_fn=boom)
+        assert fallback["ok"] is True
+        assert fallback["method"] == "rule"
+
+    def test_citation_support_ok_when_answer_empty(self):
+        called: list[str] = []
+
+        def nli(claim, evidence, cited):
+            called.append(claim)
+            return False
+
+        result = validate_citation_support("", [_chunk()], nli_fn=nli)
+        assert result["ok"] is True
+        assert result["unsupported"] == []
+        assert result["method"] == "rule"
+        assert called == []
+
+    def test_citation_support_ok_when_no_cited_sentences(self):
+        called: list[str] = []
+
+        def nli(claim, evidence, cited):
+            called.append(claim)
+            return False
+
+        result = validate_citation_support(
+            "A deadlock is caused by insufficient RAM.",
+            [_chunk("A deadlock requires circular wait.")],
+            nli_fn=nli,
+        )
+        assert result["ok"] is True
+        assert result["unsupported"] == []
+        assert result["method"] == "rule"
+        assert called == []
+
+    def test_citation_support_unknown_source_id_has_no_content(self):
+        called: list[list[str]] = []
+
+        def nli(claim, evidence, cited):
+            called.append(cited)
+            return True
+
+        result = validate_citation_support(
+            "Circular wait is required [S9].",
+            [_chunk("A deadlock requires circular wait.")],
+            nli_fn=nli,
+        )
+        assert result["ok"] is False
+        assert result["unsupported"][0]["cited"] == ["S9"]
+        assert result["unsupported"][0]["reason"] == "cited source has no content"
+        assert result["method"] == "rule"
+        assert called == []
+
+    def test_citation_support_binds_trailing_source_id_after_period(self):
+        chunks = [_chunk("A deadlock requires circular wait.")]
+        supported = validate_citation_support(
+            "Circular wait is required for a deadlock. [S1]", chunks
+        )
+        assert supported["ok"] is True
+        rejected = validate_citation_support(
+            "A deadlock is caused by insufficient RAM. [S1]", chunks
+        )
+        assert rejected["ok"] is False
+
+    def test_citation_support_splits_chinese_sentences_without_spaces(self):
+        chunks = [_chunk("死锁的四个必要条件是：互斥、持有并等待、不可剥夺、循环等待")]
+        result = validate_citation_support(
+            "死锁需要循环等待[S1]。死锁是内存不足引起的[S1]。",
+            chunks,
+        )
+        assert result["ok"] is False
+        assert any("内存" in item["claim"] for item in result["unsupported"])
 
     def test_no_retrieval_has_explicit_status_and_supplement_marker(self):
         user = assemble_messages("What is paging?", [])[1]["content"]

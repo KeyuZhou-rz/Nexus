@@ -17,6 +17,7 @@ Context Assembler — Nexus Phase 3 + Phase 4A
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from .prompts import QA_SYSTEM_PROMPT, SOCRATIC_GUIDANCE, TEACHING_MODE_GUIDANCE, TEACHING_STYLE
@@ -29,6 +30,29 @@ if TYPE_CHECKING:
 # 课件 context block 的近似字符上限（控制 prompt token 总量）
 MAX_CONTEXT_CHARS = 6000
 _SOURCE_ID_RE = re.compile(r"\[S(\d+)\]")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。．.!?！？])\s*|\n+")
+_NEGATION_RE = re.compile(
+    r"\b(?:not|never|without|cannot|can't|doesn't|don't|isn't|aren't)\b|"
+    r"不是|没有|并非|不需要|不会|无法|并不",
+    re.IGNORECASE,
+)
+_CONTENT_STOPWORDS = {
+    "the", "a", "an", "and", "or", "in", "on", "at", "to", "for", "of", "is",
+    "are", "was", "were", "be", "been", "being", "this", "that", "it", "its",
+    "as", "by", "with", "from", "into", "also", "can", "may", "must", "than",
+    "not", "never", "without", "cannot", "does", "don't", "isn't", "aren't",
+    "didn't", "doesn't", "won't",
+    "什么", "是", "的", "了", "吗", "呢", "如何", "怎么", "怎样", "为什么",
+    "请", "帮", "我", "要", "能", "会", "关于", "介绍", "解释", "和", "有",
+}
+_CJK_PARTICLES = set("的了是在和与或及把被对从到为也之其等着过还就都")
+_GENERIC_CJK = {
+    "需要", "可以", "进行", "如果", "因为", "所以", "一个", "这个", "不是",
+    "没有", "以及", "或者", "但是", "然后", "就是", "作为", "通过", "根据",
+    "以下", "上述", "所述", "什么", "如何", "怎么", "一种", "这种",
+}
+_MIN_SUPPORT_COVERAGE = 0.4
+_MIN_CLAIM_UNITS = 2
 
 
 def _format_chunk_source(meta: dict) -> str:
@@ -136,6 +160,162 @@ def validate_citation_protocol(
         "missing": missing,
         "available": sorted(available, key=lambda item: int(item[1:])),
     }
+
+
+def validate_citation_support(
+    answer: str,
+    chunks: list[RetrievedChunk],
+    *,
+    nli_fn: Callable[[str, str, list[str]], bool] | None = None,
+) -> dict[str, Any]:
+    """Check that cited natural-language conclusions are supported by chunk text.
+
+    Protocol validation only proves that ``[Sn]`` exists. This gate binds each
+    cited sentence to the cited chunk contents and requires the claim's
+    content units to be covered by those sources. ``nli_fn`` is an optional
+    override; exceptions fall back to the rule path.
+    """
+    contents = {
+        f"S{index}": chunk.content or ""
+        for index, chunk in enumerate(chunks, start=1)
+    }
+    unsupported: list[dict[str, Any]] = []
+    used_nli = False
+    used_rule = False
+    for claim, cited in _iter_cited_claims(answer):
+        evidence = " ".join(contents[sid] for sid in cited if sid in contents)
+        if not evidence.strip():
+            used_rule = True
+            unsupported.append(
+                {"claim": claim, "cited": cited, "reason": "cited source has no content"}
+            )
+            continue
+        supported, used = _claim_supported(claim, evidence, cited, nli_fn)
+        if used == "nli":
+            used_nli = True
+        else:
+            used_rule = True
+        if not supported:
+            unsupported.append(
+                {"claim": claim, "cited": cited, "reason": "结论未被课件支持"}
+            )
+    method = "nli" if used_nli and not used_rule else "rule"
+    return {
+        "ok": not unsupported,
+        "unsupported": unsupported,
+        "method": method,
+    }
+
+
+def _iter_cited_claims(answer: str) -> list[tuple[str, list[str]]]:
+    text = (answer or "").strip()
+    if not text:
+        return []
+    raw_parts = [part.strip() for part in _SENTENCE_SPLIT_RE.split(text) if part.strip()]
+    parts: list[str] = []
+    for part in raw_parts:
+        if parts and _is_citation_only(part):
+            parts[-1] = f"{parts[-1]} {part}"
+            continue
+        parts.append(part)
+    claims: list[tuple[str, list[str]]] = []
+    for part in parts:
+        cited = _cited_ids(part)
+        if cited and not _is_citation_only(part):
+            claims.append((part, cited))
+    return claims
+
+
+def _is_citation_only(text: str) -> bool:
+    remainder = _SOURCE_ID_RE.sub(" ", text or "")
+    remainder = re.sub(r"[。．.!?！？,，、；;:\s]+", "", remainder)
+    return not remainder
+
+
+def _cited_ids(text: str) -> list[str]:
+    seen: list[str] = []
+    for number in _SOURCE_ID_RE.findall(text or ""):
+        sid = f"S{number}"
+        if sid not in seen:
+            seen.append(sid)
+    return seen
+
+
+def _claim_supported(
+    claim: str,
+    evidence: str,
+    cited: list[str],
+    nli_fn: Callable[[str, str, list[str]], bool] | None,
+) -> tuple[bool, str]:
+    if nli_fn is not None:
+        try:
+            return bool(nli_fn(claim, evidence, cited)), "nli"
+        except Exception:
+            pass
+    return _rule_supported(claim, evidence), "rule"
+
+
+def _rule_supported(claim: str, evidence: str) -> bool:
+    claim_norm = _normalize_claim(claim)
+    evid_norm = re.sub(r"\s+", " ", (evidence or "").strip()).casefold()
+    if not claim_norm:
+        return True
+    claim_units = _content_units(claim_norm)
+    if len(claim_units) < _MIN_CLAIM_UNITS:
+        return True
+    aligned, conflicts = _polarity_aligned_sentences(claim_norm, evid_norm)
+    if conflicts and not aligned:
+        return False
+    pool = " ".join(aligned) if aligned else evid_norm
+    compact_claim = re.sub(r"[^\w一-鿿]+", "", claim_norm, flags=re.UNICODE)
+    compact_pool = re.sub(r"[^\w一-鿿]+", "", pool, flags=re.UNICODE)
+    if len(compact_claim) >= 6 and compact_claim in compact_pool:
+        return True
+    overlap = claim_units & _content_units(pool)
+    return (len(overlap) / len(claim_units)) >= _MIN_SUPPORT_COVERAGE
+
+
+def _normalize_claim(claim: str) -> str:
+    stripped = _SOURCE_ID_RE.sub(" ", claim or "")
+    return re.sub(r"\s+", " ", stripped).strip().casefold()
+
+
+def _content_units(text: str) -> set[str]:
+    units: set[str] = set()
+    for word in re.findall(r"[a-z][a-z0-9-]{2,}", text):
+        if word not in _CONTENT_STOPWORDS:
+            units.add(word)
+    chars = [char for char in text if "\u4e00" <= char <= "\u9fff"]
+    for index in range(len(chars) - 1):
+        if chars[index] in _CJK_PARTICLES or chars[index + 1] in _CJK_PARTICLES:
+            continue
+        gram = chars[index] + chars[index + 1]
+        if gram not in _GENERIC_CJK:
+            units.add(gram)
+    return units
+
+
+def _polarity_aligned_sentences(claim: str, evidence: str) -> tuple[list[str], list[str]]:
+    """Split evidence into sentences that share the claim's polarity vs those that flip it."""
+    claim_negated = bool(_NEGATION_RE.search(claim))
+    claim_units = _content_units(claim)
+    aligned: list[str] = []
+    conflicts: list[str] = []
+    for sentence in _evidence_sentences(evidence):
+        sent_units = _content_units(sentence)
+        shared = claim_units & sent_units
+        if len(shared) < 2 and not (claim_units and claim_units <= sent_units):
+            continue
+        if bool(_NEGATION_RE.search(sentence)) == claim_negated:
+            aligned.append(sentence)
+        else:
+            conflicts.append(sentence)
+    return aligned, conflicts
+
+
+def _evidence_sentences(evidence: str) -> list[str]:
+    parts = [part.strip() for part in _SENTENCE_SPLIT_RE.split(evidence or "") if part.strip()]
+    return parts or [evidence]
 
 
 def _build_profile_snippet(

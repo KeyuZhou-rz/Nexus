@@ -312,9 +312,10 @@
   - 多课程、中英文、无答案、跨课程
   - (done: 20-case offline golden fixture spans four courses, Chinese/English, no-answer and unknown-course cases)
 
-- [~] **4F-2 QA citation gate**
-  - 已完成运行时 source-ID/required-citation gate，未知或缺失引用降级为有来源的课件摘录（`tests/test_qa_citation_gate.py`）。
-  - 待完成：对自然语言结论做语义蕴含验证，而非仅验证引用协议。
+- [x] **4F-2 QA citation gate**
+  - 运行时 source-ID/required-citation gate：未知或缺失引用降级为有来源的课件摘录。
+  - 语义蕴含：`validate_citation_support` 将带 `[Sn]` 的结论绑定到对应 chunk.content，规则覆盖不足则同样降级；可选 `nli_fn` 失败回落规则。
+  - 交付：`context_assembler.validate_citation_support`、`QAPipeline.ask` 串联、`tests/test_qa_citation_gate.py` 走真实 `ask()`。
 
 - [x] **4F-3 Assessment 案例扩展**
   - 正确、部分正确、错误、遗忘、提示注入和课件冲突案例。
