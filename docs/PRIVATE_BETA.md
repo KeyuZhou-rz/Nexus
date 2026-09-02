@@ -2,13 +2,18 @@
 
 ## Product boundary
 
-Nexus is a local learning context layer, not a replacement chat assistant. The
-Private Beta validates one loop:
+Nexus is a local academic-state layer, not a dashboard, chat assistant, or
+calendar replacement. The Private Beta validates one loop:
 
-1. collect course tasks and updates;
-2. produce a concise local dashboard and briefing;
-3. retain trusted learning evidence and mastery state;
-4. export a stable JSON context for another assistant.
+1. collect or enter courses, obligations, due dates, and study availability;
+2. persist a single canonical state and its deltas;
+3. rank one next action from availability-aware risk;
+4. record accept / start / complete / defer against the same obligation so the
+   next read changes.
+
+Ask testers whether the current state is credible, whether Today’s
+recommendation is the thing most worth doing now, and whether completing work
+changed the next recommendation. Do not score the beta on visual polish.
 
 The release intentionally excludes multi-user hosting, mobile apps, browser DOM
 injection, billing, real-time webhooks, and automated MFA handling.
@@ -60,9 +65,16 @@ first-run experience.
 
 ```bash
 nexus demo --data-dir /tmp/nexus-demo --json
+nexus demo --scenario v1-loop --data-dir /tmp/nexus-v1 --json
 NEXUS_DATA_DIR=/tmp/nexus-demo nexus dashboard
 NEXUS_DATA_DIR=/tmp/nexus-demo nexus context --course-id CS202_OS --json
 ```
+
+The `v1-loop` scenario needs no Google/Brightspace account and no network. It
+proves deadline change, calendar conflict, high-risk rerank, one action, and
+completion feedback. Nexus cannot yet infer remaining effort or availability
+from a calendar that only has deadlines; those still need a manual estimate and
+study windows.
 
 The demo command refuses non-empty destinations and generates synthetic data
 only. Its Brightspace sample is still synthetic, but it is processed through

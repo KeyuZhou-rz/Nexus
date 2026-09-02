@@ -80,7 +80,7 @@ briefing-llm:
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
-.PHONY: practice test test-knowledge test-cli test-archive test-fast calibration context release-smoke soak soak-long release-check package wheel-smoke
+.PHONY: practice test test-knowledge test-cli test-archive test-fast calibration context release-smoke soak soak-long release-check package wheel-smoke v1-acceptance
 
 practice:
 	$(PYTHON) -m nexus.cli.main demo --data-dir nexus-practice --force --json
@@ -144,6 +144,14 @@ release-smoke:
 	$(PYTEST) tests/test_release_smoke.py tests/test_release_privacy.py -q
 	$(PYTHON) -m nexus.cli.main calibration \
 		--fixture tests/fixtures/mastery_calibration.json --json
+
+v1-acceptance:
+	$(PYTEST) tests/test_v1_state_loop.py tests/test_risk.py tests/test_action_service.py \
+	          tests/test_availability.py tests/test_recommendations.py tests/test_v1_migrations.py \
+	          tests/test_dashboard_today.py -q
+	@tmp=$$(mktemp -d /tmp/nexus-v1-XXXXXX); \
+	$(PYTHON) -m nexus.cli.main demo --scenario v1-loop --data-dir $$tmp --json; \
+	status=$$?; rm -rf $$tmp; exit $$status
 
 SOAK_ITERATIONS ?= 50
 SOAK_WORKERS ?= 4

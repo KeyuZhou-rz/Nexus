@@ -284,6 +284,9 @@ def create_demo_runtime(
 
     context = build_context(data_dir=root, course_id="CS202_OS", now=current)
     persist_next_action(data_dir=root, now=current)
+    from .academic_state_service import AcademicStateService
+
+    AcademicStateService(root).import_legacy_completions(now=current)
     return {
         "schema_version": "1.0",
         "ok": True,
@@ -293,4 +296,133 @@ def create_demo_runtime(
         "source_count": len(context["sync"]["sources"]),
         "learning_available": context["learning"]["available"],
         "evidence_count": len(context["learning"].get("evidence") or []),
+    }
+
+
+def run_v1_loop_scenario(
+    data_dir: Path,
+    *,
+    now: datetime | None = None,
+    force: bool = False,
+) -> dict[str, object]:
+    """Account-free V1 loop proof: state, deadline delta, conflict, action, rerank."""
+    from datetime import timedelta
+
+    from .academic_state_service import AcademicStateService
+    from .action_service import ActionService
+    from .today import build_today
+    from .v1_config import V1_NOW, V1_TZ
+
+    root = Path(data_dir).expanduser()
+    if force and root.exists() and (root / DEMO_MARKER).is_file():
+        import shutil
+
+        shutil.rmtree(root)
+    if root.exists() and not runtime_is_seedable(root):
+        raise ValueError("Demo data directory must be empty")
+
+    initialize_runtime(root)
+    atomic_write_text(root / DEMO_MARKER, "synthetic v1 loop\n")
+    current = now or V1_NOW
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=V1_TZ)
+
+    state = AcademicStateService(root)
+    cs = state.add_manual_obligation(
+        title="CS Assignment 2",
+        course="CS101",
+        due_at=datetime(2026, 9, 14, 9, 0, tzinfo=V1_TZ),
+        estimated_hours=6,
+        remaining_hours=6,
+        kind="assignment",
+        now=current,
+    )
+    history = state.add_manual_obligation(
+        title="History Reading",
+        course="HIST101",
+        due_at=datetime(2026, 9, 9, 9, 0, tzinfo=V1_TZ),
+        estimated_hours=1,
+        remaining_hours=1,
+        kind="reading",
+        now=current,
+    )
+    for weekday, start, end in (
+        (0, "14:00", "18:00"),
+        (1, "16:00", "18:00"),
+        (2, "16:00", "18:00"),
+        (3, "16:00", "18:00"),
+        (4, "16:00", "18:00"),
+    ):
+        state.add_availability_rule(
+            weekday=weekday,
+            starts_local=start,
+            ends_local=end,
+            timezone="America/New_York",
+        )
+    cs_id = str(cs["id"])
+    history_id = str(history["id"])
+    state.update_obligation(
+        cs_id,
+        due_at=datetime(2026, 9, 8, 9, 0, tzinfo=V1_TZ),
+        now=current,
+    )
+    state.upsert_calendar_block(
+        source="gcal",
+        external_id="conflict-mon-16-18",
+        title="Occupied block",
+        starts_at=datetime(2026, 9, 7, 16, 0, tzinfo=V1_TZ),
+        ends_at=datetime(2026, 9, 7, 18, 0, tzinfo=V1_TZ),
+        now=current,
+    )
+    today = build_today(root, now=current)
+    rec = today.recommendation
+    if rec is None or rec.obligation_id != cs_id:
+        raise RuntimeError("V1 loop did not recommend CS Assignment 2")
+    cs_risk = next(item for item in today.assessments if item.obligation_id == cs_id)
+    if cs_risk.band != "high" or "remaining_exceeds_available" not in cs_risk.reasons:
+        raise RuntimeError("V1 loop did not mark remaining-vs-available as high risk")
+
+    actions = ActionService(root)
+    actions.accept(
+        cs_id,
+        block_minutes=rec.block_minutes,
+        recommendation_key=rec.recommendation_key,
+        now=current,
+    )
+    actions.start(cs_id, recommendation_key=rec.recommendation_key, now=current)
+    done_at = current + timedelta(minutes=90)
+    actions.complete(cs_id, now=done_at)
+    after = build_today(root, now=done_at)
+    if after.recommendation is None or after.recommendation.obligation_id != history_id:
+        raise RuntimeError("V1 loop did not rerank to History Reading after completion")
+
+    snapshot = state.load_state()
+    due_changed = sum(
+        1 for item in snapshot["state_changes"] if item.get("kind") == "due_changed"
+    )
+    return {
+        "schema_version": "1.0",
+        "ok": True,
+        "synthetic": True,
+        "scenario": "v1-loop",
+        "network": False,
+        "data_dir": str(root),
+        "obligation_count": len(snapshot["obligations"]),
+        "due_changed": due_changed,
+        "risk_band": cs_risk.band,
+        "reasons": list(cs_risk.reasons),
+        "remaining_hours": cs_risk.remaining_hours,
+        "available_hours": cs_risk.available_hours,
+        "top_obligation_id": cs_id,
+        "recommendation": {
+            "obligation_id": rec.obligation_id,
+            "action": rec.action,
+            "block_minutes": rec.block_minutes,
+            "risk_band": rec.risk_band,
+            "recommendation_key": rec.recommendation_key,
+        },
+        "action_event_count": len(state.store.list_action_events(limit=200)),
+        "effort_sample_count": len(state.store.list_effort_samples()),
+        "next_obligation_id": after.recommendation.obligation_id,
+        "completed_status": state.store.get_obligation(cs_id)["status"],
     }

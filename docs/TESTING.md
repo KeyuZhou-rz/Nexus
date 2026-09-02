@@ -52,14 +52,12 @@ python -m playwright install chromium
 make dashboard
 ```
 
-打开 `http://localhost:8501`，包含四个 Tab：
+打开 `http://localhost:8501`。V1 默认页是 **Today**（一条 next action + 原因 +
+开始/完成），**State** 管手工义务/可用时间，**Setup** 管日历源。
 
-| Tab | 功能 |
-|-----|------|
-| Home | 今日判断、Focus、Upcoming、Learning Focus、Briefing、Updates |
-| Tasks | 全量任务表、手动添加、标记完成、按 course/source/status/tag 过滤 |
-| Status | pipeline 状态、来源健康、学习记忆摘要 |
-| Setup | 初始化运行目录、保存 Brightspace Feed |
+```bash
+make v1-acceptance   # V1 闭环测试 + 无账号 demo 证明
+```
 
 ---
 

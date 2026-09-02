@@ -7,6 +7,7 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+from nexus.action_service import ActionService
 from nexus.cli import next_action as next_cli
 from nexus.context_api import build_context, persist_next_action
 from nexus.demo import create_demo_runtime, runtime_is_seedable
@@ -93,6 +94,7 @@ def test_dashboard_complete_advances_home_next_action(monkeypatch, tmp_path: Pat
 
     app = AppTest.from_file(APP_PATH).run(timeout=30)
     assert not app.exception
+    assert any(tab.label == "Today" for tab in app.tabs)
     assert any("截止" in item.value for item in app.markdown)
     assert any(button.label == "开始做" for button in app.button)
 
@@ -135,6 +137,7 @@ def test_tonight_and_tasks_share_open_obligations(monkeypatch, tmp_path: Path) -
 
     app = AppTest.from_file(APP_PATH).run(timeout=30)
     assert not app.exception
+    assert [tab.label for tab in app.tabs] == ["Today", "State", "Setup"]
     assert not any(button.label == "Add work block" for button in app.button)
     open_tasks = tasks_from_obligations(data_dir, load_tasks(data_dir / "tasks.json"))
     titles = [task.title for task in open_tasks if task.status != "done"]
@@ -143,23 +146,27 @@ def test_tonight_and_tasks_share_open_obligations(monkeypatch, tmp_path: Path) -
     for title in titles:
         assert title in markdown
     starts = [button for button in app.button if button.label == "开始做"]
-    assert len(starts) == len(titles)
+    assert len(starts) >= len(titles)
 
 
-def test_accept_tonight_plan_does_not_start_timer(monkeypatch, tmp_path: Path) -> None:
+def test_accept_today_does_not_start_timer(monkeypatch, tmp_path: Path) -> None:
     data_dir = tmp_path / "week"
     create_demo_runtime(data_dir)
     monkeypatch.setenv("NEXUS_DATA_DIR", str(data_dir))
     monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
 
     app = AppTest.from_file(APP_PATH).run(timeout=30)
-    next(button for button in app.button if button.label == "接受今晚计划").click()
+    next(button for button in app.button if button.label == "接受").click()
     app.run(timeout=30)
 
     assert not app.exception
-    assert any("已接受今晚计划" in item.value for item in app.caption)
+    assert any("已接受" in item.value for item in app.caption)
     assert not any("计时中" in item.value for item in app.markdown)
-    saved = json.loads((data_dir / "tonight_plan.json").read_text(encoding="utf-8"))
-    assert saved["status"] == "accepted"
-    assert saved["task_id"]
-    assert not load_completions(data_dir).get(saved["task_id"], {}).get("started_at")
+    events = ActionService(data_dir).store.list_action_events()
+    accepted = [item for item in events if item.get("event_type") == "accepted"]
+    assert accepted
+    oid = str(accepted[0]["obligation_id"])
+    row = ActionService(data_dir).store.get_obligation(oid)
+    task_id = None if row is None else row.get("primary_task_id")
+    assert task_id
+    assert not load_completions(data_dir).get(task_id, {}).get("started_at")

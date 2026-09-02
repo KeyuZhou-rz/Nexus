@@ -15,7 +15,6 @@ from typing import Any, Iterable
 
 from .intelligence.workload import effort_key, is_actionable_deadline, resolve_effort
 from .models import Task
-from .task_service import load_completions
 from .utils import localize_dt, stable_id
 
 _SOURCE_RANK = {
@@ -111,103 +110,11 @@ def persist_obligations(
     reconcile_missing: bool = False,
 ) -> dict[str, int]:
     """Upsert actionable tasks into SQLite. work_block / noise are skipped."""
-    from .knowledge.sqlite_store import SQLiteStore
+    from .academic_state_service import AcademicStateService
 
-    grouped: dict[str, list[Task]] = {}
-    skipped = 0
-    for task in tasks:
-        key = obligation_id_for_task(task)
-        if key is None:
-            skipped += 1
-            continue
-        grouped.setdefault(key, []).append(task)
-
-    root = Path(data_dir).expanduser()
-    completions = load_completions(root)
-    now_local = datetime.now().astimezone()
-    store = SQLiteStore(root / "nexus.db")
-    existing = {row["id"]: row for row in store.list_obligations()}
-    written = 0
-    created = 0
-    due_changed = 0
-    for key, members in grouped.items():
-        members.sort(key=_source_rank)
-        primary = members[0]
-        status = (
-            "done"
-            if any(getattr(item, "status", "open") == "done" for item in members)
-            else "open"
-        )
-        due_at = next((item.due_at for item in members if item.due_at is not None), None)
-        due_iso = due_at.isoformat() if due_at else None
-        estimated, spent, remaining, risk_band = _effort_snapshot(
-            primary, [item.id for item in members], completions, due_at, status, now_local
-        )
-        prior = existing.get(key)
-        if prior is None:
-            store.record_obligation_change(
-                obligation_id=key,
-                kind="created",
-                detail=(primary.title or "").strip(),
-            )
-            created += 1
-        elif (prior.get("due_at") or None) != due_iso:
-            store.record_obligation_change(
-                obligation_id=key,
-                kind="due_changed",
-                detail=f"{prior.get('due_at') or '—'} → {due_iso or '—'}",
-            )
-            due_changed += 1
-        store.upsert_obligation(
-            obligation_id=key,
-            title=(primary.title or "").strip(),
-            course=primary.course,
-            kind=effort_key(primary),
-            due_at=due_iso,
-            status=status,
-            source_ids=[item.id for item in members],
-            primary_task_id=primary.id,
-            estimated_hours=estimated,
-            spent_hours=spent,
-            remaining_hours=remaining,
-            risk_band=risk_band,
-        )
-        written += 1
-
-    missing = 0
-    if reconcile_missing:
-        for key, prior in existing.items():
-            if key in grouped:
-                continue
-            if prior.get("status") in {"done", "missing"}:
-                continue
-            store.record_obligation_change(
-                obligation_id=key,
-                kind="disappeared",
-                detail=str(prior.get("title") or key),
-            )
-            store.upsert_obligation(
-                obligation_id=key,
-                title=str(prior.get("title") or key),
-                course=prior.get("course"),
-                kind=str(prior.get("kind") or "assignment"),
-                due_at=prior.get("due_at"),
-                status="missing",
-                source_ids=json.loads(prior.get("source_ids") or "[]"),
-                primary_task_id=prior.get("primary_task_id"),
-                estimated_hours=prior.get("estimated_hours"),
-                spent_hours=prior.get("spent_hours"),
-                remaining_hours=prior.get("remaining_hours"),
-                risk_band="unscored",
-            )
-            missing += 1
-    return {
-        "upserted": written,
-        "skipped": skipped,
-        "created": created,
-        "due_changed": due_changed,
-        "missing": missing,
-    }
+    return AcademicStateService(data_dir).ingest_snapshot(
+        tasks, reconcile_missing=reconcile_missing
+    )
 
 
 def refresh_from_snapshot(data_dir: Path, snapshot: list[Task]) -> list[Task]:
@@ -226,7 +133,7 @@ def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
     if not db_path.is_file():
         return candidates
     store = SQLiteStore(db_path)
-    rows = store.list_obligations(statuses=["open", "overdue"])
+    rows = store.list_obligations(statuses=["open", "in_progress", "overdue"])
     if not rows:
         return candidates
     by_id = {task.id: task for task in snapshot}

@@ -9,15 +9,17 @@ Phase 4 表: concepts / concept_relations / chunk_concepts / learning_events / c
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
 import stat
 import time
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
+from uuid import uuid4
 
 from ..config import ensure_private_runtime_dir
 from .connection_registry import register_connection, unregister_connection
@@ -25,8 +27,31 @@ from .connection_registry import register_connection, unregister_connection
 
 # schema.sql 与本文件同目录
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-_LATEST_SCHEMA_VERSION = 12
+_LATEST_SCHEMA_VERSION = 13
+_INBOX_CHANGE_KINDS = {"created", "due_changed", "disappeared"}
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
+
+
+def _now_iso() -> str:
+    return datetime.now().astimezone().isoformat()
+
+
+def _as_json_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _flag(value: Any, default: int = 0) -> int:
+    if value is None:
+        return default
+    return 1 if value else 0
+
+
+def _stable_key(seed: str) -> str:
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
 
 def _prepare_private_sqlite_path(db_path: Path) -> None:
@@ -316,6 +341,142 @@ class SQLiteStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_obligation_changes_created "
                 "ON obligation_changes(created_at)"
+            )
+            return
+        if version == 13:
+            columns = SQLiteStore._table_columns(conn, "obligations")
+            for name, definition in (
+                ("progress_percent", "INTEGER"),
+                ("remaining_override_hours", "REAL"),
+                ("course_id", "TEXT"),
+                ("next_step", "TEXT"),
+            ):
+                if name not in columns:
+                    conn.execute(
+                        f"ALTER TABLE obligations ADD COLUMN {name} {definition}"
+                    )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_obligations_status_due "
+                "ON obligations(status, due_at)"
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS courses (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS obligation_sources (
+                    obligation_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    external_id TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    payload_hash TEXT,
+                    is_primary INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (obligation_id, source, external_id)
+                )"""
+            )
+            conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_obligation_sources_external
+                   ON obligation_sources(source, external_id)"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS calendar_blocks (
+                    id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    external_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    starts_at TEXT NOT NULL,
+                    ends_at TEXT NOT NULL,
+                    course_id TEXT,
+                    kind TEXT NOT NULL DEFAULT 'busy',
+                    status TEXT NOT NULL DEFAULT 'confirmed',
+                    observed_at TEXT NOT NULL,
+                    UNIQUE(source, external_id)
+                )"""
+            )
+            conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_calendar_blocks_interval
+                   ON calendar_blocks(starts_at, ends_at)"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS availability_rules (
+                    id TEXT PRIMARY KEY,
+                    weekday INTEGER NOT NULL,
+                    starts_local TEXT NOT NULL,
+                    ends_local TEXT NOT NULL,
+                    timezone TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1
+                )"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS availability_overrides (
+                    id TEXT PRIMARY KEY,
+                    starts_at TEXT NOT NULL,
+                    ends_at TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    note TEXT
+                )"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS state_changes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    before_json TEXT,
+                    after_json TEXT,
+                    created_at TEXT NOT NULL,
+                    source TEXT NOT NULL
+                )"""
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_state_changes_created "
+                "ON state_changes(created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_state_changes_entity "
+                "ON state_changes(entity_type, entity_id)"
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS action_events (
+                    id TEXT PRIMARY KEY,
+                    obligation_id TEXT NOT NULL,
+                    recommendation_key TEXT,
+                    event_type TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    payload_json TEXT,
+                    idempotency_key TEXT UNIQUE
+                )"""
+            )
+            conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_action_events_obligation
+                   ON action_events(obligation_id, occurred_at)"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS effort_samples (
+                    id TEXT PRIMARY KEY,
+                    obligation_id TEXT NOT NULL,
+                    course_id TEXT,
+                    kind TEXT,
+                    minutes REAL NOT NULL,
+                    completed_at TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    idempotency_key TEXT UNIQUE
+                )"""
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_effort_samples_kind "
+                "ON effort_samples(kind)"
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS academic_state_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )"""
             )
             return
         raise RuntimeError(f"Unsupported schema migration: {version}")
@@ -1633,6 +1794,66 @@ class SQLiteStore:
             ).fetchone()
             return dict(row) if row else None
 
+    @staticmethod
+    def _upsert_obligation_row(
+        conn: sqlite3.Connection,
+        *,
+        obligation_id: str,
+        title: str,
+        course: str | None,
+        kind: str,
+        due_at: str | None,
+        status: str,
+        source_ids: list[str],
+        primary_task_id: str | None,
+        estimated_hours: float | None = None,
+        spent_hours: float | None = None,
+        remaining_hours: float | None = None,
+        risk_band: str | None = None,
+        progress_percent: int | None = None,
+        remaining_override_hours: float | None = None,
+        course_id: str | None = None,
+        next_step: str | None = None,
+        now: str,
+    ) -> None:
+        payload = json.dumps(list(source_ids), ensure_ascii=False)
+        conn.execute(
+            """INSERT INTO obligations(
+                   id, title, course, kind, due_at, status,
+                   source_ids, primary_task_id,
+                   estimated_hours, spent_hours, remaining_hours, risk_band,
+                   progress_percent, remaining_override_hours, course_id, next_step,
+                   last_seen_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   title=excluded.title,
+                   course=excluded.course,
+                   kind=excluded.kind,
+                   due_at=excluded.due_at,
+                   status=excluded.status,
+                   source_ids=excluded.source_ids,
+                   primary_task_id=excluded.primary_task_id,
+                   estimated_hours=excluded.estimated_hours,
+                   spent_hours=excluded.spent_hours,
+                   remaining_hours=excluded.remaining_hours,
+                   risk_band=excluded.risk_band,
+                   progress_percent=COALESCE(excluded.progress_percent, obligations.progress_percent),
+                   remaining_override_hours=COALESCE(
+                       excluded.remaining_override_hours, obligations.remaining_override_hours
+                   ),
+                   course_id=COALESCE(excluded.course_id, obligations.course_id),
+                   next_step=COALESCE(excluded.next_step, obligations.next_step),
+                   last_seen_at=excluded.last_seen_at,
+                   updated_at=excluded.updated_at""",
+            (
+                obligation_id, title, course, kind, due_at, status,
+                payload, primary_task_id,
+                estimated_hours, spent_hours, remaining_hours, risk_band,
+                progress_percent, remaining_override_hours, course_id, next_step,
+                now, now,
+            ),
+        )
+
     def upsert_obligation(
         self,
         *,
@@ -1648,37 +1869,32 @@ class SQLiteStore:
         spent_hours: float | None = None,
         remaining_hours: float | None = None,
         risk_band: str | None = None,
+        progress_percent: int | None = None,
+        remaining_override_hours: float | None = None,
+        course_id: str | None = None,
+        next_step: str | None = None,
     ) -> None:
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
-        payload = json.dumps(list(source_ids), ensure_ascii=False)
         with connect(self.db_path) as conn:
-            conn.execute(
-                """INSERT INTO obligations(
-                       id, title, course, kind, due_at, status,
-                       source_ids, primary_task_id,
-                       estimated_hours, spent_hours, remaining_hours, risk_band,
-                       last_seen_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(id) DO UPDATE SET
-                       title=excluded.title,
-                       course=excluded.course,
-                       kind=excluded.kind,
-                       due_at=excluded.due_at,
-                       status=excluded.status,
-                       source_ids=excluded.source_ids,
-                       primary_task_id=excluded.primary_task_id,
-                       estimated_hours=excluded.estimated_hours,
-                       spent_hours=excluded.spent_hours,
-                       remaining_hours=excluded.remaining_hours,
-                       risk_band=excluded.risk_band,
-                       last_seen_at=excluded.last_seen_at,
-                       updated_at=excluded.updated_at""",
-                (
-                    obligation_id, title, course, kind, due_at, status,
-                    payload, primary_task_id,
-                    estimated_hours, spent_hours, remaining_hours, risk_band,
-                    now, now,
-                ),
+            self._upsert_obligation_row(
+                conn,
+                obligation_id=obligation_id,
+                title=title,
+                course=course,
+                kind=kind,
+                due_at=due_at,
+                status=status,
+                source_ids=source_ids,
+                primary_task_id=primary_task_id,
+                estimated_hours=estimated_hours,
+                spent_hours=spent_hours,
+                remaining_hours=remaining_hours,
+                risk_band=risk_band,
+                progress_percent=progress_percent,
+                remaining_override_hours=remaining_override_hours,
+                course_id=course_id,
+                next_step=next_step,
+                now=now,
             )
 
     def get_obligation(self, obligation_id: str) -> dict[str, Any] | None:
@@ -1725,5 +1941,471 @@ class SQLiteStore:
             rows = conn.execute(
                 "SELECT * FROM obligation_changes ORDER BY id DESC LIMIT ?",
                 (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    @staticmethod
+    def _bump_revision(conn: sqlite3.Connection) -> int:
+        row = conn.execute(
+            "SELECT value FROM academic_state_meta WHERE key = 'state_revision'"
+        ).fetchone()
+        current = int(row["value"]) if row else 0
+        new = current + 1
+        conn.execute(
+            """INSERT INTO academic_state_meta(key, value) VALUES ('state_revision', ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (str(new),),
+        )
+        return new
+
+    def bump_state_revision(self) -> int:
+        with connect(self.db_path) as conn:
+            return self._bump_revision(conn)
+
+    def get_state_revision(self) -> int:
+        raw = self.get_meta("state_revision")
+        if raw is None or raw == "":
+            return 0
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return 0
+
+    def set_meta(self, key: str, value: str) -> None:
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO academic_state_meta(key, value) VALUES (?, ?)
+                   ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+                (key, str(value)),
+            )
+
+    def get_meta(self, key: str) -> str | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT value FROM academic_state_meta WHERE key = ?",
+                (key,),
+            ).fetchone()
+            return None if row is None else str(row["value"])
+
+    def write_obligation_ingest(
+        self,
+        *,
+        obligation_id: str,
+        title: str,
+        course: str | None,
+        kind: str,
+        due_at: str | None,
+        status: str,
+        source_ids: list[str],
+        primary_task_id: str | None,
+        estimated_hours: float | None = None,
+        spent_hours: float | None = None,
+        remaining_hours: float | None = None,
+        risk_band: str | None = None,
+        progress_percent: int | None = None,
+        remaining_override_hours: float | None = None,
+        course_id: str | None = None,
+        next_step: str | None = None,
+        sources: list[dict[str, Any]],
+        change_kind: str | None,
+        change_detail: str | None,
+        state_before: dict[str, Any] | None,
+        state_after: dict[str, Any] | None,
+        now_iso: str,
+        ingest_source: str = "ingest",
+    ) -> int:
+        """Upsert obligation + sources + obligation_changes + state_changes + bump revision."""
+        with connect(self.db_path) as conn:
+            self._upsert_obligation_row(
+                conn,
+                obligation_id=obligation_id,
+                title=title,
+                course=course,
+                kind=kind,
+                due_at=due_at,
+                status=status,
+                source_ids=source_ids,
+                primary_task_id=primary_task_id,
+                estimated_hours=estimated_hours,
+                spent_hours=spent_hours,
+                remaining_hours=remaining_hours,
+                risk_band=risk_band,
+                progress_percent=progress_percent,
+                remaining_override_hours=remaining_override_hours,
+                course_id=course_id,
+                next_step=next_step,
+                now=now_iso,
+            )
+            if sources:
+                conn.execute(
+                    "UPDATE obligation_sources SET is_primary = 0 WHERE obligation_id = ?",
+                    (obligation_id,),
+                )
+                for item in sources:
+                    conn.execute(
+                        """INSERT INTO obligation_sources(
+                               obligation_id, source, external_id, observed_at,
+                               payload_hash, is_primary
+                           ) VALUES (?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(obligation_id, source, external_id) DO UPDATE SET
+                               observed_at = excluded.observed_at,
+                               payload_hash = excluded.payload_hash,
+                               is_primary = excluded.is_primary""",
+                        (
+                            obligation_id,
+                            str(item.get("source") or "unknown"),
+                            str(item.get("external_id") or ""),
+                            str(item.get("observed_at") or now_iso),
+                            item.get("payload_hash"),
+                            _flag(item.get("is_primary")),
+                        ),
+                    )
+            if change_kind in _INBOX_CHANGE_KINDS:
+                conn.execute(
+                    """INSERT INTO obligation_changes(
+                           obligation_id, kind, detail, created_at
+                       ) VALUES (?, ?, ?, ?)""",
+                    (obligation_id, change_kind, change_detail, now_iso),
+                )
+            if change_kind:
+                conn.execute(
+                    """INSERT INTO state_changes(
+                           entity_type, entity_id, kind, before_json, after_json,
+                           created_at, source
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        "obligation",
+                        obligation_id,
+                        change_kind,
+                        _as_json_text(state_before),
+                        _as_json_text(state_after),
+                        now_iso,
+                        ingest_source,
+                    ),
+                )
+            return self._bump_revision(conn)
+
+    def upsert_course(
+        self,
+        course_id: str,
+        name: str,
+        *,
+        active: bool = True,
+        now_iso: str | None = None,
+    ) -> dict[str, Any]:
+        stamp = now_iso or _now_iso()
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO courses(id, name, active, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       name = excluded.name,
+                       active = excluded.active,
+                       updated_at = excluded.updated_at""",
+                (course_id, name, _flag(active, 1), stamp, stamp),
+            )
+            row = conn.execute(
+                "SELECT * FROM courses WHERE id = ?", (course_id,)
+            ).fetchone()
+            return dict(row)
+
+    def list_courses(self) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM courses ORDER BY name"
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_obligation_sources(self, obligation_id: str) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                """SELECT * FROM obligation_sources
+                   WHERE obligation_id = ?
+                   ORDER BY is_primary DESC, source, external_id""",
+                (obligation_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def upsert_calendar_block(self, **fields: Any) -> dict[str, Any]:
+        source = str(fields["source"])
+        external_id = str(fields["external_id"])
+        block_id = fields.get("id") or f"cal:{_stable_key(f'{source}|{external_id}')}"
+        observed_at = fields.get("observed_at") or _now_iso()
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO calendar_blocks(
+                       id, source, external_id, title, starts_at, ends_at,
+                       course_id, kind, status, observed_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(source, external_id) DO UPDATE SET
+                       title = excluded.title,
+                       starts_at = excluded.starts_at,
+                       ends_at = excluded.ends_at,
+                       course_id = excluded.course_id,
+                       kind = excluded.kind,
+                       status = excluded.status,
+                       observed_at = excluded.observed_at""",
+                (
+                    block_id,
+                    source,
+                    external_id,
+                    str(fields["title"]),
+                    str(fields["starts_at"]),
+                    str(fields["ends_at"]),
+                    fields.get("course_id"),
+                    str(fields.get("kind") or "busy"),
+                    str(fields.get("status") or "confirmed"),
+                    observed_at,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM calendar_blocks WHERE source = ? AND external_id = ?",
+                (source, external_id),
+            ).fetchone()
+            return dict(row)
+
+    def list_calendar_blocks(self) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM calendar_blocks ORDER BY starts_at, ends_at"
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def delete_calendar_block(self, block_id: str) -> None:
+        with connect(self.db_path) as conn:
+            conn.execute("DELETE FROM calendar_blocks WHERE id = ?", (block_id,))
+
+    def upsert_availability_rule(self, **fields: Any) -> dict[str, Any]:
+        rule_id = str(fields.get("id") or fields.get("rule_id") or f"ar:{uuid4().hex}")
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO availability_rules(
+                       id, weekday, starts_local, ends_local, timezone, enabled
+                   ) VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       weekday = excluded.weekday,
+                       starts_local = excluded.starts_local,
+                       ends_local = excluded.ends_local,
+                       timezone = excluded.timezone,
+                       enabled = excluded.enabled""",
+                (
+                    rule_id,
+                    int(fields["weekday"]),
+                    str(fields["starts_local"]),
+                    str(fields["ends_local"]),
+                    str(fields["timezone"]),
+                    _flag(fields.get("enabled"), 1),
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM availability_rules WHERE id = ?", (rule_id,)
+            ).fetchone()
+            return dict(row)
+
+    def list_availability_rules(self) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM availability_rules ORDER BY weekday, starts_local"
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def delete_availability_rule(self, rule_id: str) -> None:
+        with connect(self.db_path) as conn:
+            conn.execute("DELETE FROM availability_rules WHERE id = ?", (rule_id,))
+
+    def upsert_availability_override(self, **fields: Any) -> dict[str, Any]:
+        override_id = str(
+            fields.get("id") or fields.get("override_id") or f"ao:{uuid4().hex}"
+        )
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO availability_overrides(
+                       id, starts_at, ends_at, kind, note
+                   ) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       starts_at = excluded.starts_at,
+                       ends_at = excluded.ends_at,
+                       kind = excluded.kind,
+                       note = excluded.note""",
+                (
+                    override_id,
+                    str(fields["starts_at"]),
+                    str(fields["ends_at"]),
+                    str(fields["kind"]),
+                    fields.get("note"),
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM availability_overrides WHERE id = ?",
+                (override_id,),
+            ).fetchone()
+            return dict(row)
+
+    def list_availability_overrides(self) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM availability_overrides ORDER BY starts_at"
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def delete_availability_override(self, override_id: str) -> None:
+        with connect(self.db_path) as conn:
+            conn.execute(
+                "DELETE FROM availability_overrides WHERE id = ?", (override_id,)
+            )
+
+    def record_state_change(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        kind: str,
+        before_json: Any,
+        after_json: Any,
+        source: str,
+        created_at: str | None = None,
+    ) -> None:
+        stamp = created_at or _now_iso()
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO state_changes(
+                       entity_type, entity_id, kind, before_json, after_json,
+                       created_at, source
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    entity_type,
+                    entity_id,
+                    kind,
+                    _as_json_text(before_json),
+                    _as_json_text(after_json),
+                    stamp,
+                    source,
+                ),
+            )
+
+    def list_state_changes(
+        self,
+        *,
+        limit: int = 50,
+        entity_id: str | None = None,
+        kind: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses = []
+        params: list[Any] = []
+        if entity_id is not None:
+            clauses.append("entity_id = ?")
+            params.append(entity_id)
+        if kind is not None:
+            clauses.append("kind = ?")
+            params.append(kind)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                f"SELECT * FROM state_changes {where} ORDER BY id DESC LIMIT ?",
+                params,
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def insert_action_event(
+        self,
+        *,
+        event_id: str,
+        obligation_id: str,
+        event_type: str,
+        occurred_at: str,
+        payload_json: Any = None,
+        recommendation_key: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> bool:
+        with connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO action_events(
+                       id, obligation_id, recommendation_key, event_type,
+                       occurred_at, payload_json, idempotency_key
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    event_id,
+                    obligation_id,
+                    recommendation_key,
+                    event_type,
+                    occurred_at,
+                    _as_json_text(payload_json),
+                    idempotency_key,
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def list_action_events(
+        self,
+        *,
+        obligation_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            if obligation_id is not None:
+                rows = conn.execute(
+                    """SELECT * FROM action_events
+                       WHERE obligation_id = ?
+                       ORDER BY occurred_at DESC LIMIT ?""",
+                    (obligation_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM action_events ORDER BY occurred_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+    def insert_effort_sample(
+        self,
+        *,
+        sample_id: str,
+        obligation_id: str,
+        minutes: float,
+        completed_at: str,
+        source: str,
+        course_id: str | None = None,
+        kind: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> bool:
+        with connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO effort_samples(
+                       id, obligation_id, course_id, kind, minutes,
+                       completed_at, source, idempotency_key
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    sample_id,
+                    obligation_id,
+                    course_id,
+                    kind,
+                    float(minutes),
+                    completed_at,
+                    source,
+                    idempotency_key,
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def list_effort_samples(
+        self,
+        *,
+        obligation_id: str | None = None,
+        kind: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses = []
+        params: list[Any] = []
+        if obligation_id is not None:
+            clauses.append("obligation_id = ?")
+            params.append(obligation_id)
+        if kind is not None:
+            clauses.append("kind = ?")
+            params.append(kind)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                f"SELECT * FROM effort_samples {where} ORDER BY completed_at DESC",
+                params,
             ).fetchall()
             return [dict(row) for row in rows]

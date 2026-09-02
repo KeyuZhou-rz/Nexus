@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from ..demo import create_demo_runtime
+from ..demo import create_demo_runtime, run_v1_loop_scenario
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -13,11 +13,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir", type=Path, required=True, help="Empty destination directory")
     parser.add_argument("--force", action="store_true", help="Replace an existing demo runtime")
     parser.add_argument("--json", action="store_true", help="Emit JSON (the default output format)")
+    parser.add_argument(
+        "--scenario",
+        choices=("default", "v1-loop"),
+        default="default",
+        help="default practice week, or v1-loop State→Action proof",
+    )
     args = parser.parse_args(argv)
 
     try:
-        payload = create_demo_runtime(args.data_dir, force=args.force)
+        if args.scenario == "v1-loop":
+            payload = run_v1_loop_scenario(args.data_dir, force=args.force)
+        else:
+            payload = create_demo_runtime(args.data_dir, force=args.force)
     except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
+        return 1
+    except RuntimeError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
         return 1
     print(json.dumps(payload, ensure_ascii=False, indent=2))

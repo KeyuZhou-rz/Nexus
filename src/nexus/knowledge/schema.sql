@@ -376,11 +376,16 @@ CREATE TABLE IF NOT EXISTS obligations (
     spent_hours     REAL,
     remaining_hours REAL,
     risk_band       TEXT,
+    progress_percent INTEGER,
+    remaining_override_hours REAL,
+    course_id       TEXT,
+    next_step       TEXT,
     last_seen_at    TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_obligations_due ON obligations(due_at);
 CREATE INDEX IF NOT EXISTS idx_obligations_course ON obligations(course);
+CREATE INDEX IF NOT EXISTS idx_obligations_status_due ON obligations(status, due_at);
 
 CREATE TABLE IF NOT EXISTS obligation_changes (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -390,3 +395,100 @@ CREATE TABLE IF NOT EXISTS obligation_changes (
     created_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_obligation_changes_created ON obligation_changes(created_at);
+
+-- ════════════════════════════════════════════════
+-- V1 canonical academic state (schema v13)
+-- ════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS courses (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS obligation_sources (
+    obligation_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    payload_hash TEXT,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (obligation_id, source, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_obligation_sources_external
+    ON obligation_sources(source, external_id);
+
+CREATE TABLE IF NOT EXISTS calendar_blocks (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    course_id TEXT,
+    kind TEXT NOT NULL DEFAULT 'busy',
+    status TEXT NOT NULL DEFAULT 'confirmed',
+    observed_at TEXT NOT NULL,
+    UNIQUE(source, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_blocks_interval
+    ON calendar_blocks(starts_at, ends_at);
+
+CREATE TABLE IF NOT EXISTS availability_rules (
+    id TEXT PRIMARY KEY,
+    weekday INTEGER NOT NULL, -- 0=Monday .. 6=Sunday (datetime.weekday)
+    starts_local TEXT NOT NULL, -- 'HH:MM'
+    ends_local TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS availability_overrides (
+    id TEXT PRIMARY KEY,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    kind TEXT NOT NULL, -- available | unavailable
+    note TEXT
+);
+
+CREATE TABLE IF NOT EXISTS state_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    before_json TEXT,
+    after_json TEXT,
+    created_at TEXT NOT NULL,
+    source TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_state_changes_created ON state_changes(created_at);
+CREATE INDEX IF NOT EXISTS idx_state_changes_entity ON state_changes(entity_type, entity_id);
+
+CREATE TABLE IF NOT EXISTS action_events (
+    id TEXT PRIMARY KEY,
+    obligation_id TEXT NOT NULL,
+    recommendation_key TEXT,
+    event_type TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    payload_json TEXT,
+    idempotency_key TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_action_events_obligation ON action_events(obligation_id, occurred_at);
+
+CREATE TABLE IF NOT EXISTS effort_samples (
+    id TEXT PRIMARY KEY,
+    obligation_id TEXT NOT NULL,
+    course_id TEXT,
+    kind TEXT,
+    minutes REAL NOT NULL,
+    completed_at TEXT NOT NULL,
+    source TEXT NOT NULL,
+    idempotency_key TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_effort_samples_kind ON effort_samples(kind);
+
+CREATE TABLE IF NOT EXISTS academic_state_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);

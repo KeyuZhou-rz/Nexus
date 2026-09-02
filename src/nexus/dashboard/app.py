@@ -12,16 +12,18 @@ from ..models import FeedSource
 from ..onboarding import connect_calendar_feed
 from ..storage import load_feeds, load_tasks, tasks_last_updated
 
-from ..academic_state import display_course, refresh_from_snapshot, tasks_from_obligations
+from ..academic_state import (
+    display_course,
+    obligation_id_for_task,
+    refresh_from_snapshot,
+    tasks_from_obligations,
+)
+from ..academic_state_service import AcademicStateService
+from ..action_service import ActionService
 from ..changes import acknowledge_change, change_key, list_inbox_changes
 from ..course_state import build_course_states
 from ..intelligence.workload import build_judgment, resolve_effort
-from ..tonight_plan import (
-    build_tonight_plan,
-    load_plan_decision,
-    next_plan_focus_id,
-    save_plan_decision,
-)
+from ..today import build_today
 from ..utils import localize_dt
 from ..sync_service import load_sync_receipt, run_sync
 from ..task_service import (
@@ -32,12 +34,25 @@ from ..task_service import (
     mark_task_done,
     start_task,
 )
+from ..v1_config import V1_TIMEZONE_NAME
 from .styles import DASHBOARD_CSS
 from .view_model import (
     build_dashboard_state,
     load_briefing_payload,
     load_pipeline_report,
     render_task_card,
+)
+
+
+_WEEKDAY_CHOICES = (
+    "—",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
 )
 
 
@@ -63,6 +78,7 @@ def main() -> None:
     sync_sources = context.get("sync", {}).get("sources", {})
     sync_receipt = load_sync_receipt(data_dir)
     learning_context = context.get("learning", {})
+    today = build_today(data_dir, now=now_local)
     judgment = build_judgment(
         tasks,
         done_ids=completed_task_ids(completions),
@@ -71,20 +87,9 @@ def main() -> None:
         completions=completions,
     )
     changes = list_inbox_changes(data_dir, limit=5, tasks=snapshot)
-    plan_decision = load_plan_decision(data_dir, now=now_local)
-    focus_id = judgment.anchor_task_id
-    if plan_decision and any(
-        task.id == plan_decision.get("task_id") and getattr(task, "status", "open") != "done"
-        for task in tasks
-    ):
-        focus_id = str(plan_decision["task_id"])
-    plan = build_tonight_plan(
-        tasks,
-        now=now_local,
-        completions=completions,
-        focus_id=focus_id,
-    )
     courses = build_course_states(tasks, completions=completions, now=now_local)
+    rec = today.recommendation
+    rec_task_id = _primary_task_id(tasks, data_dir, rec.obligation_id) if rec and rec.obligation_id else None
     state = build_dashboard_state(
         tasks,
         briefing_payload=briefing_payload,
@@ -94,18 +99,25 @@ def main() -> None:
         learning_context=learning_context,
         generated_at=now_local,
         last_updated=tasks_last_updated(),
-        anchor_task_id=judgment.anchor_task_id,
+        anchor_task_id=rec_task_id or judgment.anchor_task_id,
     )
 
     _render_sidebar(data_dir=data_dir, state=state, include_google=_google_authorized(data_dir))
 
-    tab_home, tab_tasks, tab_setup = st.tabs(["Tonight", "Tasks", "Setup"])
+    tab_today, tab_state, tab_setup = st.tabs(["Today", "State", "Setup"])
 
-    with tab_home:
-        _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses, plan_decision)
+    with tab_today:
+        _render_today(today, tasks, data_dir, state, changes, now_local)
 
-    with tab_tasks:
-        _render_tasks(state, data_dir=data_dir, tasks=tasks)
+    with tab_state:
+        _render_state(
+            state,
+            data_dir=data_dir,
+            tasks=tasks,
+            today=today,
+            courses=courses,
+            now_local=now_local,
+        )
 
     with tab_setup:
         _render_setup(data_dir, state)
@@ -163,63 +175,149 @@ def _render_sidebar(*, data_dir: Path, state, include_google: bool) -> None:
                 st.caption("同步未完成，打开 Setup 查看来源。")
 
 
-def _render_briefing(judgment, tasks, data_dir, state, changes, plan, courses, plan_decision) -> None:
-    left, right = st.columns([1.15, 1], gap="large")
-    with left:
-        if judgment is None or not judgment.available:
-            st.markdown(
-                '<div class="briefing"><p class="briefing-kicker">Nexus</p>'
-                "<p>还没有作业或考试截止。</p>"
-                "<p class=\"briefing-muted\">到 Setup 贴上课程日历，或用下面的 Add task 加上一条。</p></div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            blocks = ['<p class="briefing-kicker">Nexus</p>', f'<p class="headline">{_html(judgment.deadline)}</p>']
-            if plan is not None and plan.available and plan.text:
-                blocks.append(f"<p class=\"suggestion\">{_html(plan.text)}</p>")
-            elif judgment.suggestion:
-                blocks.append(f"<p class=\"suggestion\">建议：{_html(judgment.suggestion)}</p>")
-            if judgment.pace:
-                blocks.append(f"<p>{_html(judgment.pace)}</p>")
-            if judgment.forecast:
-                blocks.append(f"<p>{_html(judgment.forecast)}</p>")
-            info = [item for item in changes if not item.needs_decision]
-            if info:
-                items = "".join(f"<li>{_html(item.text)}</li>" for item in info)
-                blocks.append(f"<p>世界变化</p><ul>{items}</ul>")
-            st.markdown(f'<div class="briefing">{"".join(blocks)}</div>', unsafe_allow_html=True)
-        _render_plan_actions(plan, tasks, data_dir, plan_decision)
-        _render_change_decisions(changes, data_dir)
-        _render_add_task(data_dir, form_key="tonight_add_task")
-        _render_obligation_blocks(judgment, tasks, data_dir)
-    with right:
-        _render_course_states(courses)
-        _render_schedule(state)
-
-
-def _render_plan_actions(plan, tasks, data_dir: Path, plan_decision) -> None:
-    if plan is None or not plan.available or not plan.task_id:
-        return
-    accepted = (
-        isinstance(plan_decision, dict)
-        and plan_decision.get("status") == "accepted"
-        and plan_decision.get("task_id") == plan.task_id
+def _render_today(today, tasks, data_dir, state, changes, now_local: datetime) -> None:
+    rec = today.recommendation
+    freshness = today.freshness or (
+        state.generated_at.isoformat() if getattr(state, "generated_at", None) else ""
     )
-    if accepted:
-        st.caption("已接受今晚计划。计时请点下面同一条的开始做。")
-    elif plan.reason:
-        st.caption(plan.reason)
-    alt_id = next_plan_focus_id(tasks, plan.task_id)
-    cols = st.columns(2)
+    empty = rec is None or not rec.obligation_id
+    if empty:
+        missing = (None if rec is None else rec.missing_input) or today.missing_input
+        empty_body = ["<p>还没有作业或考试截止。</p>"]
+        if missing:
+            empty_body.append(f"<p>{_html(missing)}</p>")
+        empty_body.append(
+            '<p class="briefing-muted">到 Setup 贴上课程日历，或到 State 用 Add task 加上一条。</p>'
+        )
+        st.markdown(
+            f'<div class="briefing"><p class="briefing-kicker">Today · {_html(freshness)}</p>'
+            f'{"".join(empty_body)}</div>',
+            unsafe_allow_html=True,
+        )
+        if missing:
+            st.caption("到 State 或 Setup 补全课程、截止、剩余时间和可学习时段。")
+        _render_change_decisions(changes, data_dir)
+        return
+
+    assessment = next(
+        (item for item in today.assessments if item.obligation_id == rec.obligation_id),
+        None,
+    )
+    due = None if assessment is None else getattr(assessment, "due_at", None)
+    deadline = _deadline_copy(due, now_local)
+    reason_text = " · ".join(str(item) for item in (rec.reasons or ()) if item)
+    hours_text = _hours_copy(rec.remaining_hours, rec.available_hours)
+    blocks = [
+        f'<p class="briefing-kicker">Today · {_html(freshness)}</p>',
+        f'<p class="headline">{_html(rec.title or "Next action")}</p>',
+    ]
+    if deadline:
+        blocks.append(f"<p>{_html(deadline)}</p>")
+    if rec.first_step:
+        blocks.append(f'<p class="suggestion">{_html(rec.first_step)}</p>')
+    meta_parts = [rec.risk_band, reason_text, hours_text]
+    meta = " · ".join(part for part in meta_parts if part)
+    if meta:
+        blocks.append(f"<p>{_html(meta)}</p>")
+    if rec.explanation and rec.explanation not in (rec.first_step, hours_text, reason_text):
+        blocks.append(f'<p class="briefing-muted">{_html(rec.explanation)}</p>')
+    st.markdown(
+        f'<div class="briefing week-block recommended">{"".join(blocks)}</div>',
+        unsafe_allow_html=True,
+    )
+    if rec.missing_input or today.missing_input:
+        st.markdown(rec.missing_input or today.missing_input)
+        st.caption("到 State 或 Setup 补全课程、截止、剩余时间和可学习时段。")
+    _render_today_actions(today, rec, tasks, data_dir)
+    _render_change_decisions(changes, data_dir)
+
+
+def _hours_copy(remaining: float | None, available: float | None) -> str:
+    parts: list[str] = []
+    if remaining is not None:
+        parts.append(f"{remaining:g}h remaining")
+    if available is not None:
+        parts.append(f"{available:g}h available")
+    return " · ".join(parts)
+
+
+def _deadline_copy(due, now_local: datetime) -> str:
+    if due is None:
+        return ""
+    local = localize_dt(due, now_local) or due
+    if local.tzinfo is None and now_local.tzinfo is not None:
+        local = local.replace(tzinfo=now_local.tzinfo)
+    if local < now_local:
+        return "已截止"
+    days = (local.date() - now_local.date()).days
+    if days == 0:
+        return "今天截止"
+    if days == 1:
+        return "明天截止"
+    weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    return f"{weekdays[local.weekday()]}截止"
+
+
+def _primary_task_id(tasks, data_dir: Path, obligation_id: str | None) -> str | None:
+    if not obligation_id:
+        return None
+    for task in tasks:
+        if obligation_id_for_task(task) == obligation_id:
+            return task.id
+    row = AcademicStateService(data_dir).store.get_obligation(obligation_id)
+    if row is None:
+        return None
+    return row.get("primary_task_id")
+
+
+def _obligation_accepted(data_dir: Path, obligation_id: str) -> bool:
+    events = ActionService(data_dir).store.list_action_events(
+        obligation_id=obligation_id, limit=50
+    )
+    return any(item.get("event_type") == "accepted" for item in events)
+
+
+def _commit_action(data_dir: Path) -> None:
+    persist_next_action(data_dir=data_dir)
+    st.rerun()
+
+
+def _render_today_actions(today, rec, tasks, data_dir: Path) -> None:
+    oid = rec.obligation_id
+    running = today.running if isinstance(today.running, dict) else None
+    running_oid = None if running is None else str(running.get("obligation_id") or "")
+    this_running = running_oid == oid
+    accepted = _obligation_accepted(data_dir, oid)
+    if this_running:
+        elapsed = running.get("elapsed_minutes")
+        minutes = 0 if elapsed is None else int(elapsed)
+        st.caption(f"计时中 · {minutes} 分钟")
+    elif accepted:
+        st.caption("已接受。计时请点开始做。")
+    cols = st.columns(3)
     with cols[0]:
-        if st.button("接受今晚计划", disabled=accepted, key="accept_tonight_plan"):
-            save_plan_decision(data_dir, plan, status="accepted")
-            st.rerun()
+        if st.button("接受", disabled=accepted, key=f"accept_{oid}"):
+            ActionService(data_dir).accept(
+                oid,
+                block_minutes=rec.block_minutes,
+                recommendation_key=rec.recommendation_key,
+            )
+            _commit_action(data_dir)
     with cols[1]:
-        if st.button("换一条", disabled=alt_id is None, key="adjust_tonight_plan"):
-            adjusted = build_tonight_plan(tasks, focus_id=alt_id)
-            save_plan_decision(data_dir, adjusted, status="adjusted")
-            st.rerun()
+        start_disabled = this_running or rec.action == "continue"
+        if st.button("开始做", disabled=start_disabled, key=f"start_{oid}"):
+            try:
+                ActionService(data_dir).start(
+                    oid, recommendation_key=rec.recommendation_key
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                _commit_action(data_dir)
+    with cols[2]:
+        if st.button("完成", key=f"done_{oid}", type="primary"):
+            ActionService(data_dir).complete(oid)
+            _commit_action(data_dir)
 
 
 def _render_change_decisions(changes, data_dir: Path) -> None:
@@ -245,13 +343,16 @@ def _open_obligations(tasks) -> list:
     ]
 
 
-def _render_obligation_blocks(judgment, tasks, data_dir) -> None:
-    now_local = datetime.now().astimezone()
+def _render_obligation_blocks(today, tasks, data_dir, now_local: datetime) -> None:
     open_tasks = _open_obligations(tasks)
     if not open_tasks:
         st.caption("没有未完成的义务。用上面的 Add task 加上作业或考试。")
         return
 
+    rec = today.recommendation if today is not None else None
+    recommended_oid = None if rec is None else rec.obligation_id
+    running = today.running if today is not None and isinstance(today.running, dict) else None
+    running_oid = None if running is None else str(running.get("obligation_id") or "")
     horizon = now_local + timedelta(days=7)
     this_week: list = []
     later: list = []
@@ -266,7 +367,8 @@ def _render_obligation_blocks(judgment, tasks, data_dir) -> None:
             later.append(task)
 
     def sort_key(task):
-        recommended = 0 if judgment is not None and task.id == judgment.anchor_task_id else 1
+        oid = obligation_id_for_task(task)
+        recommended = 0 if recommended_oid and oid == recommended_oid else 1
         due = localize_dt(task.due_at, now_local)
         stamp = due.timestamp() if due is not None else float("inf")
         return (recommended, stamp)
@@ -274,42 +376,48 @@ def _render_obligation_blocks(judgment, tasks, data_dir) -> None:
     this_week.sort(key=sort_key)
     later.sort(key=sort_key)
     completions = load_completions(data_dir)
-    running = any(
-        isinstance(completions.get(task.id), dict)
-        and completions[task.id].get("started_at")
-        and not completions[task.id].get("done_at")
-        for task in open_tasks
-    )
-    if running:
+    if running_oid:
         st.caption("计时绑在你点开始做的那一条上。做完点同一条的完成。")
     else:
-        st.caption("和 Tasks 是同一份未完成义务。每条都可以开始做。")
+        st.caption("和 Today 是同一份未完成义务。每条都可以开始做。")
 
     if this_week:
         st.markdown('<div class="section-title">这周你还有：</div>', unsafe_allow_html=True)
         for task in this_week:
-            _render_task_block(task, judgment, completions, data_dir, now_local)
+            _render_task_block(
+                task, recommended_oid, running_oid, rec, completions, data_dir, now_local
+            )
     if later:
         st.markdown('<div class="section-title">更晚：</div>', unsafe_allow_html=True)
         for task in later:
-            _render_task_block(task, judgment, completions, data_dir, now_local)
+            _render_task_block(
+                task, recommended_oid, running_oid, rec, completions, data_dir, now_local
+            )
     if undated:
         st.markdown('<div class="section-title">未定期：</div>', unsafe_allow_html=True)
         for task in undated:
-            _render_task_block(task, judgment, completions, data_dir, now_local)
+            _render_task_block(
+                task, recommended_oid, running_oid, rec, completions, data_dir, now_local
+            )
 
 
-def _render_task_block(task, judgment, completions, data_dir, now_local) -> None:
+def _render_task_block(
+    task, recommended_oid, running_oid, rec, completions, data_dir, now_local
+) -> None:
     entry = completions.get(task.id) if isinstance(completions.get(task.id), dict) else {}
-    started = bool(entry.get("started_at") and not entry.get("done_at"))
+    oid = obligation_id_for_task(task)
+    started = bool(entry.get("started_at") and not entry.get("done_at")) or (
+        bool(oid) and oid == running_oid
+    )
+    other_running = bool(running_oid and oid and oid != running_oid)
     elapsed = _elapsed_minutes(entry) if started else None
-    recommended = judgment is not None and task.id == judgment.anchor_task_id
+    recommended = bool(oid) and oid == recommended_oid
     hours, _basis = resolve_effort(task, completions)
     remaining = getattr(task, "remaining_hours", None)
     spent = getattr(task, "spent_hours", None)
     estimated = getattr(task, "estimated_hours", None)
     kind = "week-block recommended" if recommended else "week-block"
-    badge = "建议今晚" if recommended else ""
+    badge = "建议" if recommended else ""
     meta_parts = [_block_when(task, now_local)]
     course = display_course(task.course)
     if course:
@@ -337,21 +445,24 @@ def _render_task_block(task, judgment, completions, data_dir, now_local) -> None
         "</div>",
         unsafe_allow_html=True,
     )
+    oid = obligation_id_for_task(task) or task.id
     action_cols = st.columns(2)
     with action_cols[0]:
-        if st.button("开始做", key=f"start_{task.id}", disabled=started):
-            start_task(data_dir, task.id)
-            persist_next_action(data_dir=data_dir)
-            st.rerun()
+        if st.button(
+            "开始做",
+            key=f"start_state_{oid}",
+            disabled=started or other_running,
+        ):
+            if _start_obligation(data_dir, task, rec):
+                _commit_action(data_dir)
     with action_cols[1]:
         if st.button(
             "完成",
-            key=f"done_{task.id}",
+            key=f"done_state_{oid}",
             type="primary" if recommended or started else "secondary",
         ):
-            mark_task_done(data_dir, task.id)
-            persist_next_action(data_dir=data_dir)
-            st.rerun()
+            _complete_obligation(data_dir, task)
+            _commit_action(data_dir)
 
 
 def _block_when(task, now_local: datetime) -> str:
@@ -367,6 +478,28 @@ def _block_when(task, now_local: datetime) -> str:
         return "明天"
     weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     return weekdays[due.weekday()]
+
+
+def _start_obligation(data_dir: Path, task, rec) -> bool:
+    oid = obligation_id_for_task(task)
+    if oid:
+        key = None if rec is None else rec.recommendation_key
+        try:
+            ActionService(data_dir).start(oid, recommendation_key=key)
+        except ValueError as exc:
+            st.error(str(exc))
+            return False
+        return True
+    start_task(data_dir, task.id)
+    return True
+
+
+def _complete_obligation(data_dir: Path, task) -> None:
+    oid = obligation_id_for_task(task)
+    if oid:
+        ActionService(data_dir).complete(oid)
+        return
+    mark_task_done(data_dir, task.id)
 
 
 def _elapsed_minutes(entry: dict) -> int | None:
@@ -429,10 +562,9 @@ def _render_add_task(data_dir: Path, *, form_key: str) -> None:
     with st.expander("Add task", expanded=False):
         with st.form(form_key, clear_on_submit=True):
             title = st.text_input("Title", placeholder="Review chapter 4")
-            course_col, priority_col = st.columns(2)
-            course = course_col.text_input("Course", placeholder="CS202_OS")
-            priority_label = priority_col.selectbox(
-                "Priority", ["Normal", "Low", "High", "Urgent"], index=0
+            course = st.text_input("Course", placeholder="CS202_OS")
+            remaining = st.number_input(
+                "Remaining hours", min_value=0.0, value=0.0, step=0.5
             )
             has_deadline = st.checkbox("Set a deadline", value=True)
             due_date = None
@@ -443,37 +575,82 @@ def _render_add_task(data_dir: Path, *, form_key: str) -> None:
                 due_time = time_col.time_input("Due time", value=time(23, 59))
             tags = st.text_input("Tags", placeholder="reading, exam")
             notes = st.text_area("Notes", placeholder="Optional context")
+            st.caption("Optional study windows. Weekday 0 = Monday.")
+            windows = []
+            for index in (1, 2):
+                weekday_col, start_col, end_col = st.columns(3)
+                weekday_label = weekday_col.selectbox(
+                    f"Weekday {index}",
+                    options=list(_WEEKDAY_CHOICES),
+                    index=0,
+                )
+                start_default = time(14, 0) if index == 1 else time(16, 0)
+                start_at = start_col.time_input(f"Start {index}", value=start_default)
+                end_at = end_col.time_input(f"End {index}", value=time(18, 0))
+                weekday = (
+                    None
+                    if weekday_label == "—"
+                    else _WEEKDAY_CHOICES.index(weekday_label) - 1
+                )
+                windows.append((weekday, start_at, end_at))
             submitted = st.form_submit_button("Add task", type="primary")
 
         if submitted:
-            priority = {"Low": 0, "Normal": 1, "High": 2, "Urgent": 3}[priority_label]
             deadline = (
                 datetime.combine(due_date, due_time).astimezone()
                 if has_deadline and due_date is not None and due_time is not None
                 else None
             )
+            remaining_hours = float(remaining) if remaining else None
+            tag_list = [part.strip() for part in tags.split(",") if part.strip()]
             try:
+                service = AcademicStateService(data_dir)
+                service.add_manual_obligation(
+                    title=title,
+                    course=course or None,
+                    due_at=deadline,
+                    estimated_hours=remaining_hours,
+                    remaining_hours=remaining_hours,
+                    tags=tag_list,
+                )
                 add_manual_task(
                     data_dir,
                     title=title,
                     due_at=deadline,
                     course=course,
-                    priority=priority,
-                    tags=tags.split(","),
+                    priority=1,
+                    tags=tag_list,
                     notes=notes,
                 )
+                for weekday, start_at, end_at in windows:
+                    if weekday is None or start_at is None or end_at is None:
+                        continue
+                    if end_at <= start_at:
+                        continue
+                    service.add_availability_rule(
+                        weekday=int(weekday),
+                        starts_local=start_at.strftime("%H:%M"),
+                        ends_local=end_at.strftime("%H:%M"),
+                        timezone=V1_TIMEZONE_NAME,
+                    )
             except ValueError as exc:
                 st.error(str(exc))
             else:
                 persist_next_action(data_dir=data_dir)
-                st.success("已加入义务，Tonight 和 Tasks 会一起更新。")
+                st.success("已加入义务，Today 会更新。")
                 st.rerun()
 
 
-def _render_tasks(state, *, data_dir: Path, tasks) -> None:
-    st.caption("和 Tonight 同一份未完成义务。完成请在 Tonight 点。")
+def _render_state(state, *, data_dir: Path, tasks, today, courses, now_local: datetime) -> None:
+    st.caption("和 Today 同一份未完成义务。完成请在 Today 点。")
     _render_add_task(data_dir, form_key="manual_task")
+    _render_obligation_blocks(today, tasks, data_dir, now_local)
+    _render_course_states(courses)
+    _render_schedule(state)
+    _render_tasks_table(state)
 
+
+def _render_tasks_table(state) -> None:
     filter_cols = st.columns(4)
     course = filter_cols[0].selectbox("Course", ["All"] + state.available_courses, index=0)
     source = filter_cols[1].selectbox("Source", ["All"] + state.available_sources, index=0)
@@ -723,7 +900,7 @@ def _render_setup(data_dir: Path, state) -> None:
                 count = receipt.get("summary", {}).get("task_count", 0)
                 st.session_state["setup_notice"] = {
                     "kind": "success",
-                    "text": f"Source {action}. Synced {count} tasks. Open Home for tonight's next action.",
+                    "text": f"Source {action}. Synced {count} tasks. Open Today for the next action.",
                 }
             elif receipt.get("status") == "busy":
                 st.session_state["setup_notice"] = {

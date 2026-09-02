@@ -51,6 +51,25 @@ def test_demo_runtime_records_assignment_deadline_change(tmp_path: Path) -> None
     assert any("Assignment 4" in (item.get("text") or "") for item in recent_changes(data_dir, limit=20))
 
 
+def test_v1_loop_scenario_proves_deadline_and_completion(tmp_path: Path) -> None:
+    from nexus.demo import run_v1_loop_scenario
+
+    from nexus.v1_config import V1_NOW
+
+    payload = run_v1_loop_scenario(tmp_path / "v1", now=V1_NOW)
+    assert payload["ok"] is True
+    assert payload["scenario"] == "v1-loop"
+    assert payload["network"] is False
+    assert payload["due_changed"] == 1
+    assert payload["risk_band"] == "high"
+    assert "remaining_exceeds_available" in payload["reasons"]
+    assert payload["effort_sample_count"] == 1
+    assert payload["action_event_count"] >= 3
+    assert payload["next_obligation_id"] != payload["top_obligation_id"]
+    assert "url" not in json.dumps(payload)
+    assert "token" not in json.dumps(payload).lower()
+
+
 def test_demo_runtime_accepts_initialized_empty_directory(tmp_path: Path) -> None:
     from nexus.onboarding import initialize_runtime
 
