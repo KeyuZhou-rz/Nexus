@@ -38,7 +38,13 @@ def test_dashboard_today_renders_primary_cs_assignment(monkeypatch, tmp_path: Pa
     assert [tab.label for tab in app.tabs] == ["Today", "State", "Setup"]
     markdown = " ".join(item.value for item in app.markdown)
     assert CS_TITLE in markdown
+    assert "remaining_exceeds_available" not in markdown
+    assert "load_ratio_high" not in markdown
+    assert "刷新于" in markdown
+    assert "还要" in markdown or "能学" in markdown or "还算不出风险" in markdown
     labels = [button.label for button in app.button]
     assert "开始做" in labels
     assert "完成" in labels
+    assert "接受" in labels
     assert not any(item.label == "Priority" for item in app.selectbox)
+    assert not any("T" in item.value and "Today · 20" in item.value for item in app.markdown)

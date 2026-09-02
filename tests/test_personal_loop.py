@@ -122,11 +122,11 @@ def test_dashboard_week_blocks_each_have_start(monkeypatch, tmp_path: Path) -> N
 
     app = AppTest.from_file(APP_PATH).run(timeout=30)
     assert not app.exception
-    assert any("这周你还有" in item.value for item in app.markdown)
+    assert any(exp.label == "这周还有哪些" for exp in app.expander)
     starts = [button for button in app.button if button.label == "开始做"]
     dones = [button for button in app.button if button.label == "完成"]
-    assert len(starts) >= 2
-    assert len(starts) == len(dones)
+    assert len(starts) == 1
+    assert len(dones) == 1
 
 
 def test_tonight_and_tasks_share_open_obligations(monkeypatch, tmp_path: Path) -> None:
@@ -146,7 +146,7 @@ def test_tonight_and_tasks_share_open_obligations(monkeypatch, tmp_path: Path) -
     for title in titles:
         assert title in markdown
     starts = [button for button in app.button if button.label == "开始做"]
-    assert len(starts) >= len(titles)
+    assert len(starts) == 1
 
 
 def test_accept_today_does_not_start_timer(monkeypatch, tmp_path: Path) -> None:

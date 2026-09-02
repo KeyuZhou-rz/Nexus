@@ -322,6 +322,39 @@ div[data-testid="stAlert"] {
     border-radius: 16px;
 }
 
+#MainMenu, footer, [data-testid="stToolbar"] {
+    visibility: hidden;
+    height: 0;
+}
+
+.risk-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 1.1em;
+}
+.risk-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--border);
+}
+.risk-chip.overdue { background: var(--danger-soft); color: var(--danger); }
+.risk-chip.high { background: var(--danger-soft); color: var(--danger); }
+.risk-chip.medium { background: var(--warn-soft); color: var(--warn); }
+.risk-chip.low { background: var(--accent-soft); color: var(--accent); }
+.risk-chip.unscored { background: var(--info-soft); color: var(--info); }
+
+.today-actions-note {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 0 0 12px;
+}
+
 div[data-testid="stDataFrame"] {
     border: 1px solid var(--border);
     border-radius: 18px;
