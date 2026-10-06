@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .aggregators.brightspace import BrightspaceAggregator, FeedConfig
 from .aggregators.canvas import CanvasLMSConnector
@@ -106,6 +106,7 @@ def run_aggregation(
     include_canvas: bool = True,
     data_dir: Path | None = None,
     config: AppConfig | None = None,
+    email_enricher: Callable[[Task, str, str], Task] | None = None,
 ) -> AggregationResult:
     """
     执行完整的数据聚合流程。
@@ -185,7 +186,7 @@ def run_aggregation(
         preserve_snapshot("Google", ("gcal", "gmail", "google"), "skipped")
     else:
         try:
-            tasks.extend(GoogleAggregator(config=config).fetch_tasks())
+            tasks.extend(GoogleAggregator(config=config, email_enricher=email_enricher).fetch_tasks())
             source_status["google"] = "succeeded"
             resolved_failures.add(failure_key({"operation": "aggregation", "source": "google"}))
         except Exception as exc:

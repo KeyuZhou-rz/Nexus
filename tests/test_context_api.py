@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from nexus.core.context_api import build_context
+from nexus.learning_focus import knowledge_learning
 from nexus.core.io_utils import atomic_write_json
 from nexus.knowledge.memory_api import MemoryAPI
 from nexus.knowledge.sqlite_store import SQLiteStore
@@ -50,7 +51,7 @@ def test_build_context_is_stable_and_read_only_for_empty_runtime(tmp_path: Path)
 
 
 def test_context_can_be_serialized_for_an_assistant(tmp_path: Path) -> None:
-    payload = build_context(data_dir=tmp_path)
+    payload = build_context(data_dir=tmp_path, learning=knowledge_learning)
     encoded = json.dumps(payload, ensure_ascii=False)
     assert "knowledge_store_not_initialized" in encoded
     assert payload["next_action"]["available"] is False
@@ -70,7 +71,7 @@ def test_context_exposes_bounded_learning_evidence_without_question_text(tmp_pat
         },
     )
 
-    payload = build_context(data_dir=tmp_path, course_id="OS")
+    payload = build_context(data_dir=tmp_path, course_id="OS", learning=knowledge_learning)
     evidence = payload["learning"]["evidence"]
 
     assert len(evidence) == 1
@@ -103,7 +104,7 @@ def test_context_combines_course_task_with_learning_focus(tmp_path: Path) -> Non
         context={"evidence_type": "assessment", "source": "quiz"},
     )
 
-    payload = build_context(data_dir=tmp_path, course_id="OS")
+    payload = build_context(data_dir=tmp_path, course_id="OS", learning=knowledge_learning)
     focus = payload["learning"]["focus"]
 
     assert focus[0]["name"] == "Deadlock"

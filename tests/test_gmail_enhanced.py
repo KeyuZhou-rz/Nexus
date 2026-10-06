@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from nexus.core.aggregators.google import GoogleAggregator
+from nexus.intelligence import gmail_extract
 from nexus.core.models import Task
 
 
@@ -133,69 +134,62 @@ class TestStripHtml:
 
 class TestStructuredExtraction:
     def test_extract_returns_empty_when_body_short(self):
-        agg = GoogleAggregator.__new__(GoogleAggregator)
-        result = agg._extract_structured_fields("Subject", "short")
+        result = gmail_extract.extract_structured_fields("Subject", "short")
         assert result == {}
 
     def test_extract_returns_empty_when_body_empty(self):
-        agg = GoogleAggregator.__new__(GoogleAggregator)
-        result = agg._extract_structured_fields("Subject", "")
+        result = gmail_extract.extract_structured_fields("Subject", "")
         assert result == {}
 
     def test_enrich_task_no_op_with_empty_extraction(self, monkeypatch):
-        agg = GoogleAggregator.__new__(GoogleAggregator)
-        monkeypatch.setattr(agg, "_extract_structured_fields", lambda s, b: {})
+        monkeypatch.setattr(gmail_extract, "extract_structured_fields", lambda s, b: {})
         task = Task(
             id="gmail:test",
             title="Test email",
             source="gmail",
             due_at=None,
         )
-        result = agg._enrich_task_from_llm(task, "Subject", "some body text")
+        result = gmail_extract.enrich_email_task(task, "Subject", "some body text")
         # Task should be unchanged
         assert result.course is None
         assert result.priority == 0
         assert result.due_at is None
 
     def test_enrich_task_applies_course_hint(self, monkeypatch):
-        agg = GoogleAggregator.__new__(GoogleAggregator)
         monkeypatch.setattr(
-            agg, "_extract_structured_fields",
+            gmail_extract, "extract_structured_fields",
             lambda s, b: {"course_hint": "CS101", "priority": "high"},
         )
         task = Task(id="gmail:test", title="Test email", source="gmail", due_at=None)
-        result = agg._enrich_task_from_llm(task, "Subject", "body")
+        result = gmail_extract.enrich_email_task(task, "Subject", "body")
         assert result.course == "CS101"
         assert result.priority == 3  # high
 
     def test_enrich_task_applies_exam_date(self, monkeypatch):
-        agg = GoogleAggregator.__new__(GoogleAggregator)
         monkeypatch.setattr(
-            agg, "_extract_structured_fields",
+            gmail_extract, "extract_structured_fields",
             lambda s, b: {"exam_date": "2026-07-15T09:00:00"},
         )
         task = Task(id="gmail:test", title="Exam announcement", source="gmail", due_at=None)
-        result = agg._enrich_task_from_llm(task, "Subject", "body")
+        result = gmail_extract.enrich_email_task(task, "Subject", "body")
         assert result.due_at == datetime(2026, 7, 15, 9, 0, 0)
 
     def test_enrich_task_adds_deadline_tag(self, monkeypatch):
-        agg = GoogleAggregator.__new__(GoogleAggregator)
         monkeypatch.setattr(
-            agg, "_extract_structured_fields",
+            gmail_extract, "extract_structured_fields",
             lambda s, b: {"action_items": ["Submit homework by Friday deadline"]},
         )
         task = Task(id="gmail:test", title="HW", source="gmail", due_at=None, tags=[])
-        result = agg._enrich_task_from_llm(task, "Subject", "body")
+        result = gmail_extract.enrich_email_task(task, "Subject", "body")
         assert "deadline" in result.tags
 
     def test_enrich_task_does_not_overwrite_existing_course(self, monkeypatch):
-        agg = GoogleAggregator.__new__(GoogleAggregator)
         monkeypatch.setattr(
-            agg, "_extract_structured_fields",
+            gmail_extract, "extract_structured_fields",
             lambda s, b: {"course_hint": "CS999"},
         )
         task = Task(id="gmail:test", title="HW", source="gmail", due_at=None, course="EE202")
-        result = agg._enrich_task_from_llm(task, "Subject", "body")
+        result = gmail_extract.enrich_email_task(task, "Subject", "body")
         # Should keep original course
         assert result.course == "EE202"
 

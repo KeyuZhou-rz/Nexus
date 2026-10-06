@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..core.config import default_config
 from ..core.context_api import build_context
+from ..learning_focus import knowledge_learning
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -16,6 +17,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="Emit JSON (the default output format)")
     args = parser.parse_args(argv)
     data_dir = args.data_dir or default_config().data_dir
-    payload = build_context(data_dir=data_dir, course_id=args.course_id)
+    payload = build_context(
+        data_dir=data_dir, course_id=args.course_id, learning=knowledge_learning
+    )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0

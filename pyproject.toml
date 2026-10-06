@@ -14,10 +14,12 @@ dependencies = [
   "requests>=2.31",
   "feedparser>=6.0",
   "icalendar>=5.0",
-  "chromadb>=1.0",
 ]
 
 [project.optional-dependencies]
+knowledge = [
+  "chromadb>=1.0",
+]
 google = [
   "google-api-python-client>=2.100",
   "google-auth-httplib2>=0.1",
@@ -35,7 +37,7 @@ llm = [
 ]
 # Convenience: install everything
 all = [
-  "nexus-dashboard[google,archive,pdf,llm]",
+  "nexus-dashboard[knowledge,google,archive,pdf,llm]",
 ]
 
 [project.scripts]
@@ -60,7 +62,7 @@ nexus-google-auth = "nexus.google_auth:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"nexus.knowledge" = ["schema.sql"]
+"nexus.core" = ["schema.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

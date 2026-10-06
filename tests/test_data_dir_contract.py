@@ -144,7 +144,7 @@ def test_pipeline_passes_effective_data_dir_to_archive_subprocess(monkeypatch, t
 
     monkeypatch.setattr("nexus.pipeline.run_archive_sync_subprocess", fake_archive_sync)
     monkeypatch.setattr(
-        "nexus.pipeline.run_aggregation",
+        "nexus.core.collect.run_aggregation",
         lambda **kwargs: AggregationResult(tasks=[], errors=[]),
     )
     monkeypatch.setattr("nexus.pipeline.load_tasks", lambda path: [])

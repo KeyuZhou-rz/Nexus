@@ -8,7 +8,7 @@ from typing import Any
 
 from .academic_state import _as_float, _parse_due, _parse_source_ids
 from .academic_state_service import AcademicStateService, _resolve_now, _state_payload
-from ..knowledge.sqlite_store import connect
+from .db import connect
 from .storage import load_tasks, save_tasks
 from .task_service import load_completions, save_completions
 from .utils import stable_id

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .core.models import Task
@@ -123,3 +124,52 @@ def _timestamp(value: datetime | None) -> float:
 
 def _number(value: Any, fallback: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) else fallback
+
+
+def knowledge_learning(
+    data_dir: Path, course_id: str | None, tasks: list[Task]
+) -> dict[str, Any]:
+    """``build_context`` learning provider backed by the knowledge store."""
+    learning = _learning_context(Path(data_dir) / "nexus.db", course_id)
+    if learning.get("available"):
+        learning["focus"] = build_learning_focus(tasks, learning)
+    return learning
+
+
+def _learning_context(db_path: Path, course_id: str | None) -> dict[str, Any]:
+    if not db_path.is_file():
+        return {"available": False, "reason": "knowledge_store_not_initialized"}
+
+    try:
+        from .knowledge.memory_api import MemoryAPI
+        from .knowledge.progress import ProgressService
+        from .knowledge.sqlite_store import SQLiteStore
+
+        store = SQLiteStore(db_path)
+        progress = ProgressService(store).get_progress(course_id)
+        memory = MemoryAPI(store)
+        profile = memory.get_profile()
+        evidence = memory.get_evidence_summary(course_id, concept_limit=10)
+    except Exception as exc:
+        return {
+            "available": False,
+            "reason": "knowledge_store_unavailable",
+            "error_type": type(exc).__name__,
+        }
+
+    return {
+        "available": True,
+        "course_id": progress.course_id,
+        "counts": {
+            "total_concepts": progress.total_concepts,
+            "mastered": progress.mastered,
+            "stable": progress.stable,
+            "decaying": progress.decaying,
+            "critical": progress.critical,
+        },
+        "review_queue": progress.review_queue[:20],
+        "recent_trusted_events": progress.recent_events,
+        "weak_points": (profile.get("weak_points") or [])[:10],
+        "learning_style": profile.get("learning_style") or "default",
+        "evidence": evidence,
+    }

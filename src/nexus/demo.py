@@ -11,6 +11,7 @@ from .core.context_api import build_context, persist_next_action
 from .core.io_utils import atomic_write_json, atomic_write_text
 from .knowledge.memory_api import MemoryAPI
 from .knowledge.sqlite_store import SQLiteStore
+from .learning_focus import knowledge_learning
 from .core.models import FeedSource, Task
 from .core.onboarding import initialize_runtime, upsert_feed
 from .core.storage import save_tasks
@@ -282,7 +283,9 @@ def create_demo_runtime(
         },
     )
 
-    context = build_context(data_dir=root, course_id="CS202_OS", now=current)
+    context = build_context(
+        data_dir=root, course_id="CS202_OS", now=current, learning=knowledge_learning
+    )
     persist_next_action(data_dir=root, now=current)
     from .core.academic_state_service import AcademicStateService
 

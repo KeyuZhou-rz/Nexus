@@ -6,12 +6,12 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .config import default_config
 from .workload import effort_key
 from .io_utils import atomic_write_json
-from ..learning_focus import build_learning_focus
+from .models import Task
 from .runtime_status import build_runtime_status
 from .storage import load_tasks, tasks_last_updated
 from .sync_control import build_sync_status
@@ -20,6 +20,9 @@ from .academic_state_service import AcademicStateService
 from .action_service import ActionService
 from .today import today_from_state
 from .task_service import apply_completions, load_completions
+
+
+LearningProvider = Callable[[Path, str | None, list[Task]], dict[str, Any]]
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -47,55 +50,18 @@ def _task_sort_key(task: Any) -> tuple[int, str]:
     return (int(due.timestamp()), task.id)
 
 
-def _learning_context(db_path: Path, course_id: str | None) -> dict[str, Any]:
-    if not db_path.is_file():
-        return {"available": False, "reason": "knowledge_store_not_initialized"}
-
-    try:
-        from ..knowledge.memory_api import MemoryAPI
-        from ..knowledge.progress import ProgressService
-        from ..knowledge.sqlite_store import SQLiteStore
-
-        store = SQLiteStore(db_path)
-        progress = ProgressService(store).get_progress(course_id)
-        memory = MemoryAPI(store)
-        profile = memory.get_profile()
-        evidence = memory.get_evidence_summary(course_id, concept_limit=10)
-    except Exception as exc:
-        return {
-            "available": False,
-            "reason": "knowledge_store_unavailable",
-            "error_type": type(exc).__name__,
-        }
-
-    return {
-        "available": True,
-        "course_id": progress.course_id,
-        "counts": {
-            "total_concepts": progress.total_concepts,
-            "mastered": progress.mastered,
-            "stable": progress.stable,
-            "decaying": progress.decaying,
-            "critical": progress.critical,
-        },
-        "review_queue": progress.review_queue[:20],
-        "recent_trusted_events": progress.recent_events,
-        "weak_points": (profile.get("weak_points") or [])[:10],
-        "learning_style": profile.get("learning_style") or "default",
-        "evidence": evidence,
-    }
-
-
 def build_context(
     *,
     data_dir: Path | None = None,
     course_id: str | None = None,
     now: datetime | None = None,
+    learning: LearningProvider | None = None,
 ) -> dict[str, Any]:
     """Build the canonical context document consumed by assistants.
 
     The function is intentionally read-only at the artifact level. It does
     not run aggregation, ingest documents, call an LLM, or mutate tasks.
+    ``learning`` fills the optional ``learning`` block from an extension.
     """
     config = default_config()
     root = Path(data_dir or config.data_dir).expanduser()
@@ -152,9 +118,11 @@ def build_context(
     last_task_update = tasks_last_updated(tasks_path)
     pipeline_generated = pipeline.get("generated_at")
     source_status = build_sync_status(root, config=config, now=generated_at)
-    learning = _learning_context(root / "nexus.db", course_id)
-    if learning.get("available"):
-        learning["focus"] = build_learning_focus(tasks, learning)
+    learning_block = (
+        learning(root, course_id, tasks)
+        if learning is not None
+        else {"available": False, "reason": "not_configured"}
+    )
 
     today = today_from_state(state, now=generated_at, running=running)
     next_action = next_action_payload(today, state)
@@ -203,7 +171,7 @@ def build_context(
                 else []
             ),
         },
-        "learning": learning,
+        "learning": learning_block,
     }
 
 

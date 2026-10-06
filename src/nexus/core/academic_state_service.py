@@ -19,7 +19,7 @@ from .academic_state import (
     obligation_id_for_task,
 )
 from .workload import effort_key
-from ..knowledge.sqlite_store import SQLiteStore, connect
+from .db import AcademicStore, connect
 from .models import Task
 from .storage import load_tasks, save_tasks
 from .task_service import load_completions
@@ -93,10 +93,10 @@ def _state_payload(
 class AcademicStateService:
     def __init__(self, data_dir: Path) -> None:
         self._data_dir = Path(data_dir).expanduser()
-        self._store = SQLiteStore(self._data_dir / "nexus.db")
+        self._store = AcademicStore(self._data_dir / "nexus.db")
 
     @property
-    def store(self) -> SQLiteStore:
+    def store(self) -> AcademicStore:
         return self._store
 
     def ingest_snapshot(

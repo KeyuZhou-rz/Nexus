@@ -44,55 +44,39 @@ def test_run_sync_offline_persists_all_artifacts_in_requested_data_dir(
         "nexus.core.aggregation.CanvasLMSConnector.to_tasks",
         unexpected_external_call,
     )
-    monkeypatch.setattr(
-        "nexus.pipeline.run_archive_sync_subprocess",
-        unexpected_external_call,
-    )
-    monkeypatch.setattr(
-        "nexus.intelligence.briefing.LLMClient.chat",
-        unexpected_external_call,
-    )
 
     receipt = run_sync(
         data_dir=data_dir,
         trigger="integration-test",
-        include_archive=False,
         include_google=False,
     )
 
     artifact_names = (
         "tasks.json",
-        "briefing.json",
         "pipeline_report.json",
         "sync_receipt.json",
     )
     artifact_paths = [data_dir / name for name in artifact_names]
-    assert [path.is_file() for path in artifact_paths] == [True, True, True, True]
+    assert [path.is_file() for path in artifact_paths] == [True, True, True]
+    assert not (data_dir / "briefing.json").exists()
     assert stat.S_IMODE(data_dir.stat().st_mode) == 0o700
     assert {path.resolve().parent for path in artifact_paths} == {data_dir.resolve()}
     assert not ambient_data_dir.exists()
     assert not (data_dir / ".sync.lock").exists()
 
     tasks = json.loads((data_dir / "tasks.json").read_text(encoding="utf-8"))
-    briefing = json.loads((data_dir / "briefing.json").read_text(encoding="utf-8"))
     report = json.loads((data_dir / "pipeline_report.json").read_text(encoding="utf-8"))
     saved_receipt = json.loads(
         (data_dir / "sync_receipt.json").read_text(encoding="utf-8")
     )
 
     assert tasks == []
-    assert briefing["schema_version"] == "1.0"
     assert report["ok"] is True
-    assert [step["status"] for step in report["steps"]] == [
-        "skipped",
-        "succeeded",
-        "succeeded",
+    assert [(step["name"], step["status"]) for step in report["steps"]] == [
+        ("aggregation", "succeeded"),
     ]
     assert Path(report["report_path"]).resolve() == (
         data_dir / "pipeline_report.json"
-    ).resolve()
-    assert Path(report["steps"][2]["details"]["output"]).resolve() == (
-        data_dir / "briefing.json"
     ).resolve()
     assert saved_receipt == receipt
     assert receipt["status"] == "succeeded"

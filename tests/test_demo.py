@@ -8,6 +8,7 @@ import pytest
 
 from nexus.core.context_api import build_context
 from nexus.demo import DEMO_MARKER, create_demo_runtime
+from nexus.learning_focus import knowledge_learning
 from nexus.core.storage import load_tasks
 
 
@@ -16,7 +17,9 @@ def test_demo_runtime_builds_complete_synthetic_context(tmp_path: Path) -> None:
     now = datetime(2026, 8, 6, 8, 0, tzinfo=timezone.utc)
 
     result = create_demo_runtime(data_dir, now=now)
-    context = build_context(data_dir=data_dir, course_id="CS202_OS", now=now)
+    context = build_context(
+        data_dir=data_dir, course_id="CS202_OS", now=now, learning=knowledge_learning
+    )
 
     assert result["ok"] is True
     assert result["task_count"] == 4

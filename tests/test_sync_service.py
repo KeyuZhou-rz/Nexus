@@ -72,7 +72,7 @@ def _context() -> dict:
 
 def test_run_sync_writes_privacy_bounded_receipt(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nexus.core.sync_service.run_mvp_pipeline",
+        "nexus.core.sync_service.collect_sources",
         lambda **_: {"ok": True, "report_path": str(tmp_path / "pipeline_report.json")},
     )
     monkeypatch.setattr("nexus.core.sync_service.build_context", lambda **_: _context())
@@ -98,7 +98,7 @@ def test_run_sync_writes_privacy_bounded_receipt(tmp_path: Path, monkeypatch) ->
 
 def test_sync_receipt_omits_provider_error_text(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nexus.core.sync_service.run_mvp_pipeline",
+        "nexus.core.sync_service.collect_sources",
         lambda **_: {"ok": False, "report_path": str(tmp_path / "pipeline_report.json")},
     )
     monkeypatch.setattr(
@@ -123,7 +123,7 @@ def test_run_sync_returns_busy_without_overwriting_existing_receipt(tmp_path: Pa
     (tmp_path / "sync_receipt.json").write_text('{"status":"succeeded"}', encoding="utf-8")
     with _sync_lock(tmp_path / ".sync.lock", run_id="other", trigger="scheduler"):
         monkeypatch.setattr(
-            "nexus.core.sync_service.run_mvp_pipeline",
+            "nexus.core.sync_service.collect_sources",
             lambda **_: (_ for _ in ()).throw(AssertionError("must not run")),
         )
         receipt = run_sync(data_dir=tmp_path, trigger="dashboard")
@@ -139,7 +139,7 @@ def test_run_sync_returns_busy_without_overwriting_existing_receipt(tmp_path: Pa
 
 def test_run_sync_records_failure_without_leaking_exception_details(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nexus.core.sync_service.run_mvp_pipeline",
+        "nexus.core.sync_service.collect_sources",
         lambda **_: (_ for _ in ()).throw(RuntimeError("token=secret")),
     )
 
@@ -157,7 +157,7 @@ def test_run_sync_reports_unsupported_platform_without_marker_fallback(
     monkeypatch.setattr(sync_service, "fcntl", None)
     monkeypatch.setattr(
         sync_service,
-        "run_mvp_pipeline",
+        "collect_sources",
         lambda **_: (_ for _ in ()).throw(AssertionError("pipeline must not run")),
     )
 
@@ -204,7 +204,7 @@ def test_run_sync_reports_filesystem_lock_unavailable(
     )
     monkeypatch.setattr(
         sync_service,
-        "run_mvp_pipeline",
+        "collect_sources",
         lambda **_: (_ for _ in ()).throw(AssertionError("pipeline must not run")),
     )
 

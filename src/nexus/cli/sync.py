@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 from pathlib import Path
 
@@ -31,13 +32,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    collect = None
+    if args.include_archive:
+        from ..pipeline import run_mvp_pipeline
+
+        collect = functools.partial(
+            run_mvp_pipeline,
+            run_archive_sync=True,
+            archive_timeout=args.archive_timeout,
+            use_llm=False,
+        )
     try:
         receipt = run_sync(
             data_dir=args.data_dir,
             trigger="cli",
-            include_archive=args.include_archive,
             include_google=bool(args.google) and not args.no_google,
-            archive_timeout=args.archive_timeout,
+            collect=collect,
         )
     except Exception as exc:
         receipt = {

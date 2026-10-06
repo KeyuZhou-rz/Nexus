@@ -65,13 +65,15 @@ def test_sync_cli_forwards_explicit_execution_policy(tmp_path: Path, monkeypatch
         "17",
         "--no-google",
     ]) == 0
-    assert calls == [{
-        "data_dir": tmp_path,
-        "trigger": "cli",
-        "include_archive": True,
-        "include_google": False,
+    [call] = calls
+    collect = call.pop("collect")
+    assert call == {"data_dir": tmp_path, "trigger": "cli", "include_google": False}
+    assert collect.func.__name__ == "run_mvp_pipeline"
+    assert collect.keywords == {
+        "run_archive_sync": True,
         "archive_timeout": 17,
-    }]
+        "use_llm": False,
+    }
     assert json.loads(capsys.readouterr().out)["status"] == "succeeded"
 
 

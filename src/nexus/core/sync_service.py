@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 import socket
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 from uuid import uuid4
 
 try:  # ``fcntl`` is not available on Windows and some constrained runtimes.
@@ -16,10 +16,10 @@ try:  # ``fcntl`` is not available on Windows and some constrained runtimes.
 except ImportError:  # pragma: no cover - exercised by monkeypatch on POSIX CI
     fcntl = None  # type: ignore[assignment]
 
+from .collect import collect_sources
 from .config import default_config, ensure_private_runtime_dir
 from .context_api import build_context
 from .io_utils import atomic_write_json
-from ..pipeline import run_mvp_pipeline
 
 
 SYNC_LOCK = ".sync.lock"
@@ -57,11 +57,14 @@ def run_sync(
     *,
     data_dir: Path | None = None,
     trigger: str = "cli",
-    include_archive: bool = False,
     include_google: bool = False,
-    archive_timeout: int = 420,
+    collect: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Run one non-interactive sync and persist a privacy-bounded receipt."""
+    """Run one non-interactive sync and persist a privacy-bounded receipt.
+
+    ``collect`` replaces the default source collection; it receives
+    ``data_dir`` and ``include_google`` and returns a step report.
+    """
     root = Path(data_dir or default_config().data_dir).expanduser()
     started = datetime.now(timezone.utc)
     run_id = uuid4().hex
@@ -69,12 +72,9 @@ def run_sync(
     try:
         ensure_private_runtime_dir(root)
         with _sync_lock(root / SYNC_LOCK, run_id=run_id, trigger=trigger):
-            report = run_mvp_pipeline(
+            report = (collect or collect_sources)(
                 data_dir=root,
-                run_archive_sync=include_archive,
-                archive_timeout=archive_timeout,
                 include_google=include_google,
-                use_llm=False,
             )
             context = build_context(data_dir=root)
             next_action = context.get("next_action")

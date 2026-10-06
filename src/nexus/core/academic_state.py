@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+from .db import AcademicStore
 from .workload import effort_key, is_actionable_deadline, resolve_effort
 from .models import Task
 from .utils import localize_dt, stable_id
@@ -122,9 +123,8 @@ def persist_obligations(
 
 def refresh_from_snapshot(data_dir: Path, snapshot: list[Task]) -> list[Task]:
     """Bootstrap legacy snapshots once; subsequent page reads are projections."""
-    from ..knowledge.sqlite_store import SQLiteStore
 
-    store = SQLiteStore(Path(data_dir) / "nexus.db")
+    store = AcademicStore(Path(data_dir) / "nexus.db")
     if not store.list_obligations():
         persist_obligations(data_dir, snapshot)
     if store.get_meta("legacy_completions_imported_at") is None:
@@ -136,14 +136,13 @@ def refresh_from_snapshot(data_dir: Path, snapshot: list[Task]) -> list[Task]:
 
 def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
     """Project persisted obligations back onto Task objects for Tonight."""
-    from ..knowledge.sqlite_store import SQLiteStore
 
     root = Path(data_dir).expanduser()
     db_path = root / "nexus.db"
     candidates = [task for task in snapshot if is_obligation_candidate(task)]
     if not db_path.is_file():
         return candidates
-    store = SQLiteStore(db_path)
+    store = AcademicStore(db_path)
     rows = store.list_obligations(statuses=["open", "in_progress", "overdue"])
     by_id = {task.id: task for task in snapshot}
     projected: list[Task] = []
@@ -193,12 +192,11 @@ def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
 
 
 def recent_changes(data_dir: Path, *, limit: int = 5) -> list[dict[str, Any]]:
-    from ..knowledge.sqlite_store import SQLiteStore
 
     db_path = Path(data_dir).expanduser() / "nexus.db"
     if not db_path.is_file():
         return []
-    store = SQLiteStore(db_path)
+    store = AcademicStore(db_path)
     titles = {row["id"]: row.get("title") for row in store.list_obligations()}
     lines: list[dict[str, Any]] = []
     for row in store.list_obligation_changes(limit=limit):
