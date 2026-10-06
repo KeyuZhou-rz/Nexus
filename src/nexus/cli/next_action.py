@@ -23,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not payload.get("available"):
-        print("还没有截止事项。把 Brightspace 日历贴到 Setup，或运行 nexus demo --data-dir <空目录>。")
+        print("还没有截止事项。在面板「课程来源」里接入课程日历，或运行 nexus demo --data-dir <空目录>。")
         return 0
 
     print(payload.get("deadline") or payload.get("suggestion"))

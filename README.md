@@ -38,6 +38,7 @@ runtime shared across hosts or OS users.
    ```
    Optional feature extras (match names in `pyproject.toml`):
    ```bash
+   pip install -e ".[knowledge]"  # Chroma retrieval for ingest/query
    pip install -e ".[google]"     # Gmail / Calendar integration
    pip install -e ".[archive]"    # Brightspace Playwright scraper
    pip install -e ".[pdf]"        # PDF markdown extraction (pymupdf4llm)
@@ -102,7 +103,7 @@ Expand **课程来源** in the Dashboard or create `data/feeds.json` to configur
 ```
 
 ### 3. LLM Configuration (Optional)
-LLM is disabled by default. To enable AI briefing explicitly, set the following environment variables (or configure them in `src/nexus/config.py` if applicable):
+LLM is disabled by default. To enable AI briefing explicitly, set the following environment variables (or configure them in `src/nexus/core/config.py` if applicable):
 
 ```bash
 export NEXUS_LLM_API_KEY="your-api-key"
@@ -274,12 +275,17 @@ nexus-google-auth
 
 ## Project Structure
 
-- `src/nexus/cli/`: CLI implementations (`pipeline`, `briefing`, `ingest`, `query`, `memory`).
-- `src/nexus/aggregators/`: Modules for fetching data from Google and Brightspace.
-- `src/nexus/archive_sync/`: Brightspace scraping, attachment archiving, and post-ingest trigger.
-- `src/nexus/knowledge/`: SQLite-backed structured learning state plus per-course Chroma retrieval.
-- `src/nexus/intelligence/`: LLM logic for generating briefings.
-- `src/nexus/dashboard/`: The primary information dashboard.
+- `src/nexus/core/`: The personal loop — sources → `nexus.db` state → risk → one action → feedback.
+  - `aggregators/`, `aggregation.py`, `collect.py`: Brightspace/Canvas ICS and Google Calendar collection.
+  - `db.py`, `schema.sql`: The runtime database and its migration ledger.
+  - `academic_state*.py`, `action_service.py`, `availability.py`, `risk.py`, `today.py`: State, capacity, ranking, and feedback.
+  - `sync_service.py`, `context_api.py`: Single-flight sync and the exported context.
+  - `dashboard/`, `dashboard_app.py`: The single-page dashboard.
+- `src/nexus/cli/`: The `nexus` command; composes core with optional subsystems.
+- Optional subsystems (may import core; core never imports them):
+  `knowledge/` (Chroma retrieval, mastery), `intelligence/` (briefings, Gmail LLM extraction),
+  `archive_sync/` (Playwright scraper), `pipeline.py` (archive + collection + briefing),
+  root-level `memory_*` and `conversation_store.py`.
 - `data/`: Local storage for tasks, cache, and configuration (ignored by Git).
 
 ## Privacy, Security, and Release Notes

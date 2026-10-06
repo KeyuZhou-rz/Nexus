@@ -9,7 +9,7 @@ description: Nexus 主开发编排。从 docs/ROADMAP.md 取最上方未完成�
 
 ## 执行步骤
 
-1. **取任务**：读 `docs/ROADMAP.md`，找最上方 `[ ]` 项（Phase T 优先于 M/B）。记下 `<task-id>` 与描述。若全 `[x]`，报告"积压已空"并停。
+1. **取任务**：读 `docs/ROADMAP.md`，在「Phase P」中找最上方 `[ ]` 项；跳过 `[~]` 人工项、「冻结」与「历史阶段」。记下 `<task-id>` 与描述。若全 `[x]`，报告"积压已空"并停。
 
 2. **开分支**：`git checkout -b nexus/<task-id>-<kebab-slug>`（slug 从任务标题派生，≤4 词）。
 

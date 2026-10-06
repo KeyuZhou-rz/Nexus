@@ -27,9 +27,9 @@
 
 ## 文件
 
-- `src/nexus/dashboard_app.py`：启动入口。
-- `src/nexus/dashboard/app.py`：单页与服务调用。
-- `src/nexus/dashboard/styles.py`：明暗配色、任务列表、当前卡片和窄屏样式。
+- `src/nexus/core/dashboard_app.py`：启动入口。
+- `src/nexus/core/dashboard/app.py`：单页与服务调用。
+- `src/nexus/core/dashboard/styles.py`：明暗配色、任务列表、当前卡片和窄屏样式。
 - `tests/test_dashboard_app_smoke.py`：入口、自定义和来源操作。
 - `tests/test_dashboard_today.py`：选择、计时、完成、重开、同名与来源消失。
 - `tests/test_personal_loop.py`：完整任务闭环。

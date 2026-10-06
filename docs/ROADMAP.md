@@ -2,12 +2,71 @@
 
 > 自动化推进积压清单。`/nexus-dev` 每次取最上方未完成项推进。
 > 状态标记：`[ ]` 待办 · `[~]` 进行中 · `[x]` 完成 · `[!]` 阻塞
-> 优先级：Phase T（测试地基）> Phase M（记忆地基）> Phase L（LLM 网关）> Phase B（简报）> Phase U（辅导）> Phase E（邮件）> Phase X（LMS 抽象）
->
-> **愿景**：可接入大模型 API + 接管邮件重要信息 + Canvas 内容 + 结构化记忆 + 私人定制化学习辅导。
-> **依赖链**：T → M → L → B → U → E → X（M 是 U/B 地基；L 是 E/U 的 LLM 依赖；X 独立）。
+
+## 定位（2026-10-06 重定）
+
+**Nexus 首先是我自己用的工具（n=1）。** 它只回答一件事：现在最值得做的那一件学业任务是什么。
+做不做功能、做到什么程度，只看它能不能让我自己每天真的用起来。
+
+- **产品** = `src/nexus/core/`：课程日历 / Google Calendar → `nexus.db` 学业状态 → 风险与可用时间 → 一个下一步 → 开始 / 暂停 / 完成反馈。
+- **扩展**（knowledge、memory、briefing、archive_sync、Gmail LLM）保留、保持测试绿，但不再主动投入；它们可以 import core，core 不 import 它们（`tests/test_core_boundary.py` 强制）。
+- **分发**（wheel、Windows、NFS、多平台）冻结在 `0.3.0b3`。自用只需 `make dashboard`。
+- 产品形态（结果出现在哪里：面板 / 通知 / 日历）还在讨论，见 P5。
 
 ---
+
+## Phase P — 个人闭环（当前唯一主线）
+
+- [~] **P1 自用满一周**（人工，不由 `/nexus-dev` 拉取）
+  - 每天至少打开一次；记录：推荐是否就是我会做的那件、哪里要手工补、哪天没打开以及为什么。
+  - 产出：`docs/DOGFOOD.md` 一周日志 + 三条最痛的摩擦，作为 P2 之后的排序依据。
+
+- [ ] **P2 自动同步（macOS launchd）**
+  - 现状：数据只在打开面板或手动 `nexus sync` 时更新。
+  - 做：`nexus schedule install|remove|status` 生成 / 移除 `~/Library/LaunchAgents` 下的 plist，固定 `NEXUS_DATA_DIR`，每 2 小时跑 `nexus sync`；日志进 data_dir。
+  - 验收：安装后不开面板，`sync_receipt.json` 按时更新；remove 后无残留。
+
+- [ ] **P3 状态备份脱离 knowledge**
+  - 现状：`nexus db-backup` 走 `knowledge/maintenance.py`（同时管 Chroma）；个人状态备份依赖扩展模块。
+  - 做：`core` 提供只含 `nexus.db` + 任务 JSON 的备份 / 恢复；`db-backup` 在无 Chroma 时只走 core。
+  - 验收：不装 `[knowledge]` 时备份恢复往返一致；有 Chroma 时行为不变。
+
+- [ ] **P4 日历外任务与提交状态**
+  - 现状：课程日历不覆盖全部功课，也不带提交状态（2026-10-06 真实 Brightspace 验证）。
+  - 做：先由 P1 日志决定——是补"一键标记已提交"、按课程批量录入，还是接 Brightspace 作业 API。
+  - 验收：P1 中记录的漏项在一周内不再需要靠记忆补。
+
+- [ ] **P5 产品形态决策**（design，停下问我）
+  - 问题：下一步出现在哪里——面板、macOS 通知、反向订阅进系统日历，还是早上一条消息。
+  - 依据：P1 中"没打开面板"的天数和原因。决策写回本节"定位"。
+
+---
+
+## 冻结（不由 `/nexus-dev` 拉取）
+
+- **分发**：wheel 隔离、Windows 锁、网络文件系统、Private Beta 文档。重新启用条件：决定给第二个人用。
+- **知识与辅导**：ingest / query / mastery / assessment / sprint / retro。重新启用条件：P1 证明"知道该复习什么"是真实缺口。
+- **简报与邮件**：LLM briefing、Gmail 抽取。重新启用条件：同上。
+- 孤立模块 `course_state.py`、`changes.py`、`tonight_plan.py`、`view_model.py` 已不接入界面，仅有测试；下次触碰时删除或接回。
+
+---
+
+## 约定（所有 agent 必读）
+
+- 运行：`pip install -e .`（或 `PYTHONPATH=src` 前缀）；`make test` / `make dashboard` 已就绪。
+- 边界：产品代码只放 `src/nexus/core/`，且只 import `nexus.core`；扩展通过参数注入（`run_sync(collect=)`、`build_context(learning=)`、`GoogleAggregator(email_enricher=)`）。
+- subprocess 调用须设 `env={"PYTHONPATH": "src/", **os.environ}`。
+- stdout = JSON only；调试日志 → stderr。
+- `Task.from_dict` 期望 `due_at` 为 ISO 字符串；scraper 返回 datetime 须先转换。
+- LLM 后端：Qwen via DashScope；key 在 `data/QWEN_API_KEY.json`，env `QWEN_API_KEY`。
+- 不在未触碰代码上加多余注释/docstring；方案最小聚焦。
+- 提交：每轮开 `nexus/<task-id>-<slug>` 分支，commit message 末尾加 `Co-Authored-By: Claude <noreply@anthropic.com>`。
+
+---
+
+# 历史阶段（已完成，存档）
+
+> 以下为 2026-02 至 2026-10 的原路线。原愿景"大模型 + 邮件 + Canvas + 结构化记忆 + 私人辅导"不再是主线。
 
 ## Phase T — 测试地基（最高优先）
 
@@ -328,7 +387,7 @@
   - README、Reference、Testing、迁移指南
   - (done: 2026-07-24 reconciliation documents current LLM enablement, runtime status, queues, and test count)
 
-- [~] **4F-6 发布 0.3.0 beta 候选版本**
+- [x] **4F-6 发布 0.3.0 beta 候选版本**（2026-10-06 冻结于 `0.3.0b3`，见“定位”）
   - 当前候选版本 `0.3.0b3`；V1 状态/计时/推荐/日历路径已收口，自动 clean-room、闭环、并发与安装包门禁已接入。真实 Brightspace / Chrome 已验收，确认日历覆盖和提交状态仍需手工补充；待 Google/Canvas、scheduler 和首周体验验收。
 
 ---
@@ -348,17 +407,6 @@
 - 4F 串行最后
 
 ---
-
-## 约定（所有 agent 必读）
-
-- 运行：`PYTHONPATH=src` 前缀（无 pyproject.toml 安装）；`make test` / `make ui` 已就绪。
-- subprocess 调用须设 `env={"PYTHONPATH": "src/", **os.environ}`。
-- stdout = JSON only；调试日志 → stderr。
-- `Task.from_dict` 期望 `due_at` 为 ISO 字符串；scraper 返回 datetime 须先转换。
-- LLM 后端：Qwen via DashScope；key 在 `data/QWEN_API_KEY.json`，env `QWEN_API_KEY`。
-- 不在未触碰代码上加多余注释/docstring；方案最小聚焦。
-- 提交：每轮开 `nexus/<task-id>-<slug>` 分支，commit message 末尾加 `Co-Authored-By: Claude <noreply@anthropic.com>`。
-
 
 ### 2026-10-06 第一版界面收口
 
