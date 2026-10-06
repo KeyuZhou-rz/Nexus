@@ -148,7 +148,7 @@ release-smoke:
 v1-acceptance:
 	$(PYTEST) tests/test_v1_state_loop.py tests/test_risk.py tests/test_action_service.py \
 	          tests/test_availability.py tests/test_recommendations.py tests/test_v1_migrations.py \
-	          tests/test_dashboard_today.py -q
+	          tests/test_dashboard_today.py tests/test_release_hardening.py -q
 	@tmp=$$(mktemp -d /tmp/nexus-v1-XXXXXX); \
 	$(PYTHON) -m nexus.cli.main demo --scenario v1-loop --data-dir $$tmp --json; \
 	status=$$?; rm -rf $$tmp; exit $$status
@@ -176,7 +176,7 @@ wheel-smoke: package
 		--dist-dir dist \
 		--timeout-seconds $(WHEEL_SMOKE_TIMEOUT_SECONDS)
 
-release-check: test release-smoke soak wheel-smoke
+release-check: test v1-acceptance release-smoke soak wheel-smoke
 
 # ─── DB Inspection ────────────────────────────────────────────────────────────
 

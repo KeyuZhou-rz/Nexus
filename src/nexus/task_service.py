@@ -1,4 +1,5 @@
 """User-owned task operations kept separate from external aggregators."""
+
 from __future__ import annotations
 
 import json
@@ -37,6 +38,7 @@ def add_manual_task(
         normalized_tags.insert(0, "manual")
     task = Task(
         id=f"manual:{uuid4().hex}",
+        external_id_stable=True,
         title=normalized_title,
         due_at=due_at,
         source="manual",
@@ -48,13 +50,10 @@ def add_manual_task(
     )
     path = Path(data_dir).expanduser() / "tasks.json"
     merged = dedupe_tasks([*load_tasks(path), task])
-    save_tasks(merged, path)
-    try:
-        from .academic_state import persist_obligations
+    from .academic_state import persist_obligations
 
-        persist_obligations(data_dir, merged)
-    except Exception:
-        pass
+    persist_obligations(data_dir, merged)
+    save_tasks(merged, path)
     return task
 
 
@@ -89,24 +88,25 @@ def save_completions(data_dir: Path, completions: dict[str, dict]) -> None:
     atomic_write_json(path, completions)
 
 
-def start_task(
-    data_dir: Path,
-    task_id: str,
-    now: datetime | None = None,
-) -> dict:
-    """Mark a task as started so completion can learn elapsed effort."""
-    started_at = now or datetime.now().astimezone()
-    completions = load_completions(data_dir)
-    entry = completions.get(task_id)
-    if not isinstance(entry, dict):
-        entry = {}
-    if entry.get("done_at"):
-        return entry
-    if not entry.get("started_at"):
-        entry["started_at"] = started_at.isoformat()
-    completions[task_id] = entry
-    save_completions(data_dir, completions)
-    return entry
+def _canonical_id(data_dir: Path, task_id: str) -> str | None:
+    from .academic_state_service import AcademicStateService
+
+    service = AcademicStateService(data_dir)
+    row = service._external_index().get(task_id)
+    if row is None:
+        service.ingest_snapshot(load_tasks(Path(data_dir) / "tasks.json"))
+        row = service._external_index().get(task_id)
+    return row["id"] if row else None
+
+
+def start_task(data_dir: Path, task_id: str, now: datetime | None = None) -> dict:
+    """Compatibility entrypoint for obligation-based timing."""
+    from .action_service import ActionService
+
+    oid = _canonical_id(data_dir, task_id)
+    if oid:
+        ActionService(data_dir).start(oid, now=now)
+    return load_completions(data_dir).get(task_id, {})
 
 
 def mark_task_done(
@@ -115,61 +115,20 @@ def mark_task_done(
     now: datetime | None = None,
     effort_minutes: int | float | None = None,
 ) -> Task | None:
-    """Record a completion and reflect it on tasks.json immediately.
+    """Compatibility entrypoint for atomic canonical completion."""
+    from .action_service import ActionService
 
-    The durable record lives in completions.json (keyed by stable task id) so it
-    survives re-aggregation; tasks.json is updated only for live dashboard reads.
-    When the task was started, elapsed minutes are stored for later estimates.
-    """
-    done_at = now or datetime.now().astimezone()
-    path = Path(data_dir).expanduser() / "tasks.json"
-    tasks = load_tasks(path)
-    matched: Task | None = None
-    for task in tasks:
-        if task.id == task_id:
-            task.status = "done"
-            task.done_at = done_at
-            matched = task
-
-    completions = load_completions(data_dir)
-    entry = completions.get(task_id)
-    if not isinstance(entry, dict):
-        entry = {}
-    minutes = effort_minutes
-    if minutes is None:
-        started_raw = entry.get("started_at")
-        if started_raw:
-            try:
-                started = datetime.fromisoformat(str(started_raw))
-                if started.tzinfo is None and done_at.tzinfo is not None:
-                    started = started.replace(tzinfo=done_at.tzinfo)
-                elapsed = (done_at - started).total_seconds() / 60.0
-                if elapsed > 0:
-                    minutes = round(elapsed)
-            except ValueError:
-                minutes = None
-    if matched is not None:
-        from .intelligence.workload import effort_key
-
-        entry["effort_key"] = effort_key(matched)
-        if matched.course:
-            entry["course"] = matched.course
-        if matched.due_at is not None:
-            entry["due_at"] = matched.due_at.isoformat()
-    entry["done_at"] = done_at.isoformat()
-    entry["effort_minutes"] = minutes
-    completions[task_id] = entry
-    save_completions(data_dir, completions)
-
-    if matched is not None:
-        save_tasks(dedupe_tasks(tasks), path)
-        try:
-            from .academic_state import persist_obligations
-
-            persist_obligations(data_dir, tasks)
-        except Exception:
-            pass
-    return matched
+    oid = _canonical_id(data_dir, task_id)
+    if oid:
+        ActionService(data_dir).complete(oid, now=now, effort_minutes=effort_minutes)
+    return next(
+        (
+            task
+            for task in load_tasks(Path(data_dir) / "tasks.json")
+            if task.id == task_id
+        ),
+        None,
+    )
 
 
 def apply_completions(tasks: list[Task], completions: dict[str, dict]) -> list[Task]:

@@ -329,7 +329,7 @@
   - (done: 2026-07-24 reconciliation documents current LLM enablement, runtime status, queues, and test count)
 
 - [~] **4F-6 发布 0.3.0 beta 候选版本**
-  - 当前版本 `0.3.0b2`；自动 clean-room、wheel 和调度同步门禁已接入，待真实 connector/scheduler 验收。
+  - 当前候选版本 `0.3.0b3`；V1 状态/计时/推荐/日历路径已收口，自动 clean-room、闭环、并发与安装包门禁已接入。真实 Brightspace / Chrome 已验收，确认日历覆盖和提交状态仍需手工补充；待 Google/Canvas、scheduler 和首周体验验收。
 
 ---
 
@@ -358,3 +358,11 @@
 - LLM 后端：Qwen via DashScope；key 在 `data/QWEN_API_KEY.json`，env `QWEN_API_KEY`。
 - 不在未触碰代码上加多余注释/docstring；方案最小聚焦。
 - 提交：每轮开 `nexus/<task-id>-<slug>` 分支，commit message 末尾加 `Co-Authored-By: Claude <noreply@anthropic.com>`。
+
+
+### 2026-10-06 第一版界面收口
+
+- [x] 用户确认的单页任务清单、当前任务和自定义入口落地。
+- [x] 删除常驻分页与非核心面板，编辑和来源管理默认收起。
+- [x] 保留持久化计时与完成反馈，补充选择、同名任务、可选截止与刷新回归。
+- [x] Chrome 真实课程数据和独立副本交互验收，详见 `TESTING.md`。

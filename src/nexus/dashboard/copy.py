@@ -49,9 +49,9 @@ def reason_label(code: str) -> str:
 def hours_copy(remaining: float | None, available: float | None) -> str:
     parts: list[str] = []
     if remaining is not None:
-        parts.append(f"还要 {remaining:g} 小时")
+        parts.append(f"还要 {round(remaining, 1):g} 小时")
     if available is not None:
-        parts.append(f"截止前能学 {available:g} 小时")
+        parts.append(f"截止前能学 {round(available, 1):g} 小时")
     return "，".join(parts)
 
 
@@ -64,20 +64,12 @@ def why_copy(
 ) -> str:
     hours = hours_copy(remaining, available)
     labels = [reason_label(code) for code in (reasons or ()) if code]
-    # Drop machine-looking leftovers and English engine sentences.
-    skip = {
-        "availability_unknown",
-        "Add when you can study this week to calculate risk",
-    }
-    if explanation and explanation not in skip and "remaining vs" not in explanation:
-        if explanation not in labels and explanation != hours:
-            labels.append(explanation)
     parts = [part for part in (hours, *labels) if part]
     seen: list[str] = []
     for part in parts:
         if part not in seen:
             seen.append(part)
-    return "。".join(seen)
+    return "。".join(seen) or explanation or ""
 
 
 def first_step_copy(title: str, block_minutes: int, raw: str | None = None) -> str:

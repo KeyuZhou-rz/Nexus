@@ -1,4 +1,5 @@
 """Canonical academic state — SQLite is the source of truth."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,14 +11,17 @@ from .academic_state import (
     _as_float,
     _effort_snapshot,
     _parse_source_ids,
+    _parse_due,
     _source_rank,
     display_course,
     normalize_course,
+    normalize_title,
     obligation_id_for_task,
 )
 from .intelligence.workload import effort_key
-from .knowledge.sqlite_store import SQLiteStore
+from .knowledge.sqlite_store import SQLiteStore, connect
 from .models import Task
+from .storage import load_tasks, save_tasks
 from .task_service import load_completions
 from .utils import stable_id
 from .v1_config import INACTIVE_OBLIGATION_STATUSES
@@ -33,9 +37,14 @@ def _resolve_now(now: datetime | None) -> datetime:
 def _merge_status(prior: dict[str, Any] | None, members: list[Task]) -> str:
     if any(getattr(item, "status", "open") == "done" for item in members):
         return "done"
+    if all(
+        item.calendar_status == "cancelled" or item.status == "cancelled"
+        for item in members
+    ):
+        return "cancelled"
     if prior is not None:
         previous = str(prior.get("status") or "open")
-        if previous in INACTIVE_OBLIGATION_STATUSES or previous == "in_progress":
+        if previous in {"done", "completed", "in_progress"}:
             return previous
     return "open"
 
@@ -47,6 +56,19 @@ def _due_iso(value: Any) -> str | None:
         return value.isoformat()
     text = str(value).strip()
     return text or None
+
+
+def _due_observation_changed(previous, observation, prior):
+    old_hash = (previous or {}).get("payload_hash") or ""
+    _, separator, old_due_hash = old_hash.partition(":")
+    new_hash, _, new_due_hash = observation["payload_hash"].partition(":")
+    if separator:
+        return old_due_hash != new_due_hash
+    # Read the pre-b3 hash without treating a title-only update as a deadline edit.
+    legacy_hash = stable_id(
+        f"{observation['external_id']}|{prior.get('title')}|{observation['observed_due']}"
+    )
+    return old_hash not in {new_hash, legacy_hash}
 
 
 def _state_payload(
@@ -85,170 +107,321 @@ class AcademicStateService:
         reconcile_missing: bool = False,
         source: str = "ingest",
     ) -> dict[str, int]:
-        grouped: dict[str, list[Task]] = {}
-        skipped = 0
-        for task in tasks:
-            key = obligation_id_for_task(task)
-            if key is None:
-                skipped += 1
-                continue
-            grouped.setdefault(key, []).append(task)
-
-        completions = load_completions(self._data_dir)
-        now_local = _resolve_now(now)
-        now_iso = now_local.isoformat()
-        store = self._store
-        existing = {row["id"]: row for row in store.list_obligations()}
-        written = 0
-        created = 0
-        due_changed = 0
-        for key, members in grouped.items():
-            members.sort(key=_source_rank)
-            primary = members[0]
-            prior = existing.get(key)
-            status = _merge_status(prior, members)
-            due_at = next((item.due_at for item in members if item.due_at is not None), None)
-            due_iso = due_at.isoformat() if due_at else None
-            source_ids = [item.id for item in members]
-            estimated, spent, remaining, risk_band = _effort_snapshot(
-                primary, source_ids, completions, due_at, status, now_local
+        with connect(self._store.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            observations = list(tasks)
+            completions = load_completions(self._data_dir)
+            now_local = _resolve_now(now)
+            now_iso = now_local.isoformat()
+            store = self._store
+            existing = {
+                row["id"]: row for row in store.list_obligations(connection=conn)
+            }
+            source_rows = store.list_obligation_sources(connection=conn)
+            sources_by_id = {}
+            for item in source_rows:
+                sources_by_id.setdefault(item["obligation_id"], []).append(item)
+            grouped, skipped = self._group_observations(
+                observations, existing, sources_by_id
             )
-            persist_estimated = None
-            if primary.estimated_hours is not None:
-                persist_estimated = float(primary.estimated_hours)
-                estimated = persist_estimated
-                if status not in INACTIVE_OBLIGATION_STATUSES:
-                    remaining = max(estimated - spent, 0.0)
-            elif prior is not None and prior.get("estimated_hours") is not None:
-                persist_estimated = _as_float(prior.get("estimated_hours"))
-            if prior is not None:
-                spent = max(spent, _as_float(prior.get("spent_hours")) or 0.0)
-            remaining_override = None
-            if primary.remaining_hours is not None:
-                remaining_override = float(primary.remaining_hours)
-            elif prior is not None and prior.get("remaining_override_hours") is not None:
-                remaining_override = float(prior["remaining_override_hours"])
-            if status in INACTIVE_OBLIGATION_STATUSES:
-                remaining = 0.0
-            elif remaining_override is not None:
-                remaining = remaining_override
-            progress_percent = prior.get("progress_percent") if prior else None
-            next_step = prior.get("next_step") if prior else None
-            course_id = self._upsert_course_from_name(primary.course, now_iso=now_iso)
-            if course_id is None and prior is not None:
-                course_id = prior.get("course_id")
-            change_kind = None
-            change_detail = None
-            state_before = None
-            if prior is None:
-                change_kind = "created"
-                change_detail = (primary.title or "").strip()
-                created += 1
-            elif (prior.get("due_at") or None) != due_iso:
-                change_kind = "due_changed"
-                change_detail = f"{prior.get('due_at') or '—'} → {due_iso or '—'}"
-                state_before = _state_payload(
-                    obligation_id=key,
-                    title=str(prior.get("title") or primary.title or ""),
-                    due_at=prior.get("due_at") or None,
-                    status=str(prior.get("status") or "open"),
-                    progress_percent=prior.get("progress_percent"),
-                    remaining_hours=prior.get("remaining_hours"),
+            written = 0
+            created = 0
+            due_changed = 0
+            for key, members in grouped.items():
+                members.sort(key=_source_rank)
+                primary = members[0]
+                prior = existing.get(key)
+                status = _merge_status(prior, members)
+                due_at = next(
+                    (item.due_at for item in members if item.due_at is not None), None
                 )
-                due_changed += 1
-            title = (primary.title or "").strip()
-            state_after = _state_payload(
-                obligation_id=key,
-                title=title,
-                due_at=due_iso,
-                status=status,
-                progress_percent=progress_percent,
-                remaining_hours=remaining,
-            )
-            store.write_obligation_ingest(
-                obligation_id=key,
-                title=title,
-                course=primary.course,
-                kind=effort_key(primary),
-                due_at=due_iso,
-                status=status,
-                source_ids=source_ids,
-                primary_task_id=primary.id,
-                estimated_hours=persist_estimated,
-                spent_hours=spent,
-                remaining_hours=remaining,
-                risk_band=risk_band,
-                progress_percent=progress_percent,
-                remaining_override_hours=remaining_override,
-                course_id=course_id,
-                next_step=next_step,
-                sources=self._sources_from_members(members, now_iso),
-                change_kind=change_kind,
-                change_detail=change_detail,
-                state_before=state_before,
-                state_after=state_after,
-                now_iso=now_iso,
-                ingest_source=source,
-            )
-            written += 1
-
-        missing = 0
-        if reconcile_missing:
-            inactive = set(INACTIVE_OBLIGATION_STATUSES) | {"missing"}
-            for key, prior in existing.items():
-                if key in grouped:
-                    continue
-                if prior.get("status") in inactive:
-                    continue
-                title = str(prior.get("title") or key)
-                state_before = _state_payload(
+                due_iso = due_at.isoformat() if due_at else None
+                sources = self._sources_from_members(members, now_iso)
+                previous_sources = {
+                    (item["source"], item["external_id"]): item
+                    for item in sources_by_id.get(key, [])
+                }
+                due_index = next(
+                    (i for i, item in enumerate(members) if item.due_at is not None), 0
+                )
+                due_source = sources[due_index]
+                changed_observation = _due_observation_changed(
+                    previous_sources.get(
+                        (due_source["source"], due_source["external_id"])
+                    ),
+                    due_source,
+                    prior or {},
+                )
+                if prior is not None and not changed_observation:
+                    due_iso = prior.get("due_at")
+                source_ids = list(
+                    dict.fromkeys(
+                        [
+                            *(
+                                _parse_source_ids(prior.get("source_ids"))
+                                if prior
+                                else []
+                            ),
+                            *(item.id for item in members),
+                        ]
+                    )
+                )
+                estimated, spent, remaining, risk_band = _effort_snapshot(
+                    primary,
+                    source_ids,
+                    {
+                        sid: entry
+                        for sid, entry in completions.items()
+                        if isinstance(entry, dict) and entry.get("done_at")
+                    },
+                    due_at,
+                    status,
+                    now_local,
+                )
+                persist_estimated = None
+                if primary.estimated_hours is not None:
+                    persist_estimated = float(primary.estimated_hours)
+                    estimated = persist_estimated
+                    if status not in INACTIVE_OBLIGATION_STATUSES:
+                        remaining = max(estimated - spent, 0.0)
+                elif prior is not None and prior.get("estimated_hours") is not None:
+                    persist_estimated = _as_float(prior.get("estimated_hours"))
+                if prior is not None:
+                    spent = _as_float(prior.get("spent_hours")) or 0.0
+                remaining_override = None
+                if prior is None and primary.remaining_hours is not None:
+                    remaining_override = float(primary.remaining_hours)
+                elif (
+                    prior is not None
+                    and prior.get("remaining_override_hours") is not None
+                ):
+                    remaining_override = float(prior["remaining_override_hours"])
+                if status in INACTIVE_OBLIGATION_STATUSES:
+                    remaining = 0.0
+                elif remaining_override is not None:
+                    remaining = remaining_override
+                elif persist_estimated is not None:
+                    remaining = max(persist_estimated - spent, 0.0)
+                progress_percent = prior.get("progress_percent") if prior else None
+                next_step = prior.get("next_step") if prior else None
+                course_id = self._upsert_course_from_name(
+                    primary.course, now_iso=now_iso, connection=conn
+                )
+                if course_id is None and prior is not None:
+                    course_id = prior.get("course_id")
+                change_kind = None
+                change_detail = None
+                state_before = None
+                if prior is None:
+                    change_kind = "created"
+                    change_detail = (primary.title or "").strip()
+                    created += 1
+                elif (prior.get("due_at") or None) != due_iso:
+                    change_kind = "due_changed"
+                    change_detail = f"{prior.get('due_at') or '—'} → {due_iso or '—'}"
+                    state_before = _state_payload(
+                        obligation_id=key,
+                        title=str(prior.get("title") or primary.title or ""),
+                        due_at=prior.get("due_at") or None,
+                        status=str(prior.get("status") or "open"),
+                        progress_percent=prior.get("progress_percent"),
+                        remaining_hours=prior.get("remaining_hours"),
+                    )
+                    due_changed += 1
+                elif prior.get("status") != status:
+                    change_kind = (
+                        "completed" if status == "done" else "progress_changed"
+                    )
+                    change_detail = status
+                    state_before = _state_payload(
+                        obligation_id=key,
+                        title=str(prior.get("title") or primary.title),
+                        due_at=prior.get("due_at"),
+                        status=str(prior.get("status")),
+                        progress_percent=prior.get("progress_percent"),
+                        remaining_hours=prior.get("remaining_hours"),
+                    )
+                title = (primary.title or "").strip()
+                state_after = _state_payload(
                     obligation_id=key,
                     title=title,
-                    due_at=prior.get("due_at") or None,
-                    status=str(prior.get("status") or "open"),
-                    progress_percent=prior.get("progress_percent"),
-                    remaining_hours=prior.get("remaining_hours"),
+                    due_at=due_iso,
+                    status=status,
+                    progress_percent=progress_percent,
+                    remaining_hours=remaining,
                 )
                 store.write_obligation_ingest(
                     obligation_id=key,
                     title=title,
-                    course=prior.get("course"),
-                    kind=str(prior.get("kind") or "assignment"),
-                    due_at=prior.get("due_at"),
-                    status="missing",
-                    source_ids=_parse_source_ids(prior.get("source_ids")),
-                    primary_task_id=prior.get("primary_task_id"),
-                    estimated_hours=prior.get("estimated_hours"),
-                    spent_hours=prior.get("spent_hours"),
-                    remaining_hours=prior.get("remaining_hours"),
-                    risk_band="unscored",
-                    progress_percent=prior.get("progress_percent"),
-                    remaining_override_hours=prior.get("remaining_override_hours"),
-                    course_id=prior.get("course_id"),
-                    next_step=prior.get("next_step"),
-                    sources=[],
-                    change_kind="disappeared",
-                    change_detail=title,
+                    course=primary.course,
+                    kind=effort_key(primary),
+                    due_at=due_iso,
+                    status=status,
+                    source_ids=source_ids,
+                    primary_task_id=primary.id,
+                    estimated_hours=persist_estimated,
+                    spent_hours=spent,
+                    remaining_hours=remaining,
+                    risk_band=risk_band,
+                    progress_percent=progress_percent,
+                    remaining_override_hours=remaining_override,
+                    course_id=course_id,
+                    next_step=next_step,
+                    sources=sources,
+                    change_kind=change_kind,
+                    change_detail=change_detail,
                     state_before=state_before,
-                    state_after=_state_payload(
+                    state_after=state_after,
+                    now_iso=now_iso,
+                    ingest_source=source,
+                    connection=conn,
+                )
+                written += 1
+
+            missing = 0
+            if reconcile_missing:
+                inactive = set(INACTIVE_OBLIGATION_STATUSES) | {"missing"}
+                for key, prior in existing.items():
+                    if key in grouped:
+                        continue
+                    if prior.get("status") in inactive:
+                        continue
+                    if any(
+                        item["source"] == "manual"
+                        for item in sources_by_id.get(key, [])
+                    ):
+                        continue
+                    title = str(prior.get("title") or key)
+                    state_before = _state_payload(
                         obligation_id=key,
                         title=title,
                         due_at=prior.get("due_at") or None,
-                        status="missing",
+                        status=str(prior.get("status") or "open"),
                         progress_percent=prior.get("progress_percent"),
                         remaining_hours=prior.get("remaining_hours"),
-                    ),
-                    now_iso=now_iso,
-                    ingest_source=source,
-                )
-                missing += 1
-        return {
-            "upserted": written,
-            "skipped": skipped,
-            "created": created,
-            "due_changed": due_changed,
-            "missing": missing,
+                    )
+                    store.write_obligation_ingest(
+                        obligation_id=key,
+                        title=title,
+                        course=prior.get("course"),
+                        kind=str(prior.get("kind") or "assignment"),
+                        due_at=prior.get("due_at"),
+                        status="missing",
+                        source_ids=_parse_source_ids(prior.get("source_ids")),
+                        primary_task_id=prior.get("primary_task_id"),
+                        estimated_hours=prior.get("estimated_hours"),
+                        spent_hours=prior.get("spent_hours"),
+                        remaining_hours=prior.get("remaining_hours"),
+                        risk_band="unscored",
+                        progress_percent=prior.get("progress_percent"),
+                        remaining_override_hours=prior.get("remaining_override_hours"),
+                        course_id=prior.get("course_id"),
+                        next_step=prior.get("next_step"),
+                        sources=[],
+                        change_kind="disappeared",
+                        change_detail=title,
+                        state_before=state_before,
+                        state_after=_state_payload(
+                            obligation_id=key,
+                            title=title,
+                            due_at=prior.get("due_at") or None,
+                            status="missing",
+                            progress_percent=prior.get("progress_percent"),
+                            remaining_hours=prior.get("remaining_hours"),
+                        ),
+                        now_iso=now_iso,
+                        ingest_source=source,
+                        connection=conn,
+                    )
+                    missing += 1
+            return {
+                "upserted": written,
+                "skipped": skipped,
+                "created": created,
+                "due_changed": due_changed,
+                "missing": missing,
+            }
+
+    def _group_observations(self, tasks, existing, sources_by_id):
+        grouped: dict[str, list[Task]] = {}
+        rows = dict(existing)
+        external = {
+            sid: row
+            for row in existing.values()
+            for sid in _parse_source_ids(row.get("source_ids"))
         }
+        for oid, sources in sources_by_id.items():
+            for item in sources:
+                external[item["external_id"]] = existing[oid]
+        present_ids = {task.id for task in tasks}
+        skipped = 0
+        for task in sorted(tasks, key=_source_rank):
+            base = obligation_id_for_task(task)
+            if base is None:
+                skipped += 1
+                continue
+            matched = external.get(task.id)
+            key = matched["id"] if matched else None
+            if key is None:
+                candidates = []
+                for oid, row in rows.items():
+                    if (
+                        normalize_course(row.get("course")),
+                        normalize_title(row.get("title")),
+                        row.get("kind"),
+                    ) != (
+                        normalize_course(task.course),
+                        normalize_title(task.title),
+                        effort_key(task),
+                    ):
+                        continue
+                    if row.get("status") in INACTIVE_OBLIGATION_STATUSES:
+                        continue
+                    prior_due = _parse_due(row.get("due_at"))
+                    if (
+                        prior_due
+                        and task.due_at
+                        and abs(prior_due.timestamp() - task.due_at.timestamp())
+                        > 14 * 86400
+                    ):
+                        continue
+                    same_source_ids = {
+                        item["external_id"]
+                        for item in sources_by_id.get(oid, [])
+                        if item["source"] == task.source
+                    }
+                    same_source_ids.update(
+                        item.id
+                        for item in grouped.get(oid, [])
+                        if item.source == task.source
+                    )
+                    if task.external_id_stable and same_source_ids - {task.id}:
+                        continue
+                    if (same_source_ids - {task.id}) & present_ids:
+                        continue
+                    candidates.append(oid)
+                if len(candidates) == 1:
+                    key = candidates[0]
+                else:
+                    key = (
+                        base
+                        if base not in rows
+                        else "ob:" + stable_id(f"{base}|{task.source}|{task.id}")
+                    )
+            grouped.setdefault(key, []).append(task)
+            rows.setdefault(
+                key,
+                {
+                    "id": key,
+                    "title": task.title,
+                    "course": task.course,
+                    "kind": effort_key(task),
+                    "due_at": _due_iso(task.due_at),
+                    "status": task.status,
+                },
+            )
+            task.obligation_id = key
+        return grouped, skipped
 
     def load_state(self) -> dict[str, Any]:
         obligations = []
@@ -265,6 +438,7 @@ class AcademicStateService:
             "availability_overrides": self._store.list_availability_overrides(),
             "state_changes": self._store.list_state_changes(limit=200),
             "action_events": self._store.list_action_events(limit=200),
+            "latest_action_events": self._store.list_latest_action_events(),
         }
 
     def add_manual_obligation(
@@ -295,6 +469,7 @@ class AcademicStateService:
         course_name = course.strip() if course and str(course).strip() else None
         task = Task(
             id=f"manual:{uuid4().hex}",
+            external_id_stable=True,
             title=normalized,
             due_at=parsed_due,
             source="manual",
@@ -308,6 +483,8 @@ class AcademicStateService:
         oid = obligation_id_for_task(task)
         if oid is None:
             raise ValueError("manual item is not an obligation candidate")
+        path = self._data_dir / "tasks.json"
+        save_tasks([*load_tasks(path), task], path)
         if next_step is not None:
             return self.update_obligation(oid, next_step=next_step, now=current)
         row = self._store.get_obligation(oid)
@@ -325,82 +502,87 @@ class AcademicStateService:
         next_step: Any = ...,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        row = self._store.get_obligation(obligation_id)
-        if row is None:
-            raise KeyError(obligation_id)
-        current = _resolve_now(now)
-        now_iso = current.isoformat()
-        old_due = row.get("due_at") or None
-        new_due = old_due if due_at is ... else _due_iso(due_at)
-        new_progress = row.get("progress_percent")
-        if progress_percent is not ...:
-            new_progress = None if progress_percent is None else int(progress_percent)
-        new_next = row.get("next_step") if next_step is ... else next_step
-        override = row.get("remaining_override_hours")
-        if remaining_hours is not ...:
-            override = None if remaining_hours is None else float(remaining_hours)
-        estimated = _as_float(row.get("estimated_hours")) or 0.0
-        spent = _as_float(row.get("spent_hours")) or 0.0
-        if override is not None:
-            remaining = float(override)
-        else:
-            remaining = max(estimated - spent, 0.0)
-        change_kind = None
-        change_detail = None
-        if due_at is not ... and new_due != old_due:
-            change_kind = "due_changed"
-            change_detail = f"{old_due or '—'} → {new_due or '—'}"
-        elif (
-            progress_percent is not ...
-            or remaining_hours is not ...
-            or next_step is not ...
-        ):
-            change_kind = "progress_changed"
-        title = str(row.get("title") or "")
-        status = str(row.get("status") or "open")
-        self._store.write_obligation_ingest(
-            obligation_id=obligation_id,
-            title=title,
-            course=row.get("course"),
-            kind=str(row.get("kind") or "assignment"),
-            due_at=new_due,
-            status=status,
-            source_ids=_parse_source_ids(row.get("source_ids")),
-            primary_task_id=row.get("primary_task_id"),
-            estimated_hours=row.get("estimated_hours"),
-            spent_hours=row.get("spent_hours"),
-            remaining_hours=remaining,
-            risk_band=row.get("risk_band"),
-            progress_percent=new_progress,
-            remaining_override_hours=override,
-            course_id=row.get("course_id"),
-            next_step=new_next,
-            sources=[],
-            change_kind=change_kind,
-            change_detail=change_detail,
-            state_before=_state_payload(
+        with connect(self._store.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = self._store.get_obligation(obligation_id, connection=conn)
+            if row is None:
+                raise KeyError(obligation_id)
+            current = _resolve_now(now)
+            now_iso = current.isoformat()
+            old_due = row.get("due_at") or None
+            new_due = old_due if due_at is ... else _due_iso(due_at)
+            new_progress = row.get("progress_percent")
+            if progress_percent is not ...:
+                new_progress = (
+                    None if progress_percent is None else int(progress_percent)
+                )
+            new_next = row.get("next_step") if next_step is ... else next_step
+            override = row.get("remaining_override_hours")
+            if remaining_hours is not ...:
+                override = None if remaining_hours is None else float(remaining_hours)
+            estimated = _as_float(row.get("estimated_hours")) or 0.0
+            spent = _as_float(row.get("spent_hours")) or 0.0
+            if override is not None:
+                remaining = float(override)
+            else:
+                remaining = max(estimated - spent, 0.0)
+            change_kind = None
+            change_detail = None
+            if due_at is not ... and new_due != old_due:
+                change_kind = "due_changed"
+                change_detail = f"{old_due or '—'} → {new_due or '—'}"
+            elif (
+                progress_percent is not ...
+                or remaining_hours is not ...
+                or next_step is not ...
+            ):
+                change_kind = "progress_changed"
+            title = str(row.get("title") or "")
+            status = str(row.get("status") or "open")
+            self._store.write_obligation_ingest(
                 obligation_id=obligation_id,
                 title=title,
-                due_at=old_due,
-                status=status,
-                progress_percent=row.get("progress_percent"),
-                remaining_hours=row.get("remaining_hours"),
-            ),
-            state_after=_state_payload(
-                obligation_id=obligation_id,
-                title=title,
+                course=row.get("course"),
+                kind=str(row.get("kind") or "assignment"),
                 due_at=new_due,
                 status=status,
-                progress_percent=new_progress,
+                source_ids=_parse_source_ids(row.get("source_ids")),
+                primary_task_id=row.get("primary_task_id"),
+                estimated_hours=row.get("estimated_hours"),
+                spent_hours=row.get("spent_hours"),
                 remaining_hours=remaining,
-            ),
-            now_iso=now_iso,
-            ingest_source="manual",
-        )
-        updated = self._store.get_obligation(obligation_id)
-        if updated is None:
-            raise KeyError(obligation_id)
-        return updated
+                risk_band=row.get("risk_band"),
+                progress_percent=new_progress,
+                remaining_override_hours=override,
+                course_id=row.get("course_id"),
+                next_step=new_next,
+                sources=[],
+                change_kind=change_kind,
+                change_detail=change_detail,
+                state_before=_state_payload(
+                    obligation_id=obligation_id,
+                    title=title,
+                    due_at=old_due,
+                    status=status,
+                    progress_percent=row.get("progress_percent"),
+                    remaining_hours=row.get("remaining_hours"),
+                ),
+                state_after=_state_payload(
+                    obligation_id=obligation_id,
+                    title=title,
+                    due_at=new_due,
+                    status=status,
+                    progress_percent=new_progress,
+                    remaining_hours=remaining,
+                ),
+                now_iso=now_iso,
+                ingest_source="manual",
+                connection=conn,
+            )
+            updated = self._store.get_obligation(obligation_id, connection=conn)
+            if updated is None:
+                raise KeyError(obligation_id)
+            return updated
 
     def upsert_calendar_block(
         self,
@@ -448,12 +630,14 @@ class AcademicStateService:
                 entity_type="calendar_block",
                 entity_id=str(row["id"]),
                 kind="calendar_changed",
-                before_json=None
-                if prior is None
-                else {
-                    "starts_at": prior.get("starts_at"),
-                    "ends_at": prior.get("ends_at"),
-                },
+                before_json=(
+                    None
+                    if prior is None
+                    else {
+                        "starts_at": prior.get("starts_at"),
+                        "ends_at": prior.get("ends_at"),
+                    }
+                ),
                 after_json={
                     "starts_at": starts_iso,
                     "ends_at": ends_iso,
@@ -484,6 +668,61 @@ class AcademicStateService:
         self._store.bump_state_revision()
         return row
 
+    def replace_calendar_snapshot(
+        self, source: str, tasks: Iterable[Task], *, now=None
+    ) -> None:
+        """Replace busy time only after a complete, successful provider read."""
+        current = _resolve_now(now)
+        previous = {
+            row["external_id"]: row
+            for row in self._store.list_calendar_blocks()
+            if row["source"] == source
+        }
+        incoming = {
+            task.id: task
+            for task in tasks
+            if task.source == source
+            and task.starts_at is not None
+            and task.ends_at is not None
+        }
+        with connect(self._store.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            changed = False
+            for external_id in previous.keys() | incoming.keys():
+                prior = previous.get(external_id)
+                task = incoming.get(external_id)
+                if task is None:
+                    fields = dict(prior)
+                    fields["status"] = "cancelled"
+                else:
+                    fields = {
+                        "source": source,
+                        "external_id": external_id,
+                        "title": task.title,
+                        "starts_at": task.starts_at.isoformat(),
+                        "ends_at": task.ends_at.isoformat(),
+                        "status": task.calendar_status,
+                        "kind": task.calendar_kind,
+                    }
+                relevant = ("title", "starts_at", "ends_at", "status", "kind")
+                if prior and all(prior.get(key) == fields.get(key) for key in relevant):
+                    continue
+                fields["observed_at"] = current.isoformat()
+                row = self._store.upsert_calendar_block(**fields, connection=conn)
+                self._store.record_state_change(
+                    entity_type="calendar_block",
+                    entity_id=row["id"],
+                    kind="calendar_changed",
+                    before_json=prior,
+                    after_json=row,
+                    source=source,
+                    created_at=current.isoformat(),
+                    connection=conn,
+                )
+                changed = True
+            if changed:
+                self._store._bump_revision(conn)
+
     def add_availability_override(
         self,
         *,
@@ -509,7 +748,9 @@ class AcademicStateService:
         self._store.delete_availability_override(override_id)
         self._store.bump_state_revision()
 
-    def import_legacy_completions(self, *, now: datetime | None = None) -> dict[str, int]:
+    def import_legacy_completions(
+        self, *, now: datetime | None = None
+    ) -> dict[str, int]:
         current = _resolve_now(now)
         now_iso = current.isoformat()
         completions = load_completions(self._data_dir)
@@ -517,120 +758,169 @@ class AcademicStateService:
         samples = 0
         skipped = 0
         index = self._external_index()
-        for task_id, entry in completions.items():
-            if not isinstance(entry, dict):
-                skipped += 1
-                continue
-            row = index.get(str(task_id))
-            if row is None:
-                skipped += 1
-                continue
-            oid = str(row["id"])
-            existing_types = {
-                str(item.get("event_type"))
-                for item in self._store.list_action_events(obligation_id=oid, limit=50)
-            }
-            existing_samples = self._store.list_effort_samples(obligation_id=oid)
-            done_at = entry.get("done_at")
-            started_at = entry.get("started_at")
-            minutes = entry.get("effort_minutes")
-            if done_at and "completed" in existing_types:
-                skipped += 1
-                continue
-            if done_at:
-                key = f"legacy:{task_id}:completed"
-                if self._store.insert_action_event(
-                    event_id=f"ae:{stable_id(key)}",
-                    obligation_id=oid,
-                    event_type="completed",
-                    occurred_at=str(done_at),
-                    payload_json={"task_id": task_id},
-                    idempotency_key=key,
-                ):
-                    events += 1
-                status = str(row.get("status") or "open")
-                if status not in {"done", "completed", "cancelled"}:
-                    title = str(row.get("title") or oid)
-                    self._store.write_obligation_ingest(
-                        obligation_id=oid,
-                        title=title,
-                        course=row.get("course"),
-                        kind=str(row.get("kind") or "assignment"),
-                        due_at=row.get("due_at"),
-                        status="done",
-                        source_ids=_parse_source_ids(row.get("source_ids")),
-                        primary_task_id=row.get("primary_task_id"),
-                        estimated_hours=row.get("estimated_hours"),
-                        spent_hours=row.get("spent_hours"),
-                        remaining_hours=0.0,
-                        risk_band=row.get("risk_band"),
-                        progress_percent=row.get("progress_percent"),
-                        remaining_override_hours=row.get("remaining_override_hours"),
-                        course_id=row.get("course_id"),
-                        next_step=row.get("next_step"),
-                        sources=[],
-                        change_kind="completed",
-                        change_detail=str(task_id),
-                        state_before=_state_payload(
-                            obligation_id=oid,
-                            title=title,
-                            due_at=row.get("due_at") or None,
-                            status=status,
-                            progress_percent=row.get("progress_percent"),
-                            remaining_hours=row.get("remaining_hours"),
-                        ),
-                        state_after=_state_payload(
-                            obligation_id=oid,
-                            title=title,
-                            due_at=row.get("due_at") or None,
-                            status="done",
-                            progress_percent=row.get("progress_percent"),
-                            remaining_hours=0.0,
-                        ),
-                        now_iso=now_iso,
-                        ingest_source="legacy_import",
+        with connect(self._store.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for task_id, entry in completions.items():
+                if not isinstance(entry, dict):
+                    skipped += 1
+                    continue
+                row = index.get(str(task_id))
+                if row is None:
+                    skipped += 1
+                    continue
+                oid = str(row["id"])
+                existing_types = {
+                    str(item.get("event_type"))
+                    for item in self._store.list_action_events(
+                        obligation_id=oid, limit=50, connection=conn
                     )
-                    row = self._store.get_obligation(oid) or row
-                    index[str(task_id)] = row
-            elif started_at:
-                key = f"legacy:{task_id}:started"
-                if self._store.insert_action_event(
-                    event_id=f"ae:{stable_id(key)}",
-                    obligation_id=oid,
-                    event_type="started",
-                    occurred_at=str(started_at),
-                    payload_json={"task_id": task_id},
-                    idempotency_key=key,
+                }
+                existing_samples = self._store.list_effort_samples(
+                    obligation_id=oid, connection=conn
+                )
+                done_at = entry.get("done_at")
+                started_at = entry.get("started_at")
+                minutes = entry.get("effort_minutes")
+                if done_at and "completed" not in existing_types:
+                    key = f"legacy:{task_id}:completed"
+                    if self._store.insert_action_event(
+                        event_id=f"ae:{stable_id(key)}",
+                        obligation_id=oid,
+                        event_type="completed",
+                        occurred_at=str(done_at),
+                        payload_json={"task_id": task_id},
+                        idempotency_key=key,
+                        connection=conn,
+                    ):
+                        events += 1
+                    status = str(row.get("status") or "open")
+                    spent = max(
+                        _as_float(row.get("spent_hours")) or 0,
+                        (
+                            (float(minutes) / 60)
+                            if isinstance(minutes, (int, float)) and minutes > 0
+                            else 0
+                        ),
+                    )
+                    if status not in {
+                        "done",
+                        "completed",
+                        "cancelled",
+                    } or spent != row.get("spent_hours"):
+                        title = str(row.get("title") or oid)
+                        self._store.write_obligation_ingest(
+                            obligation_id=oid,
+                            title=title,
+                            course=row.get("course"),
+                            kind=str(row.get("kind") or "assignment"),
+                            due_at=row.get("due_at"),
+                            status="done",
+                            source_ids=_parse_source_ids(row.get("source_ids")),
+                            primary_task_id=row.get("primary_task_id"),
+                            estimated_hours=row.get("estimated_hours"),
+                            spent_hours=spent,
+                            remaining_hours=0.0,
+                            risk_band=row.get("risk_band"),
+                            progress_percent=row.get("progress_percent"),
+                            remaining_override_hours=row.get(
+                                "remaining_override_hours"
+                            ),
+                            course_id=row.get("course_id"),
+                            next_step=row.get("next_step"),
+                            sources=[],
+                            change_kind="completed",
+                            change_detail=str(task_id),
+                            state_before=_state_payload(
+                                obligation_id=oid,
+                                title=title,
+                                due_at=row.get("due_at") or None,
+                                status=status,
+                                progress_percent=row.get("progress_percent"),
+                                remaining_hours=row.get("remaining_hours"),
+                            ),
+                            state_after=_state_payload(
+                                obligation_id=oid,
+                                title=title,
+                                due_at=row.get("due_at") or None,
+                                status="done",
+                                progress_percent=row.get("progress_percent"),
+                                remaining_hours=0.0,
+                            ),
+                            now_iso=now_iso,
+                            ingest_source="legacy_import",
+                            connection=conn,
+                        )
+                        row = self._store.get_obligation(oid, connection=conn) or row
+                        index[str(task_id)] = row
+                elif started_at and not done_at and "started" not in existing_types:
+                    key = f"legacy:{task_id}:started"
+                    if self._store.insert_action_event(
+                        event_id=f"ae:{stable_id(key)}",
+                        obligation_id=oid,
+                        event_type="started",
+                        occurred_at=str(started_at),
+                        payload_json={"task_id": task_id},
+                        idempotency_key=key,
+                        connection=conn,
+                    ):
+                        events += 1
+                if (
+                    started_at
+                    and not done_at
+                    and row["status"] not in INACTIVE_OBLIGATION_STATUSES
+                    and not {"stopped", "completed"} & existing_types
                 ):
-                    events += 1
-            if existing_samples:
-                continue
-            if isinstance(minutes, (int, float)) and minutes > 0:
-                key = f"legacy:{task_id}:effort"
-                if self._store.insert_effort_sample(
-                    sample_id=f"es:{stable_id(key)}",
-                    obligation_id=oid,
-                    minutes=float(minutes),
-                    completed_at=str(done_at or now_iso),
-                    source="legacy",
-                    course_id=row.get("course_id"),
-                    kind=row.get("kind"),
-                    idempotency_key=key,
-                ):
-                    samples += 1
-        if self._store.get_meta("legacy_completions_imported_at") is None:
-            self._store.set_meta("legacy_completions_imported_at", now_iso)
+                    running_started = _parse_due(
+                        self._store.get_meta("running_started_at", connection=conn)
+                    )
+                    imported_started = _parse_due(started_at)
+                    if imported_started and (
+                        running_started is None or imported_started > running_started
+                    ):
+                        self._store.set_meta(
+                            "running_obligation_id", oid, connection=conn
+                        )
+                        self._store.set_meta(
+                            "running_started_at", str(started_at), connection=conn
+                        )
+                if existing_samples:
+                    continue
+                if done_at and isinstance(minutes, (int, float)) and minutes > 0:
+                    key = f"legacy:{task_id}:effort"
+                    if self._store.insert_effort_sample(
+                        sample_id=f"es:{stable_id(key)}",
+                        obligation_id=oid,
+                        minutes=float(minutes),
+                        completed_at=str(done_at or now_iso),
+                        source="legacy",
+                        course_id=row.get("course_id"),
+                        kind=row.get("kind"),
+                        idempotency_key=key,
+                        connection=conn,
+                    ):
+                        samples += 1
+            if (
+                self._store.get_meta("legacy_completions_imported_at", connection=conn)
+                is None
+            ):
+                self._store.set_meta(
+                    "legacy_completions_imported_at", now_iso, connection=conn
+                )
+            if events or samples:
+                self._store._bump_revision(conn)
         return {"events": events, "samples": samples, "skipped": skipped}
 
     def _upsert_course_from_name(
-        self, raw: str | None, *, now_iso: str
+        self, raw: str | None, *, now_iso: str, connection=None
     ) -> str | None:
         name = (raw or "").strip()
         if not name:
             return None
         course_id = "course:" + stable_id(normalize_course(name))
         label = display_course(name) or name
-        self._store.upsert_course(course_id, label, active=True, now_iso=now_iso)
+        self._store.upsert_course(
+            course_id, label, active=True, now_iso=now_iso, connection=connection
+        )
         return course_id
 
     def _sources_from_members(
@@ -644,7 +934,10 @@ class AcademicStateService:
                     "source": item.source or "unknown",
                     "external_id": item.id,
                     "observed_at": now_iso,
-                    "payload_hash": stable_id(f"{item.id}|{item.title}|{due_iso}"),
+                    "payload_hash": stable_id(f"{item.id}|{item.title}|{due_iso}")
+                    + ":"
+                    + stable_id(due_iso),
+                    "observed_due": due_iso,
                     "is_primary": index == 0,
                 }
             )
@@ -652,9 +945,10 @@ class AcademicStateService:
 
     def _external_index(self) -> dict[str, dict[str, Any]]:
         index: dict[str, dict[str, Any]] = {}
-        for row in self._store.list_obligations():
+        rows = {row["id"]: row for row in self._store.list_obligations()}
+        for row in rows.values():
             for source_id in _parse_source_ids(row.get("source_ids")):
                 index.setdefault(source_id, row)
-            for src in self._store.list_obligation_sources(row["id"]):
-                index.setdefault(str(src["external_id"]), row)
+        for src in self._store.list_obligation_sources():
+            index.setdefault(str(src["external_id"]), rows[src["obligation_id"]])
         return index

@@ -120,6 +120,8 @@ def _remaining_hours(
     completions: dict[str, Any] | None,
     now_local: datetime,
 ) -> float:
+    if task.remaining_hours is not None:
+        return max(task.remaining_hours, 0.0)
     estimated, _basis = resolve_effort(task, completions)
     spent = _spent_hours([task.id], completions or {}, now_local)
     return max(estimated - spent, 0.0)

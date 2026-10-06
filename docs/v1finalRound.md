@@ -1,5 +1,9 @@
 # Nexus V1 Final Round — Implementation Plan
 
+当前验收状态（2026-10-06）：`0.3.0b3` 工程候选已通过本机 Python 3.13 的完整发布门禁（915 项正式测试）、无账号 V1 闭环、并发与隔离 wheel 验证。Today/Context、事务反馈、日历容量、旧数据迁移和同名独立条目已补回归。真实 Brightspace / Chrome 已验证四门课订阅、重复同步、手工补录、完成持久化、计时反馈与数据库恢复；同时确认日历不覆盖全部功课，也不携带提交状态。真实 Google/Canvas、调度器、完整人工 Flow A/B/C 和首周体验仍待验收，范围见 `docs/TESTING.md`；下面“audited starting point”描述的是收口前基线。
+
+**界面契约更新（2026-10-06，优先于本文旧 UI 计划）**：用户确认的第一版为单页「有什么任务 / 现在做这件 / 自定义任务」。移除 Today/State/Setup 分页、接受/推迟按钮和统计面板；截止与用时、课程来源收起。底层状态、推荐、计时与 Context 契约保留。手工选择只预览，开始后持久化进行项。界面与测试以 [DASHBOARD_V1.md](DASHBOARD_V1.md) 和 [TESTING.md](TESTING.md) 为准。
+
 > **Status:** implementation contract for the pre-semester V1 demo  
 > **Scope:** turn the current, working local-first prototype into one reliable
 > **State → Delta → Risk → Recommendation → Action → Feedback** loop.  
@@ -64,7 +68,7 @@ These are implementation constraints, not open product questions.
 
 | Decision | V1 rule |
 |---|---|
-| Main surface | `Today` is the default and primary screen. |
+| Main surface | One page: task list, current task, custom entry. |
 | Core object | An academic obligation, not a collector `Task`, is the unit of state, recommendation, timer, completion, and feedback. |
 | Priority | The user-entered `Task.priority` field is not an input to V1 ranking. It may remain only for backward-compatible import/display until removed. |
 | Risk | Derived from due time, remaining effort, and available study time; no available-time evidence means no `high` risk label. |
@@ -72,7 +76,7 @@ These are implementation constraints, not open product questions.
 | Calendar | Used to establish occupied time and available study capacity, not merely shown as an events list. |
 | Action | Must name a specific obligation and a concrete first step/block length. A generic “study course X” message is invalid. |
 | Feedback | Accept, start, complete, and defer events are durable, attributable to an obligation, and visible to the decision engine. |
-| UI | Keep only Today and a thin Setup/State management surface in the V1 flow. Existing knowledge, chat/query, notes, flashcards, Pomodoro, and dashboard-style browsing are not V1 work. |
+| UI | Task selection, Start/Pause, Complete, optional custom entry. Deadline/effort editing and course sync stay collapsed. Advanced features remain outside this page. |
 | Privacy | Keep the existing local-first, single-user runtime contract. No hosted service, telemetry of course content, or new external account is needed. |
 
 ---
@@ -493,23 +497,15 @@ and assert: one 90-minute sample; completed status; no active recommendation
 for it; next action changed; a later same-kind task exposes a history-informed
 estimate. Repeat completion must be idempotent.
 
-### FR-6: Today UI
+### FR-6: Core task UI (approved 2026-10-06)
 
-- **FR-6.1** The default page is named `Today`, not `Tonight`.
-- **FR-6.2** Above the fold it shows only: current state freshness, one next
-  action, why it matters, remaining/available time when known, and action
-  controls. Secondary state is progressively disclosed.
-- **FR-6.3** A minimal state-management surface permits manual obligation,
-  availability, and progress input. It must not ask for manual priority.
-- **FR-6.4** Change acknowledgement is visible only when a state delta needs
-  attention and cannot replace/reorder an actual work recommendation.
-- **FR-6.5** Existing Tasks/course/schedule modules may remain temporarily
-  behind a secondary “State” surface, but no new dashboard cards or tabs are
-  added to V1.
+- **FR-6.1** One page shows pending tasks, one current task, and custom entry; no tabs or sidebar.
+- **FR-6.2** Default selection follows the engine recommendation; an existing running task takes precedence, including after reopening.
+- **FR-6.3** Selecting a task previews it without starting a timer. Start/Pause and Complete write through ActionService; completion advances the recommendation.
+- **FR-6.4** Custom entry requires only a title. Course, deadline, and effort are optional. Deadline/effort editing and course connections stay collapsed.
+- **FR-6.5** Same-title tasks retain independent IDs. Completed items stay collapsed; missing source items remain visible for user review.
 
-**Acceptance:** A Streamlit UI test renders Today from the deterministic V1
-demo and finds one primary action, its exact title/ID/reasons, available-time
-copy, and Start/Complete control. It does not render a priority picker.
+**Acceptance:** Streamlit tests exercise selection, start/pause/resume, completion, optional custom input, timezone changes, and persistence. Chrome verifies the real course list, long-list focus visibility, and the full interaction loop in an isolated copy.
 
 ### FR-7: demo and operability
 
@@ -768,13 +764,13 @@ student’s real `data_dir`.
 V1 is done only when all of the following are true:
 
 - [ ] Every FR-1 through FR-7 acceptance criterion passes in automation.
-- [ ] The mandatory core acceptance test in section 9.3 passes on a fresh
+- [x] The mandatory core acceptance test in section 9.3 passes on a fresh
       temporary runtime and after a restart.
-- [ ] `python -m pytest -q` passes with all existing and V1 tests.
+- [x] `python -m pytest -q` passes with all existing and V1 tests.
 - [ ] `make v1-acceptance` and `make release-smoke` pass from a clean checkout.
-- [ ] The account-free demo proves state creation, deadline delta, capacity
+- [x] The account-free demo proves state creation, deadline delta, capacity
       conflict, risk reranking, one action, completion feedback, and reranking.
-- [ ] Today is the default surface and contains one clear next action. The user
+- [x] Today is the default surface and contains one clear next action. The user
       does not enter priority to make the system useful.
 - [ ] A manual tester can complete Flow A, Flow B, and Flow C with network
       disabled, then confirm persistence after relaunch.
@@ -782,7 +778,7 @@ V1 is done only when all of the following are true:
       unless their tests/docs are deliberately updated in the same change.
 - [ ] The implementation includes no unreconciled duplicate write paths for
       completion, plan acceptance, or risk calculation.
-- [ ] Documentation tells beta testers how to evaluate the loop and explicitly
+- [x] Documentation tells beta testers how to evaluate the loop and explicitly
       states the inputs Nexus cannot yet infer.
 
 “Code written,” “page renders,” “happy-path demo shown once,” and “the model

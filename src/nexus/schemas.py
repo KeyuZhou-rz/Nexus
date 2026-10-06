@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-TASK_SCHEMA_VERSION = "1.2"
+TASK_SCHEMA_VERSION = "1.3"
 ARCHIVE_RESULT_SCHEMA_VERSION = "1.0"
 
 

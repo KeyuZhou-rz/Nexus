@@ -1,24 +1,25 @@
 # Nexus 🧭
 
-Nexus is a local-first learning context layer. It automatically unifies tasks, deadlines, and course updates from **Brightspace** (Learning Management System) and **Google Workspace** (Gmail, Calendar), then exposes a small, explainable learning state that can be consumed by your dashboard or another AI assistant.
+Nexus maintains a local academic state and recommends one concrete next action. It combines **Brightspace**, **Google Calendar**, and manual entries with your remaining work and available study time.
 
-It features an AI-powered daily briefing that analyzes your incoming data to highlight what's urgent, what's noise, and what requires your immediate attention. Nexus is intentionally not a chat replacement: it keeps your learning context current and portable.
+The V1 loop is **state → risk → action → feedback**. The interface shows what is pending, one task to do now, and a custom-task entry. Starting, pausing, or completing work updates the durable state. The core works offline and does not require an LLM.
 
 ## Features
 
-- **Unified Timeline**: Merges LMS assignments and Calendar events into a single chronological view.
-- **Course-aware Learning Focus**: Pairs evidence-backed weak concepts with the nearest open task from the same course.
-- **User-owned Tasks**: Add local tasks from the Dashboard without losing them during later source synchronization.
-- **Smart Briefing**: Uses LLMs (e.g., DeepSeek, OpenAI) to generate a bilingual (EN/ZH) daily summary of tasks.
-- **Google Integration**: Fetches unread course notifications from Gmail and events from Google Calendar.
-- **Brightspace Integration**: Supports iCal and RSS feeds for assignments and announcements.
-- **Streamlit UI**: A clean, responsive dashboard for tracking deadlines and upcoming events.
-- **Canonical Context API**: Export tasks, sync health, briefing data, and learning memory as a stable JSON document.
-- **Read-only Sync Control Plane**: See whether each source is configured, fresh, stale, or failed without triggering network calls.
+- **Task list**: Pending work with course names and local deadlines; completed work stays collapsed.
+- **Current task**: One suggested or selected task with Start/Pause and Complete.
+- **Custom entry**: Add your own task; deadlines and effort estimates are optional.
+- **Measured feedback**: Pause/resume timing excludes breaks; completion records total work for future estimates.
+- **Calendar capacity**: Confirmed busy events reduce study windows; cancelled and transparent events do not.
+- **Durable source identity**: Stable provider IDs survive renames and date changes; separate weekly items retain separate progress.
+- **Portable context**: The default current task and exported Context use the same recommendation. Selecting a different task previews it; starting persists it as the running task.
+- **Local source health**: Read freshness and failures without triggering a sync. Failed sources preserve their last successful snapshot.
+
+Knowledge retrieval, learning evidence, Gmail notifications, archive sync, and LLM briefings remain optional integrations. They are not needed to evaluate the V1 loop.
 
 ## Installation
 
-The `0.3.0b2` beta supports Python 3.10-3.13 on macOS and Linux with a
+The `0.3.0b3` beta supports Python 3.10-3.13 on macOS and Linux with a
 single-user data directory on a local filesystem. Windows can be used for
 best-effort UI/demo evaluation, but lock-dependent sync, ingest, and backup
 commands are not supported. Do not use NFS, SMB, iCloud Drive, Dropbox, or a
@@ -78,7 +79,7 @@ To enable Gmail and Calendar integration:
    Nexus writes refreshed OAuth tokens atomically with these permissions. `nexus doctor --strict` reports unsafe permissions without printing credential contents.
 
 ### 2. Brightspace (LMS) Feeds
-Use the Dashboard Setup tab or create `data/feeds.json` to configure course feeds.
+Expand **课程来源** in the Dashboard or create `data/feeds.json` to configure course feeds.
 
 **Example `data/feeds.json`:**
 ```json
@@ -163,18 +164,13 @@ nexus dashboard
 Evaluate the complete product loop with synthetic data and no accounts:
 
 ```bash
-nexus demo --data-dir /tmp/nexus-demo --json
-NEXUS_DATA_DIR=/tmp/nexus-demo nexus dashboard
+nexus demo --scenario v1-loop --data-dir /tmp/nexus-v1 --json
+NEXUS_DATA_DIR=/tmp/nexus-v1 nexus dashboard
 ```
 
-The information dashboard is the single local UI; knowledge Q&A runs through
-`nexus query` and `nexus context`.
+The Dashboard is one page: **有什么任务**, **现在做这件**, and **＋ 自定义任务**. Select a task, start or pause it, then mark it complete. Deadline and remaining-time edits are collapsed in the current task; course connections and sync are under **课程来源**. Availability configuration and advanced features remain accessible through the CLI. `nexus context` exports the engine recommendation; a task selected for preview does not change it until started.
 
-The Home view deliberately keeps two parallel tracks: the task timeline answers
-"when", while Learning Focus answers "what knowledge needs attention and which
-course task makes it relevant now". Passive email, calendar, and LMS collection
-never increases mastery by itself; only trusted assessment evidence or explicit
-user feedback may change learning state.
+Passive collection never increases mastery by itself; only trusted assessment evidence or explicit user feedback may change learning state.
 
 ### CLI Tools
 
@@ -230,12 +226,9 @@ nexus context --course-id CS202_OS --json
 nexus sync-status --json
 ```
 
-The dashboard's Home and Status views use the same read-only context snapshot. A missing Google token, LMS feed, or knowledge database is shown as a setup state; opening the UI never starts OAuth, Playwright, aggregation, or an LLM request. Tasks added in the Tasks tab use the `manual` source and are preserved across later pipeline runs.
+The Dashboard and Context consume canonical local state. Opening the UI never starts OAuth, Playwright, aggregation, or an LLM request. Custom tasks survive synchronization. Existing pre-V1 runtimes are migrated once, then page reads project the stored state.
 
-The Dashboard sidebar's `Sync now` button calls the same headless service as
-`nexus sync` and records the trigger as `dashboard`.
-
-The Dashboard Setup tab can initialize the same local runtime and save Brightspace iCal or RSS feeds. Tokenized feed URLs are treated as sensitive inputs and are not displayed back in the interface.
+The collapsed **课程来源** section provides **更新课程任务**, using the same service as `nexus sync` with trigger `dashboard`, and a Brightspace calendar connection form. Existing RSS feeds remain supported through feed configuration. Tokenized feed URLs use a password field and are not displayed back in the interface.
 
 **Ingest local notes into Chroma (P2 minimal pipeline):**
 ```bash

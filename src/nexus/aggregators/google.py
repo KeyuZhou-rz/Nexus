@@ -10,6 +10,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 from ..config import AppConfig, default_config
 from ..models import Task
@@ -119,13 +120,12 @@ class GoogleAggregator(Aggregator):
     def fetch_tasks(self) -> list[Task]:
         """Main entry point: Connects to Google and gets all data."""
         creds = _load_credentials(self.token_path, self.credentials_path)
-        gmail = _build_service("gmail", "v1", creds)
-        calendar = _build_service("calendar", "v3", creds)
-
         tasks: list[Task] = []
         if self.include_gmail:
+            gmail = _build_service("gmail", "v1", creds)
             tasks.extend(self._fetch_gmail(gmail))
         if self.include_calendar:
+            calendar = _build_service("calendar", "v3", creds)
             tasks.extend(self._fetch_calendar(calendar))
         return tasks
 
@@ -287,47 +287,65 @@ class GoogleAggregator(Aggregator):
         return text.strip()
 
     def _fetch_calendar(self, calendar) -> Iterable[Task]:
-        """Gets calendar events for the next 7 days."""
+        """Fetch duration-bearing events across the V1 planning horizon."""
         now = datetime.now(timezone.utc)
-        horizon = now + timedelta(days=7)
+        horizon = now + timedelta(days=14)
         calendars = self._list_calendars(calendar)
         for cal_id, cal_name in calendars:
             # 'singleEvents=True' expands recurring events (like weekly classes) into individual items.
-            events_result = (
-                calendar.events()
-                .list(
+            page_token = None
+            while True:
+                events_result = calendar.events().list(
                     calendarId=cal_id,
                     timeMin=now.isoformat(),
                     timeMax=horizon.isoformat(),
                     singleEvents=True,
                     orderBy="startTime",
-                    maxResults=50,
-                )
-                .execute()
-            )
-            events = events_result.get("items", [])
-            for event in events:
-                start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
-                # Parse the start time.
+                    maxResults=250,
+                    pageToken=page_token,
+                ).execute()
+                for event in events_result.get("items", []):
+                    yield self._calendar_task(cal_id, cal_name, event)
+                page_token = events_result.get("nextPageToken")
+                if not page_token:
+                    break
+
+    @staticmethod
+    def _calendar_task(cal_id, cal_name, event):
+        start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
+        # Parse the start time.
+        due_at = None
+        if start:
+            try:
+                due_at = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            except ValueError:
                 due_at = None
-                if start:
-                    try:
-                        due_at = datetime.fromisoformat(start.replace("Z", "+00:00"))
-                    except ValueError:
-                        due_at = None
-                seed = f"{cal_id}:{event.get('id', '')}:{start}"
-                event_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
-                yield Task(
-                    id=f"gcal:{event_id}",
-                    title=event.get("summary", "(no title)"),
-                    due_at=due_at,
-                    source="gcal",
-                    url=event.get("htmlLink"),
-                    course=cal_name,
-                    status="open",
-                    priority=0,
-                    tags=["calendar"],
-                )
+        end = event.get("end", {}).get("dateTime") or event.get("end", {}).get("date")
+        ends_at = datetime.fromisoformat(end.replace("Z", "+00:00")) if end else None
+        zone = ZoneInfo(event.get("start", {}).get("timeZone") or "UTC")
+        if due_at is not None and due_at.tzinfo is None:
+            due_at = due_at.replace(tzinfo=zone)
+        if ends_at is not None and ends_at.tzinfo is None:
+            ends_at = ends_at.replace(tzinfo=zone)
+        seed = f"{cal_id}:{event.get('id', '')}"
+        event_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+        return Task(
+            id=f"gcal:{event_id}",
+            external_id_stable=True,
+            title=event.get("summary", "(no title)"),
+            due_at=due_at,
+            source="gcal",
+            url=event.get("htmlLink"),
+            course=cal_name,
+            status="open",
+            priority=0,
+            tags=["calendar"],
+            starts_at=due_at,
+            ends_at=ends_at,
+            calendar_status=event.get("status", "confirmed"),
+            calendar_kind="free" if event.get("transparency") == "transparent" else "busy",
+        )
+
 
     def _list_calendars(self, calendar) -> list[tuple[str, str]]:
         """Finds all calendars the user has selected/checked in Google Calendar UI."""

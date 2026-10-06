@@ -1,0 +1,6 @@
+include CHANGELOG.md PRIVACY.md Makefile
+include docs/PRIVATE_BETA.md docs/TESTING.md docs/v1finalRound.md docs/DASHBOARD_V1.md
+recursive-include tests/fixtures *.py *.json
+recursive-include tests/scripts *.py
+recursive-include soak *.py
+recursive-include benchmarks *.py

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
 from nexus.academic_state_service import AcademicStateService
 from nexus.action_service import ActionService
 from nexus.knowledge.sqlite_store import SQLiteStore
@@ -51,7 +53,8 @@ def test_accept_start_stop_complete_are_durable(tmp_path) -> None:
     assert {"accepted", "started", "stopped", "completed"} <= events
     samples = store.list_effort_samples(obligation_id=oid)
     assert len(samples) == 1
-    assert float(samples[0]["minutes"]) == 90
+    assert float(samples[0]["minutes"]) == 110
+    assert float(row["spent_hours"]) == pytest.approx(110 / 60)
 
 
 def test_complete_without_timer_does_not_invent_effort(tmp_path) -> None:

@@ -4,6 +4,7 @@ Task snapshots stay a collector cache. Tonight will later read obligations.
 due_at is an attribute, never part of the primary key, so a deadline move
 keeps the same obligation.
 """
+
 from __future__ import annotations
 
 import json
@@ -95,6 +96,8 @@ def obligation_id_for_task(task: Task) -> str | None:
     """Stable key: kind + course + title. due_at is intentionally excluded."""
     if not is_obligation_candidate(task):
         return None
+    if task.obligation_id:
+        return task.obligation_id
     title = normalize_title(task.title)
     if not title:
         return None
@@ -118,8 +121,16 @@ def persist_obligations(
 
 
 def refresh_from_snapshot(data_dir: Path, snapshot: list[Task]) -> list[Task]:
-    """Upsert the collector cache into obligations, then project Tonight's list."""
-    persist_obligations(data_dir, snapshot)
+    """Bootstrap legacy snapshots once; subsequent page reads are projections."""
+    from .knowledge.sqlite_store import SQLiteStore
+
+    store = SQLiteStore(Path(data_dir) / "nexus.db")
+    if not store.list_obligations():
+        persist_obligations(data_dir, snapshot)
+    if store.get_meta("legacy_completions_imported_at") is None:
+        from .academic_state_service import AcademicStateService
+
+        AcademicStateService(data_dir).import_legacy_completions()
     return tasks_from_obligations(data_dir, snapshot)
 
 
@@ -134,8 +145,6 @@ def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
         return candidates
     store = SQLiteStore(db_path)
     rows = store.list_obligations(statuses=["open", "in_progress", "overdue"])
-    if not rows:
-        return candidates
     by_id = {task.id: task for task in snapshot}
     projected: list[Task] = []
     for row in rows:
@@ -158,6 +167,7 @@ def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
                     course=row.get("course"),
                     status="open",
                     tags=[str(row.get("kind") or "assignment")],
+                    obligation_id=row["id"],
                     **hours,
                 )
             )
@@ -170,11 +180,12 @@ def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
                 source=base.source,
                 url=base.url,
                 course=row.get("course") or base.course,
-                status="open",
+                status=row["status"],
                 priority=base.priority,
                 tags=list(base.tags),
                 snippet=base.snippet,
                 received_at=base.received_at,
+                obligation_id=row["id"],
                 **hours,
             )
         )
@@ -302,9 +313,7 @@ def _spent_hours(
                 continue
             if started.tzinfo is None:
                 started = started.replace(tzinfo=now_local.tzinfo)
-            elapsed = (now_local - started).total_seconds() / 60.0
-            if elapsed > 0:
-                total_minutes += elapsed
+            total_minutes += max((now_local - started).total_seconds() / 60, 0)
     return total_minutes / 60.0
 
 

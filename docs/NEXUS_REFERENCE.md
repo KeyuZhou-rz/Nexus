@@ -23,14 +23,18 @@
 - `aggregators/`：Brightspace/Google 数据源聚合器
 - `knowledge/`：知识入库与检索（extract/chunk/embed/store/query/read）
 - `intelligence/`：briefing 与 LLM 调用
-- 平级核心模块：`pipeline.py`、`aggregation.py`、`storage.py`、`models.py`、`streamlit_app.py`
+- 平级核心模块：`pipeline.py`、`aggregation.py`、`storage.py`、`models.py`、`dashboard/app.py`
 
 ## 3. 运行入口与接口
 
 ### 3.1 推荐主入口
 ```bash
-nexus pipeline
+nexus dashboard
 ```
+
+V1 主界面是单页：有什么任务、现在做这件、自定义任务。截止与用时编辑、课程来源默认收起；学习时间配置保留在 CLI。`nexus sync` 是用户触发和调度器使用的统一采集入口，`pipeline` 保留为内部/高级入口。
+
+Canonical 状态在 `nexus.db`，`tasks.json` 是来源快照。`AcademicStateService` 写入观察和手工修正，`ActionService` 写入计时与反馈；默认当前任务与 Context 使用同一个纯风险/推荐模型。手工选择只预览任务；开始后持久化为当前进行项。普通页面读取不会重新灌入旧快照，首次读取旧运行数据可做一次兼容迁移。
 
 ### 3.2 常用 CLI
 - 初始化：`nexus init [--data-dir] [--feed-url]`

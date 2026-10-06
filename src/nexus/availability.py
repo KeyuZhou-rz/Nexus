@@ -1,4 +1,5 @@
 """Pure available-time capacity. No I/O, no clock, no LLM."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -111,7 +112,9 @@ def _merge(intervals: Iterable[Interval]) -> list[Interval]:
     return merged
 
 
-def _subtract(available: Iterable[Interval], busy: Iterable[Interval]) -> list[Interval]:
+def _subtract(
+    available: Iterable[Interval], busy: Iterable[Interval]
+) -> list[Interval]:
     result = _merge(available)
     for busy_start, busy_end in _merge(busy):
         next_result: list[Interval] = []
@@ -145,14 +148,23 @@ def _iter_rule_windows(
     last = due_local.date()
     while day <= last:
         if day.weekday() == rule.weekday:
-            start_dt = datetime(day.year, day.month, day.day, start_h, start_m, tzinfo=rule_tz)
+            start_dt = datetime(
+                day.year, day.month, day.day, start_h, start_m, tzinfo=rule_tz
+            )
             if wraps:
                 end_day = day + timedelta(days=1)
                 end_dt = datetime(
-                    end_day.year, end_day.month, end_day.day, end_h, end_m, tzinfo=rule_tz
+                    end_day.year,
+                    end_day.month,
+                    end_day.day,
+                    end_h,
+                    end_m,
+                    tzinfo=rule_tz,
                 )
             else:
-                end_dt = datetime(day.year, day.month, day.day, end_h, end_m, tzinfo=rule_tz)
+                end_dt = datetime(
+                    day.year, day.month, day.day, end_h, end_m, tzinfo=rule_tz
+                )
             start_dt = start_dt.astimezone(tz)
             end_dt = end_dt.astimezone(tz)
             clipped = _clip((start_dt, end_dt), now, due)
@@ -179,7 +191,9 @@ def _coerce_rule(value: AvailabilityRule | Mapping[str, Any]) -> AvailabilityRul
     )
 
 
-def _coerce_override(value: AvailabilityOverride | Mapping[str, Any]) -> AvailabilityOverride:
+def _coerce_override(
+    value: AvailabilityOverride | Mapping[str, Any]
+) -> AvailabilityOverride:
     if isinstance(value, AvailabilityOverride):
         return value
     starts_at = value["starts_at"]
@@ -254,7 +268,9 @@ def _subtract_busy_with_buffer(
         if cursor < a_end:
             pieces.append((cursor, a_end))
         splitters = [
-            (start, end) for start, end in overlapping if start > a_start and end < a_end
+            (start, end)
+            for start, end in overlapping
+            if start > a_start and end < a_end
         ]
         if not splitters:
             result.extend(pieces)
@@ -271,7 +287,9 @@ def _subtract_busy_with_buffer(
     return _merge(result)
 
 
-def normalize_due_at(due_at: datetime | date | None, *, tz: tzinfo | str | None) -> datetime | None:
+def normalize_due_at(
+    due_at: datetime | date | None, *, tz: tzinfo | str | None
+) -> datetime | None:
     """Date-only / midnight due dates become local 23:59 that day."""
     if due_at is None:
         return None
@@ -286,7 +304,12 @@ def normalize_due_at(due_at: datetime | date | None, *, tz: tzinfo | str | None)
             tzinfo=zone,
         )
     local = _aware(due_at, zone)
-    if local.hour == 0 and local.minute == 0 and local.second == 0 and local.microsecond == 0:
+    if (
+        local.hour == 0
+        and local.minute == 0
+        and local.second == 0
+        and local.microsecond == 0
+    ):
         return local.replace(
             hour=V1_THRESHOLDS.end_of_day_hour,
             minute=V1_THRESHOLDS.end_of_day_minute,
@@ -339,6 +362,13 @@ def compute_capacity(
             calendar_conflict=False,
         )
 
+    available, busy = _capacity_inputs(
+        now_local, due, rules, overrides, calendar_blocks, zone
+    )
+    return _capacity_result(now_local, due, available, busy, thresholds)
+
+
+def _capacity_inputs(now_local, due, rules, overrides, calendar_blocks, zone):
     available: list[Interval] = []
     for rule in rules or ():
         available.extend(_iter_rule_windows(_coerce_rule(rule), now_local, due, zone))
@@ -346,7 +376,11 @@ def compute_capacity(
     unavailable: list[Interval] = []
     for raw in overrides or ():
         override = _coerce_override(raw)
-        clipped = _clip((_aware(override.starts_at, zone), _aware(override.ends_at, zone)), now_local, due)
+        clipped = _clip(
+            (_aware(override.starts_at, zone), _aware(override.ends_at, zone)),
+            now_local,
+            due,
+        )
         if clipped is None:
             continue
         if override.kind == "available":
@@ -370,6 +404,10 @@ def compute_capacity(
             busy.append(clipped)
     busy = _merge(busy)
 
+    return available, busy
+
+
+def _capacity_result(now_local, due, available, busy, thresholds):
     calendar_conflict = False
     for b_start, b_end in busy:
         for a_start, a_end in available:
@@ -384,7 +422,9 @@ def compute_capacity(
     hours = sum(_duration_hours(start, end) for start, end in remaining)
     max_hours = (due - now_local).total_seconds() / 3600.0
     hours = min(max(hours, 0.0), max_hours)
-    contiguous = max((_duration_minutes(start, end) for start, end in remaining), default=0.0)
+    contiguous = max(
+        (_duration_minutes(start, end) for start, end in remaining), default=0.0
+    )
     return CapacityResult(
         available_hours=hours,
         reason=None,
@@ -392,3 +432,43 @@ def compute_capacity(
         intervals=tuple(remaining),
         calendar_conflict=calendar_conflict,
     )
+
+
+def compute_capacities(
+    *,
+    now: datetime,
+    due_dates: Iterable[datetime | date | None],
+    rules: Sequence[AvailabilityRule | Mapping[str, Any]],
+    overrides: Sequence[AvailabilityOverride | Mapping[str, Any]],
+    calendar_blocks: Sequence[CalendarBlock | Mapping[str, Any]],
+    tz: tzinfo | str | None = None,
+    thresholds: RiskThresholds = V1_THRESHOLDS,
+) -> dict[datetime | date | None, CapacityResult]:
+    """Prepare shared intervals once, then clip them to each exact deadline."""
+    zone = _as_zone(tz or now.tzinfo)
+    now_local = _aware(now, zone)
+    dates = {raw: normalize_due_at(raw, tz=zone) for raw in due_dates}
+    if not has_availability_input(rules, overrides):
+        unknown = CapacityResult(None, "availability_unknown", 0.0, ())
+        return dict.fromkeys(dates, unknown)
+    future = [due for due in dates.values() if due is not None and due > now_local]
+    if not future:
+        return dict.fromkeys(dates, CapacityResult(0.0, None, 0.0, ()))
+    available, busy = _capacity_inputs(
+        now_local, max(future), rules, overrides, calendar_blocks, zone
+    )
+    results = {}
+    for raw, due in dates.items():
+        if due is None or due <= now_local:
+            results[raw] = CapacityResult(0.0, None, 0.0, ())
+            continue
+        windows = [
+            clipped
+            for interval in available
+            if (clipped := _clip(interval, now_local, due))
+        ]
+        occupied = [
+            clipped for interval in busy if (clipped := _clip(interval, now_local, due))
+        ]
+        results[raw] = _capacity_result(now_local, due, windows, occupied, thresholds)
+    return results

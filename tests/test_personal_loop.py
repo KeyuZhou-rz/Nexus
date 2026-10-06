@@ -94,15 +94,15 @@ def test_dashboard_complete_advances_home_next_action(monkeypatch, tmp_path: Pat
 
     app = AppTest.from_file(APP_PATH).run(timeout=30)
     assert not app.exception
-    assert any(tab.label == "Today" for tab in app.tabs)
-    assert any("截止" in item.value for item in app.markdown)
+    assert not app.tabs
+    assert any("截止" in item.value for item in app.caption)
     assert any(button.label == "开始做" for button in app.button)
 
     next(button for button in app.button if button.label == "开始做").click()
     app.run(timeout=30)
-    assert any("计时中" in item.value for item in app.markdown)
+    assert any(button.label == "暂停" for button in app.button)
 
-    next(button for button in app.button if button.label == "完成").click()
+    next(button for button in app.button if button.label == "完成这件").click()
     app.run(timeout=30)
 
     assert not app.exception
@@ -114,7 +114,7 @@ def test_dashboard_complete_advances_home_next_action(monkeypatch, tmp_path: Pat
     assert judgment["task_id"] != "demo:homework-1"
 
 
-def test_dashboard_week_blocks_each_have_start(monkeypatch, tmp_path: Path) -> None:
+def test_dashboard_has_one_current_task_action_pair(monkeypatch, tmp_path: Path) -> None:
     data_dir = tmp_path / "week"
     create_demo_runtime(data_dir)
     monkeypatch.setenv("NEXUS_DATA_DIR", str(data_dir))
@@ -122,14 +122,14 @@ def test_dashboard_week_blocks_each_have_start(monkeypatch, tmp_path: Path) -> N
 
     app = AppTest.from_file(APP_PATH).run(timeout=30)
     assert not app.exception
-    assert any(exp.label == "这周还有哪些" for exp in app.expander)
+    assert any("有什么任务" in item.value for item in app.markdown)
     starts = [button for button in app.button if button.label == "开始做"]
-    dones = [button for button in app.button if button.label == "完成"]
+    dones = [button for button in app.button if button.label == "完成这件"]
     assert len(starts) == 1
     assert len(dones) == 1
 
 
-def test_tonight_and_tasks_share_open_obligations(monkeypatch, tmp_path: Path) -> None:
+def test_task_list_uses_canonical_open_obligations(monkeypatch, tmp_path: Path) -> None:
     data_dir = tmp_path / "week"
     create_demo_runtime(data_dir)
     monkeypatch.setenv("NEXUS_DATA_DIR", str(data_dir))
@@ -137,35 +137,36 @@ def test_tonight_and_tasks_share_open_obligations(monkeypatch, tmp_path: Path) -
 
     app = AppTest.from_file(APP_PATH).run(timeout=30)
     assert not app.exception
-    assert [tab.label for tab in app.tabs] == ["Today", "State", "Setup"]
+    assert not app.tabs
     assert not any(button.label == "Add work block" for button in app.button)
     open_tasks = tasks_from_obligations(data_dir, load_tasks(data_dir / "tasks.json"))
     titles = [task.title for task in open_tasks if task.status != "done"]
     assert titles
-    markdown = " ".join(item.value for item in app.markdown)
+    labels = " ".join(button.label for button in app.button if str(button.key).startswith("task:"))
     for title in titles:
-        assert title in markdown
+        assert title in labels
     starts = [button for button in app.button if button.label == "开始做"]
     assert len(starts) == 1
 
 
-def test_accept_today_does_not_start_timer(monkeypatch, tmp_path: Path) -> None:
+def test_selecting_task_does_not_start_timer(monkeypatch, tmp_path: Path) -> None:
     data_dir = tmp_path / "week"
     create_demo_runtime(data_dir)
     monkeypatch.setenv("NEXUS_DATA_DIR", str(data_dir))
     monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
 
     app = AppTest.from_file(APP_PATH).run(timeout=30)
-    next(button for button in app.button if button.label == "接受").click()
+    selected = next(button for button in app.button if str(button.key).startswith("task:"))
+    oid = selected.key.removeprefix("task:")
+    selected.click()
     app.run(timeout=30)
 
     assert not app.exception
-    assert any("已接受" in item.value for item in app.caption)
-    assert not any("计时中" in item.value for item in app.markdown)
+    assert app.session_state["selected_obligation_id"] == oid
+    assert any(button.label == "开始做" for button in app.button)
+    assert not any(button.label == "暂停" for button in app.button)
     events = ActionService(data_dir).store.list_action_events()
-    accepted = [item for item in events if item.get("event_type") == "accepted"]
-    assert accepted
-    oid = str(accepted[0]["obligation_id"])
+    assert not any(item.get("event_type") in {"accepted", "started"} for item in events)
     row = ActionService(data_dir).store.get_obligation(oid)
     task_id = None if row is None else row.get("primary_task_id")
     assert task_id

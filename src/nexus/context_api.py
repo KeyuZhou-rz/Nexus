@@ -1,4 +1,5 @@
 """Stable, read-only context boundary for assistants and integrations."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -8,14 +9,17 @@ from pathlib import Path
 from typing import Any
 
 from .config import default_config
-from .intelligence.workload import build_judgment
+from .intelligence.workload import effort_key
 from .io_utils import atomic_write_json
 from .learning_focus import build_learning_focus
 from .runtime_status import build_runtime_status
 from .storage import load_tasks, tasks_last_updated
 from .sync_control import build_sync_status
-from .academic_state import tasks_from_obligations
-from .task_service import apply_completions, completed_task_ids, load_completions
+from .academic_state import tasks_from_obligations, obligation_id_for_task
+from .academic_state_service import AcademicStateService
+from .action_service import ActionService
+from .today import today_from_state
+from .task_service import apply_completions, load_completions
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -110,8 +114,36 @@ def build_context(
     completions = load_completions(root)
     snapshot = apply_completions(load_tasks(tasks_path), completions)
     tasks = tasks_from_obligations(root, snapshot)
+    if (root / "nexus.db").is_file():
+        service = AcademicStateService(root)
+        state = service.load_state()
+        state["effort_samples"] = service.store.list_effort_samples()
+        running = ActionService(root).running_action(now=generated_at)
+    else:
+        state, running = {"obligations": [], "revision": 0}, None
+    if not state["obligations"]:
+        tasks = [task for task in snapshot if obligation_id_for_task(task)]
+        state["obligations"] = [
+            {
+                "id": obligation_id_for_task(task),
+                "title": task.title,
+                "course": task.course,
+                "kind": effort_key(task),
+                "due_at": task.due_at.isoformat() if task.due_at else None,
+                "status": task.status,
+                "primary_task_id": task.id,
+            }
+            for task in tasks
+        ]
     if course_id:
         tasks = [task for task in tasks if task.course == course_id]
+        state["obligations"] = [
+            row for row in state["obligations"] if row.get("course") == course_id
+        ]
+        if running and running["obligation_id"] not in {
+            row["id"] for row in state["obligations"]
+        }:
+            running = None
 
     pipeline = _read_json(root / "pipeline_report.json")
     sync_receipt = _read_json(root / "sync_receipt.json")
@@ -124,13 +156,8 @@ def build_context(
     if learning.get("available"):
         learning["focus"] = build_learning_focus(tasks, learning)
 
-    next_action = build_judgment(
-        tasks,
-        done_ids=completed_task_ids(completions),
-        now=generated_at,
-        learning_focus=learning.get("focus") if isinstance(learning.get("focus"), list) else None,
-        completions=completions,
-    ).to_dict()
+    today = today_from_state(state, now=generated_at, running=running)
+    next_action = next_action_payload(today, state)
 
     return {
         "schema_version": "1.0",
@@ -140,7 +167,9 @@ def build_context(
             "last_task_update": _iso(last_task_update),
             "last_pipeline_run": pipeline_generated,
             "last_sync": _sync_receipt_summary(sync_receipt),
-            "pipeline_ok": pipeline.get("ok") if isinstance(pipeline.get("ok"), bool) else None,
+            "pipeline_ok": (
+                pipeline.get("ok") if isinstance(pipeline.get("ok"), bool) else None
+            ),
             "sources": source_status,
             "runtime": {
                 "failure_queues": runtime.get("failure_queues", {}),
@@ -149,18 +178,63 @@ def build_context(
         },
         "tasks": {
             "count": len(tasks),
-            "items": [task.to_dict() for task in sorted(tasks, key=_task_sort_key)[:50]],
+            "items": [
+                task.to_dict() for task in sorted(tasks, key=_task_sort_key)[:50]
+            ],
         },
         "next_action": next_action,
+        "today": today.to_dict(),
         "briefing": {
             "available": bool(briefing),
             "generated_at": briefing.get("generated_at"),
-            "todo": briefing.get("todo", [])[:10] if isinstance(briefing.get("todo"), list) else [],
-            "schedule": briefing.get("schedule", [])[:10] if isinstance(briefing.get("schedule"), list) else [],
-            "warnings": briefing.get("warnings", [])[:10] if isinstance(briefing.get("warnings"), list) else [],
+            "todo": (
+                briefing.get("todo", [])[:10]
+                if isinstance(briefing.get("todo"), list)
+                else []
+            ),
+            "schedule": (
+                briefing.get("schedule", [])[:10]
+                if isinstance(briefing.get("schedule"), list)
+                else []
+            ),
+            "warnings": (
+                briefing.get("warnings", [])[:10]
+                if isinstance(briefing.get("warnings"), list)
+                else []
+            ),
         },
         "learning": learning,
-}
+    }
+
+
+def next_action_payload(today, state) -> dict[str, Any]:
+    """Compatibility fields are derived from the same Today recommendation."""
+    from .dashboard.copy import deadline_copy, first_step_copy
+
+    rec = today.recommendation
+    payload = rec.to_dict() if rec else {}
+    row = next(
+        (
+            item
+            for item in state["obligations"]
+            if rec and item["id"] == rec.obligation_id
+        ),
+        {},
+    )
+    due = datetime.fromisoformat(row["due_at"]) if row.get("due_at") else None
+    step = first_step_copy(rec.title, rec.block_minutes, rec.first_step) if rec else ""
+    payload.update(
+        schema_version="1.1",
+        available=bool(rec and rec.obligation_id),
+        task_id=row.get("primary_task_id"),
+        due_at=row.get("due_at"),
+        deadline=deadline_copy(due, today.now),
+        suggestion=step,
+        generated_at=today.now.isoformat(),
+        upcoming=[],
+        forecast=None,
+    )
+    return payload
 
 
 def persist_next_action(
@@ -186,7 +260,13 @@ def _sync_receipt_summary(receipt: dict[str, Any]) -> dict[str, Any] | None:
         "duration_seconds": receipt.get("duration_seconds"),
         "summary": {
             key: summary.get(key)
-            for key in ("task_count", "learning_available", "evidence_count", "focus_count", "linked_focus_count")
+            for key in (
+                "task_count",
+                "learning_available",
+                "evidence_count",
+                "focus_count",
+                "linked_focus_count",
+            )
             if key in summary
         },
     }

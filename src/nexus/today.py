@@ -1,7 +1,9 @@
 """Read-only Today view: state + capacity + risk + recommendation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,9 +16,13 @@ from .availability import (
     AvailabilityRule,
     CalendarBlock,
     CapacityResult,
-    compute_capacity,
+    compute_capacities,
 )
-from .intelligence.risk import RiskAssessment, estimate_remaining, evaluate_obligation_risk
+from .intelligence.risk import (
+    RiskAssessment,
+    estimate_remaining,
+    evaluate_obligation_risk,
+)
 from .intelligence.workload import (
     DEFAULT_EFFORT_HOURS,
     EFFORT_HOURS_BY_TAG,
@@ -35,14 +41,15 @@ class TodayView:
     running: dict[str, Any] | None = None
     missing_input: str | None = None
     freshness: str | None = None
+    deferred_until: dict[str, datetime] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "now": self.now.isoformat(),
             "revision": self.revision,
-            "recommendation": None
-            if self.recommendation is None
-            else self.recommendation.to_dict(),
+            "recommendation": (
+                None if self.recommendation is None else self.recommendation.to_dict()
+            ),
             "assessments": [
                 {
                     "obligation_id": item.obligation_id,
@@ -58,6 +65,9 @@ class TodayView:
             "running": self.running,
             "missing_input": self.missing_input,
             "freshness": self.freshness,
+            "deferred_until": {
+                oid: stamp.isoformat() for oid, stamp in self.deferred_until.items()
+            },
         }
 
 
@@ -142,16 +152,29 @@ def evaluate_state(
     state: dict[str, Any],
     *,
     now: datetime,
-) -> tuple[list[RiskAssessment], dict[str, float], dict[str, str], dict[str, str]]:
+) -> tuple[list[RiskAssessment], dict[str, float | None], dict[str, str], dict[str, str]]:
     rules = _rules_from_rows(state.get("availability_rules") or [])
     overrides = _overrides_from_rows(state.get("availability_overrides") or [])
     blocks = _blocks_from_rows(state.get("calendar_blocks") or [])
     history = _history_map(state.get("effort_samples") or [])
     revision = int(state.get("revision") or 0)
     assessments: list[RiskAssessment] = []
-    contiguous: dict[str, float] = {}
+    contiguous: dict[str, float | None] = {}
     titles: dict[str, str] = {}
     next_steps: dict[str, str] = {}
+    capacities = compute_capacities(
+        now=now,
+        due_dates=[
+            _parse_due(row.get("due_at"))
+            for row in state.get("obligations") or []
+            if row.get("status", "open") in ACTIVE_OBLIGATION_STATUSES
+        ],
+        rules=rules,
+        overrides=overrides,
+        calendar_blocks=blocks,
+        tz=now.tzinfo,
+        thresholds=V1_THRESHOLDS,
+    )
     for row in state.get("obligations") or []:
         oid = str(row.get("id") or "")
         status = str(row.get("status") or "open")
@@ -171,16 +194,13 @@ def evaluate_state(
             status=status,
         )
         due = _parse_due(row.get("due_at"))
-        capacity = compute_capacity(
-            now=now,
-            due_at=due,
-            rules=rules,
-            overrides=overrides,
-            calendar_blocks=blocks,
-            tz=now.tzinfo,
-            thresholds=V1_THRESHOLDS,
+        capacity = capacities[due]
+        # Past deadlines and unknown availability do not bound a new work block.
+        contiguous[oid] = (
+            float(capacity.contiguous_minutes)
+            if capacity.available_hours is not None and due is not None and due > now
+            else None
         )
-        contiguous[oid] = float(capacity.contiguous_minutes or 0.0)
         assessments.append(
             evaluate_obligation_risk(
                 obligation_id=oid,
@@ -203,19 +223,44 @@ def build_today(data_dir: Path, *, now: datetime | None = None) -> TodayView:
     state = service.load_state()
     samples = service.store.list_effort_samples()
     state["effort_samples"] = samples
-    assessments, contiguous, titles, next_steps = evaluate_state(state, now=current)
     running = actions.running_action(now=current)
+    return today_from_state(state, now=current, running=running)
+
+
+def today_from_state(
+    state: dict[str, Any], *, now: datetime, running=None
+) -> TodayView:
+    current = _resolve_now(now)
+    assessments, contiguous, titles, next_steps = evaluate_state(state, now=current)
+    deferred = {}
+    seen = set()
+    for event in state.get("latest_action_events", state.get("action_events")) or []:
+        oid = event["obligation_id"]
+        if oid in seen:
+            continue
+        seen.add(oid)
+        if event["event_type"] == "deferred":
+            payload = event.get("payload_json") or "{}"
+            details = json.loads(payload) if isinstance(payload, str) else payload
+            until = _parse_due(details.get("next_review_at"))
+            if until and until > current:
+                deferred[oid] = until
+    eligible = [item for item in assessments if item.obligation_id not in deferred]
     running_id = None if running is None else str(running["obligation_id"])
     recommendation = select_today(
-        assessments,
+        assessments if running else eligible,
         titles=titles,
         running_obligation_id=running_id,
-        running_elapsed_minutes=None if running is None else running.get("elapsed_minutes"),
+        running_elapsed_minutes=(
+            None if running is None else running.get("elapsed_minutes")
+        ),
         next_steps=next_steps,
         contiguous_minutes=contiguous,
         state_revision=int(state.get("revision") or 0),
     )
     missing = None if recommendation is None else recommendation.missing_input
+    if not running and deferred and not eligible:
+        missing = "deferred"
     return TodayView(
         now=current,
         revision=int(state.get("revision") or 0),
@@ -224,6 +269,7 @@ def build_today(data_dir: Path, *, now: datetime | None = None) -> TodayView:
         running=running,
         missing_input=missing,
         freshness=current.isoformat(),
+        deferred_until=deferred,
     )
 
 

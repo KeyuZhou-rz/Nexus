@@ -217,27 +217,21 @@ def run_aggregation(
 
     # 4. 去重 + 持久化
     tasks = _dedupe(tasks)
-    if not tasks and existing_tasks:
-        errors.append(
-            "Aggregation produced no new tasks; preserving existing tasks.json."
-        )
-        save_tasks(existing_tasks, tasks_path)
-        queue_report = _update_aggregation_failure_queue(
-            data_dir, failures, resolved_failures, warnings
-        )
-        return AggregationResult(
-            tasks=existing_tasks, errors=errors, warnings=warnings,
-            source_status=source_status, failure_queue=queue_report,
-        )
-
     tasks = apply_completions(tasks, load_completions(data_dir))
     save_tasks(tasks, tasks_path)
     try:
         from .academic_state import persist_obligations
 
         persist_obligations(data_dir, tasks, reconcile_missing=True)
+        from .academic_state_service import AcademicStateService
+
+        state = AcademicStateService(data_dir)
+        if source_status.get("google") == "succeeded":
+            state.replace_calendar_snapshot("gcal", tasks)
+        if source_status.get("brightspace") == "succeeded":
+            state.replace_calendar_snapshot("brightspace", tasks)
     except Exception as exc:
-        warnings.append(f"Could not persist obligations: {exc}")
+        errors.append(f"Could not persist academic state: {type(exc).__name__}")
     queue_report = _update_aggregation_failure_queue(
         data_dir, failures, resolved_failures, warnings
     )
@@ -298,6 +292,11 @@ def sync_google_calendar(
         tasks = [task for task in tasks if task.source != "gcal"]
         # 追加新的 gcal 数据
         tasks.extend(calendar_tasks)
+        from .academic_state_service import AcademicStateService
+
+        state = AcademicStateService(data_dir)
+        state.ingest_snapshot(tasks, reconcile_missing=True)
+        state.replace_calendar_snapshot("gcal", calendar_tasks)
     except Exception as exc:
         errors.append(f"Google Calendar sync error: {exc}")
         

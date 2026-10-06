@@ -23,3 +23,11 @@ def test_first_step_and_freshness_are_student_facing() -> None:
     )
     assert "T" not in freshness_copy(V1_NOW)
     assert "刷新于" in freshness_copy(V1_NOW)
+
+
+def test_overdue_copy_does_not_append_the_english_engine_explanation() -> None:
+    text = why_copy(
+        reasons=("overdue",), remaining=2.99704, available=None,
+        explanation="2.99704h remaining. overdue",
+    )
+    assert text == "还要 3 小时。已经过了截止时间"

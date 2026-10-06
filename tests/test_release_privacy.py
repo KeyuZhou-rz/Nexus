@@ -85,7 +85,7 @@ def test_local_release_check_runs_isolated_installed_wheel_smoke() -> None:
 
     assert re.search(r"^wheel-smoke: package$", makefile, flags=re.MULTILINE)
     assert re.search(
-        r"^release-check: test release-smoke soak wheel-smoke$",
+        r"^release-check: test v1-acceptance release-smoke soak wheel-smoke$",
         makefile,
         flags=re.MULTILINE,
     )

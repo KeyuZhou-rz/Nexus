@@ -290,3 +290,42 @@ def test_available_override_without_rules_is_known_capacity() -> None:
     assert result.reason is None
     assert result.available_hours is not None
     assert abs(result.available_hours - 4.0) < 1e-6
+
+
+def test_shared_capacity_preparation_matches_individual_deadlines():
+    from datetime import timedelta
+    from nexus.availability import compute_capacities
+
+    due_dates = [None, V1_NOW - timedelta(hours=1)] + [
+        V1_NOW + timedelta(minutes=i * 37) for i in range(60)
+    ]
+    rules = [
+        AvailabilityRule(str(i), i, "09:00", "22:00", "America/New_York")
+        for i in range(7)
+    ]
+    blocks = [
+        CalendarBlock(
+            str(i),
+            "test",
+            str(i),
+            "Busy",
+            V1_NOW + timedelta(minutes=i * 50),
+            V1_NOW + timedelta(minutes=i * 50 + 25),
+        )
+        for i in range(100)
+    ]
+    overrides = [
+        AvailabilityOverride(
+            "away",
+            V1_NOW + timedelta(hours=1),
+            V1_NOW + timedelta(hours=2),
+            "unavailable",
+        )
+    ]
+    for active_rules in (rules, []):
+        inputs = dict(
+            now=V1_NOW, rules=active_rules, overrides=overrides, calendar_blocks=blocks
+        )
+        batch = compute_capacities(due_dates=due_dates, **inputs)
+        for due in due_dates:
+            assert batch[due] == compute_capacity(due_at=due, **inputs)

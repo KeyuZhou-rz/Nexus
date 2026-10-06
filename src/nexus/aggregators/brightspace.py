@@ -131,6 +131,8 @@ class BrightspaceAggregator(Aggregator):
                         continue
                 
                 seed = uid or f"{summary}|{course}|{feed.url}"
+                if uid and component.get("RECURRENCE-ID"):
+                    seed += "|" + str(component.decoded("RECURRENCE-ID"))
                 tags = ["brightspace", "deadline"]
                 if feed.audience == "llm":
                     tags.append("llm_only")
@@ -141,6 +143,7 @@ class BrightspaceAggregator(Aggregator):
                 tasks.append(
                     Task(
                         id=f"bspace_ical:{stable_id(seed)}",
+                        external_id_stable=bool(uid),
                         title=summary,
                         due_at=due_at,
                         source="brightspace",
@@ -149,6 +152,10 @@ class BrightspaceAggregator(Aggregator):
                         status="open",
                         priority=1 if due_at else 0,
                         tags=tags,
+                        starts_at=_normalize_dt(component.get("DTSTART")),
+                        ends_at=_normalize_dt(component.get("DTEND")),
+                        calendar_status=str(component.get("STATUS", "confirmed")).lower(),
+                        calendar_kind="free" if str(component.get("TRANSP", "")).upper() == "TRANSPARENT" else "busy",
                     )
                 )
         return tasks

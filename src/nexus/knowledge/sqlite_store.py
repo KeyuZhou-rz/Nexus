@@ -142,6 +142,14 @@ class SQLiteStore:
         self.db_path = Path(db_path).expanduser()
         self._init_schema()
 
+    @contextmanager
+    def _connection(self, connection=None):
+        if connection is not None:
+            yield connection
+        else:
+            with connect(self.db_path) as conn:
+                yield conn
+
     def _init_schema(self) -> None:
         """Create and validate schema while holding a cross-process write lock."""
         sql = _SCHEMA_PATH.read_text(encoding="utf-8")
@@ -1897,16 +1905,16 @@ class SQLiteStore:
                 now=now,
             )
 
-    def get_obligation(self, obligation_id: str) -> dict[str, Any] | None:
-        with connect(self.db_path) as conn:
+    def get_obligation(self, obligation_id: str, *, connection: sqlite3.Connection | None = None) -> dict[str, Any] | None:
+        with self._connection(connection) as conn:
             row = conn.execute(
                 "SELECT * FROM obligations WHERE id = ?",
                 (obligation_id,),
             ).fetchone()
             return dict(row) if row else None
 
-    def list_obligations(self, *, statuses: list[str] | None = None) -> list[dict[str, Any]]:
-        with connect(self.db_path) as conn:
+    def list_obligations(self, *, statuses: list[str] | None = None, connection: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+        with self._connection(connection) as conn:
             if statuses:
                 placeholders = ",".join("?" * len(statuses))
                 rows = conn.execute(
@@ -1971,16 +1979,16 @@ class SQLiteStore:
         except (TypeError, ValueError):
             return 0
 
-    def set_meta(self, key: str, value: str) -> None:
-        with connect(self.db_path) as conn:
+    def set_meta(self, key: str, value: str, *, connection: sqlite3.Connection | None = None) -> None:
+        with self._connection(connection) as conn:
             conn.execute(
                 """INSERT INTO academic_state_meta(key, value) VALUES (?, ?)
                    ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
                 (key, str(value)),
             )
 
-    def get_meta(self, key: str) -> str | None:
-        with connect(self.db_path) as conn:
+    def get_meta(self, key: str, *, connection: sqlite3.Connection | None = None) -> str | None:
+        with self._connection(connection) as conn:
             row = conn.execute(
                 "SELECT value FROM academic_state_meta WHERE key = ?",
                 (key,),
@@ -2013,9 +2021,10 @@ class SQLiteStore:
         state_after: dict[str, Any] | None,
         now_iso: str,
         ingest_source: str = "ingest",
+        connection: sqlite3.Connection | None = None,
     ) -> int:
         """Upsert obligation + sources + obligation_changes + state_changes + bump revision."""
-        with connect(self.db_path) as conn:
+        with self._connection(connection) as conn:
             self._upsert_obligation_row(
                 conn,
                 obligation_id=obligation_id,
@@ -2092,9 +2101,10 @@ class SQLiteStore:
         *,
         active: bool = True,
         now_iso: str | None = None,
+        connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         stamp = now_iso or _now_iso()
-        with connect(self.db_path) as conn:
+        with self._connection(connection) as conn:
             conn.execute(
                 """INSERT INTO courses(id, name, active, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?)
@@ -2116,22 +2126,22 @@ class SQLiteStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def list_obligation_sources(self, obligation_id: str) -> list[dict[str, Any]]:
-        with connect(self.db_path) as conn:
+    def list_obligation_sources(self, obligation_id: str | None = None, *, connection: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+        with self._connection(connection) as conn:
             rows = conn.execute(
-                """SELECT * FROM obligation_sources
-                   WHERE obligation_id = ?
-                   ORDER BY is_primary DESC, source, external_id""",
-                (obligation_id,),
+                "SELECT * FROM obligation_sources "
+                + ("WHERE obligation_id = ? " if obligation_id else "")
+                + "ORDER BY is_primary DESC, source, external_id",
+                (obligation_id,) if obligation_id else (),
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def upsert_calendar_block(self, **fields: Any) -> dict[str, Any]:
+    def upsert_calendar_block(self, *, connection: sqlite3.Connection | None = None, **fields: Any) -> dict[str, Any]:
         source = str(fields["source"])
         external_id = str(fields["external_id"])
         block_id = fields.get("id") or f"cal:{_stable_key(f'{source}|{external_id}')}"
         observed_at = fields.get("observed_at") or _now_iso()
-        with connect(self.db_path) as conn:
+        with self._connection(connection) as conn:
             conn.execute(
                 """INSERT INTO calendar_blocks(
                        id, source, external_id, title, starts_at, ends_at,
@@ -2264,9 +2274,10 @@ class SQLiteStore:
         after_json: Any,
         source: str,
         created_at: str | None = None,
+        connection: sqlite3.Connection | None = None,
     ) -> None:
         stamp = created_at or _now_iso()
-        with connect(self.db_path) as conn:
+        with self._connection(connection) as conn:
             conn.execute(
                 """INSERT INTO state_changes(
                        entity_type, entity_id, kind, before_json, after_json,
@@ -2317,8 +2328,9 @@ class SQLiteStore:
         payload_json: Any = None,
         recommendation_key: str | None = None,
         idempotency_key: str | None = None,
+        connection: sqlite3.Connection | None = None,
     ) -> bool:
-        with connect(self.db_path) as conn:
+        with self._connection(connection) as conn:
             cursor = conn.execute(
                 """INSERT OR IGNORE INTO action_events(
                        id, obligation_id, recommendation_key, event_type,
@@ -2341,20 +2353,32 @@ class SQLiteStore:
         *,
         obligation_id: str | None = None,
         limit: int = 100,
+        connection: sqlite3.Connection | None = None,
     ) -> list[dict[str, Any]]:
-        with connect(self.db_path) as conn:
+        with self._connection(connection) as conn:
             if obligation_id is not None:
                 rows = conn.execute(
                     """SELECT * FROM action_events
                        WHERE obligation_id = ?
-                       ORDER BY occurred_at DESC LIMIT ?""",
+                       ORDER BY julianday(occurred_at) DESC, rowid DESC LIMIT ?""",
                     (obligation_id, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM action_events ORDER BY occurred_at DESC LIMIT ?",
+                    "SELECT * FROM action_events ORDER BY julianday(occurred_at) DESC, rowid DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_latest_action_events(self) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                """SELECT * FROM (
+                       SELECT *, ROW_NUMBER() OVER (
+                           PARTITION BY obligation_id ORDER BY julianday(occurred_at) DESC, rowid DESC
+                       ) AS latest FROM action_events
+                   ) WHERE latest = 1 ORDER BY julianday(occurred_at) DESC"""
+            ).fetchall()
             return [dict(row) for row in rows]
 
     def insert_effort_sample(
@@ -2368,8 +2392,9 @@ class SQLiteStore:
         course_id: str | None = None,
         kind: str | None = None,
         idempotency_key: str | None = None,
+        connection: sqlite3.Connection | None = None,
     ) -> bool:
-        with connect(self.db_path) as conn:
+        with self._connection(connection) as conn:
             cursor = conn.execute(
                 """INSERT OR IGNORE INTO effort_samples(
                        id, obligation_id, course_id, kind, minutes,
@@ -2393,6 +2418,7 @@ class SQLiteStore:
         *,
         obligation_id: str | None = None,
         kind: str | None = None,
+        connection: sqlite3.Connection | None = None,
     ) -> list[dict[str, Any]]:
         clauses = []
         params: list[Any] = []
@@ -2403,7 +2429,7 @@ class SQLiteStore:
             clauses.append("kind = ?")
             params.append(kind)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        with connect(self.db_path) as conn:
+        with self._connection(connection) as conn:
             rows = conn.execute(
                 f"SELECT * FROM effort_samples {where} ORDER BY completed_at DESC",
                 params,

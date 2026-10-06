@@ -182,6 +182,7 @@ def run_smoke(*, dist_dir: Path, timeout_seconds: int) -> dict[str, Any]:
                 "-m",
                 "pip",
                 "install",
+                "--force-reinstall",
                 "--no-deps",
                 "--no-index",
                 str(wheel),
@@ -227,6 +228,15 @@ def run_smoke(*, dist_dir: Path, timeout_seconds: int) -> dict[str, Any]:
         }
         if checkout_src in resolved_sys_path:
             raise RuntimeError(f"repository source leaked into wheel smoke sys.path: {checkout_src}")
+
+        demo = _run(
+            [str(nexus_command), "demo", "--scenario", "v1-loop",
+             "--data-dir", str(temp_root / "v1-demo"), "--json"],
+            cwd=work_dir, env=env, deadline=deadline,
+        )
+        demo_payload = _json_object(demo.stdout, command="installed V1 demo")
+        if demo_payload.get("ok") is not True:
+            raise RuntimeError(f"installed V1 loop failed: {demo_payload}")
 
         runtime_probe = _run(
             [
@@ -342,6 +352,7 @@ def run_smoke(*, dist_dir: Path, timeout_seconds: int) -> dict[str, Any]:
             "sync_status": receipt["status"],
             "artifacts": sorted(artifact_payloads),
             "backup_in_runtime": True,
+            "v1_loop": demo_payload,
         }
 
 

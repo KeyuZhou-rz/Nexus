@@ -120,6 +120,7 @@ class LMSConnector(ABC):
                     tags.append("exam")
                 tasks.append(Task(
                     id=f"{self.name}:assign:{cid}:{a.assignment_id}",
+                    external_id_stable=True,
                     title=a.title,
                     due_at=a.due_at,
                     source=self.name,

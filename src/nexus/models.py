@@ -32,6 +32,12 @@ class Task:
     spent_hours: float | None = None
     remaining_hours: float | None = None
     risk_band: str | None = None
+    obligation_id: str | None = None
+    external_id_stable: bool = False
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    calendar_status: str = "confirmed"
+    calendar_kind: str = "busy"
 
     def to_dict(self) -> dict[str, Any]:
         """Serializes task to dictionary."""
@@ -49,6 +55,12 @@ class Task:
             "tags": self.tags,
             "received_at": self.received_at.isoformat() if self.received_at else None,
             "done_at": self.done_at.isoformat() if self.done_at else None,
+            "obligation_id": self.obligation_id,
+            "external_id_stable": self.external_id_stable,
+            "starts_at": self.starts_at.isoformat() if self.starts_at else None,
+            "ends_at": self.ends_at.isoformat() if self.ends_at else None,
+            "calendar_status": self.calendar_status,
+            "calendar_kind": self.calendar_kind,
         }
 
     @classmethod
@@ -67,18 +79,33 @@ class Task:
             status=data.get("status", "open"),
             priority=int(data.get("priority", 0)),
             tags=list(data.get("tags", [])),
-            received_at=datetime.fromisoformat(data["received_at"])
-            if data.get("received_at")
-            else None,
-            done_at=datetime.fromisoformat(data["done_at"])
-            if data.get("done_at")
-            else None,
+            received_at=(
+                datetime.fromisoformat(data["received_at"])
+                if data.get("received_at")
+                else None
+            ),
+            done_at=(
+                datetime.fromisoformat(data["done_at"]) if data.get("done_at") else None
+            ),
+            obligation_id=data.get("obligation_id"),
+            external_id_stable=bool(data.get("external_id_stable", False)),
+            starts_at=(
+                datetime.fromisoformat(data["starts_at"])
+                if data.get("starts_at")
+                else None
+            ),
+            ends_at=(
+                datetime.fromisoformat(data["ends_at"]) if data.get("ends_at") else None
+            ),
+            calendar_status=data.get("calendar_status", "confirmed"),
+            calendar_kind=data.get("calendar_kind", "busy"),
         )
 
 
 @dataclass
 class FeedSource:
     """Configuration for a data feed (stored in feeds.json)."""
+
     kind: FeedKind
     name: str
     url: str
