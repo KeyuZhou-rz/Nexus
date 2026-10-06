@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from nexus.aggregation import run_aggregation
-from nexus.config import AppConfig
-from nexus.models import Task
-from nexus.storage import load_tasks, save_tasks
-from nexus.task_service import (
+from nexus.core.aggregation import run_aggregation
+from nexus.core.config import AppConfig
+from nexus.core.models import Task
+from nexus.core.storage import load_tasks, save_tasks
+from nexus.core.task_service import (
     add_manual_task,
     apply_completions,
     completed_task_ids,

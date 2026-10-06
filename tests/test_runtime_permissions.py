@@ -6,7 +6,7 @@ import stat
 import pytest
 
 from nexus.knowledge.sqlite_store import SQLiteStore, connect
-from nexus.storage import save_tasks
+from nexus.core.storage import save_tasks
 
 
 def _mode(path: Path) -> int:

@@ -7,17 +7,17 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .academic_state import is_obligation_candidate
-from .intelligence.workload import (
+from .core.academic_state import is_obligation_candidate
+from .core.workload import (
     TYPE_NOUN,
     build_judgment,
     course_short,
     effort_key,
     resolve_effort,
 )
-from .io_utils import atomic_write_json
-from .models import Task
-from .utils import localize_dt
+from .core.io_utils import atomic_write_json
+from .core.models import Task
+from .core.utils import localize_dt
 
 _FALLBACK_HOURS = 1.0
 PLAN_DECISION_FILENAME = "tonight_plan.json"

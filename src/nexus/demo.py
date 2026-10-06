@@ -5,15 +5,15 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .aggregation import run_aggregation
-from .config import AppConfig
-from .context_api import build_context, persist_next_action
-from .io_utils import atomic_write_json, atomic_write_text
+from .core.aggregation import run_aggregation
+from .core.config import AppConfig
+from .core.context_api import build_context, persist_next_action
+from .core.io_utils import atomic_write_json, atomic_write_text
 from .knowledge.memory_api import MemoryAPI
 from .knowledge.sqlite_store import SQLiteStore
-from .models import FeedSource, Task
-from .onboarding import initialize_runtime, upsert_feed
-from .storage import save_tasks
+from .core.models import FeedSource, Task
+from .core.onboarding import initialize_runtime, upsert_feed
+from .core.storage import save_tasks
 
 
 DEMO_MARKER = ".nexus-demo"
@@ -174,7 +174,7 @@ def create_demo_runtime(
         ),
     ]
     save_tasks(tasks, root / "tasks.json")
-    from .academic_state import persist_obligations
+    from .core.academic_state import persist_obligations
 
     persist_obligations(root, tasks)
     for task in tasks:
@@ -284,7 +284,7 @@ def create_demo_runtime(
 
     context = build_context(data_dir=root, course_id="CS202_OS", now=current)
     persist_next_action(data_dir=root, now=current)
-    from .academic_state_service import AcademicStateService
+    from .core.academic_state_service import AcademicStateService
 
     AcademicStateService(root).import_legacy_completions(now=current)
     return {
@@ -308,10 +308,10 @@ def run_v1_loop_scenario(
     """Account-free V1 loop proof: state, deadline delta, conflict, action, rerank."""
     from datetime import timedelta
 
-    from .academic_state_service import AcademicStateService
-    from .action_service import ActionService
-    from .today import build_today
-    from .v1_config import V1_NOW, V1_TZ
+    from .core.academic_state_service import AcademicStateService
+    from .core.action_service import ActionService
+    from .core.today import build_today
+    from .core.v1_config import V1_NOW, V1_TZ
 
     root = Path(data_dir).expanduser()
     if force and root.exists() and (root / DEMO_MARKER).is_file():

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from nexus.io_utils import atomic_write_json, atomic_write_text
+from nexus.core.io_utils import atomic_write_json, atomic_write_text
 
 
 def test_atomic_write_text_replaces_content(tmp_path):

@@ -8,7 +8,7 @@ from typing import Any
 
 from .academic_state import _as_float, _parse_due, _parse_source_ids
 from .academic_state_service import AcademicStateService, _resolve_now, _state_payload
-from .knowledge.sqlite_store import connect
+from ..knowledge.sqlite_store import connect
 from .storage import load_tasks, save_tasks
 from .task_service import load_completions, save_completions
 from .utils import stable_id
@@ -220,7 +220,7 @@ class ActionService:
                 override = _as_float(row.get("remaining_override_hours"))
                 estimated = _as_float(row.get("estimated_hours"))
                 if estimated is None:
-                    from .intelligence.workload import (
+                    from .workload import (
                         DEFAULT_EFFORT_HOURS,
                         EFFORT_HOURS_BY_TAG,
                     )

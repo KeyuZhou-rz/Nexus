@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 from typing import Iterable
 
-from ..config import AppConfig, default_config
-from ..models import Task
-from ..utils import localize_dt
+from ..core.config import AppConfig, default_config
+from ..core.models import Task
+from ..core.utils import localize_dt
 from ..knowledge.memory_api import MemoryAPI
 from ..knowledge.sqlite_store import SQLiteStore
 from ..knowledge.query import query_knowledge

@@ -7,18 +7,18 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
-from nexus.action_service import ActionService
+from nexus.core.action_service import ActionService
 from nexus.cli import next_action as next_cli
-from nexus.context_api import build_context, persist_next_action
+from nexus.core.context_api import build_context, persist_next_action
 from nexus.demo import create_demo_runtime, runtime_is_seedable
-from nexus.intelligence.workload import build_judgment
-from nexus.onboarding import initialize_runtime
-from nexus.storage import load_tasks
-from nexus.academic_state import tasks_from_obligations
-from nexus.task_service import completed_task_ids, load_completions, mark_task_done, start_task
+from nexus.core.workload import build_judgment
+from nexus.core.onboarding import initialize_runtime
+from nexus.core.storage import load_tasks
+from nexus.core.academic_state import tasks_from_obligations
+from nexus.core.task_service import completed_task_ids, load_completions, mark_task_done, start_task
 
 
-APP_PATH = Path(__file__).parents[1] / "src" / "nexus" / "dashboard_app.py"
+APP_PATH = Path(__file__).parents[1] / "src" / "nexus" / "core" / "dashboard_app.py"
 
 
 def test_initialized_empty_runtime_is_seedable(tmp_path: Path) -> None:

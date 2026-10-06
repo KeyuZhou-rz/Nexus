@@ -21,11 +21,11 @@ if str(SRC_ROOT) not in sys.path:
 from nexus.archive_sync.scraper import run_scraper
 from nexus.archive_sync.post_ingest import run_archive_post_ingest
 from nexus.archive_sync.reporting import update_failure_queue
-from nexus.config import default_config
-from nexus.models import Task
-from nexus.schemas import ARCHIVE_RESULT_SCHEMA_VERSION
-from nexus.storage import load_tasks, save_tasks
-from nexus.utils import dedupe_tasks
+from nexus.core.config import default_config
+from nexus.core.models import Task
+from nexus.core.schemas import ARCHIVE_RESULT_SCHEMA_VERSION
+from nexus.core.storage import load_tasks, save_tasks
+from nexus.core.utils import dedupe_tasks
 
 
 def _dedupe(tasks: list[Task]) -> list[Task]:

@@ -5,9 +5,9 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
-from nexus.availability import compute_capacity
-from nexus.intelligence.risk import estimate_remaining, evaluate_obligation_risk
-from nexus.v1_config import V1_NOW, V1_THRESHOLDS
+from nexus.core.availability import compute_capacity
+from nexus.core.risk import estimate_remaining, evaluate_obligation_risk
+from nexus.core.v1_config import V1_NOW, V1_THRESHOLDS
 from tests.fixtures.v1_loop import (
     conflict_block_leaving_two_hours,
     cs_due_moved,
@@ -15,7 +15,7 @@ from tests.fixtures.v1_loop import (
     twelve_hour_rules,
 )
 
-_RISK_SOURCE = Path(__file__).resolve().parents[1] / "src" / "nexus" / "intelligence" / "risk.py"
+_RISK_SOURCE = Path(__file__).resolve().parents[1] / "src" / "nexus" / "core" / "risk.py"
 
 
 def _capacity(*, due_at, rules=None, calendar_blocks=None):

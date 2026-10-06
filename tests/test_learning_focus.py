@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from nexus.learning_focus import build_learning_focus
-from nexus.models import Task
+from nexus.core.models import Task
 
 
 def test_focus_links_weak_concept_to_nearest_open_course_task() -> None:

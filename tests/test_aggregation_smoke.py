@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from nexus import aggregation
-from nexus.models import Task
+from nexus.core import aggregation
+from nexus.core.models import Task
 
 
 @dataclass

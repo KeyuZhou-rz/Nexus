@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from nexus.availability import (
+from nexus.core.availability import (
     AvailabilityOverride,
     AvailabilityRule,
     CalendarBlock,
@@ -10,7 +10,7 @@ from nexus.availability import (
     has_availability_input,
     normalize_due_at,
 )
-from nexus.v1_config import V1_NOW, V1_THRESHOLDS, V1_TZ
+from nexus.core.v1_config import V1_NOW, V1_THRESHOLDS, V1_TZ
 from tests.fixtures.v1_loop import (
     conflict_block_leaving_two_hours,
     cs_due_moved,
@@ -294,7 +294,7 @@ def test_available_override_without_rules_is_known_capacity() -> None:
 
 def test_shared_capacity_preparation_matches_individual_deadlines():
     from datetime import timedelta
-    from nexus.availability import compute_capacities
+    from nexus.core.availability import compute_capacities
 
     due_dates = [None, V1_NOW - timedelta(hours=1)] + [
         V1_NOW + timedelta(minutes=i * 37) for i in range(60)

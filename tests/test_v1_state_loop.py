@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from nexus.academic_state_service import AcademicStateService
-from nexus.action_service import ActionService
+from nexus.core.academic_state_service import AcademicStateService
+from nexus.core.action_service import ActionService
 from nexus.knowledge.sqlite_store import SQLiteStore
-from nexus.today import build_today
-from nexus.v1_config import V1_NOW
+from nexus.core.today import build_today
+from nexus.core.v1_config import V1_NOW
 
 from tests.fixtures.v1_loop import (
     CS_TITLE,

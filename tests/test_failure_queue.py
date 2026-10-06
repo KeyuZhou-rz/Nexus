@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from nexus import aggregation
-from nexus.config import AppConfig
-from nexus.failure_queue import load_failure_queue, update_failure_queue
+from nexus.core import aggregation
+from nexus.core.config import AppConfig
+from nexus.core.failure_queue import load_failure_queue, update_failure_queue
 
 
 def test_generic_failures_dead_letter_after_bounded_retries(tmp_path) -> None:

@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nexus.academic_state import (
+from nexus.core.academic_state import (
     display_course,
     obligation_id_for_task,
     persist_obligations,
@@ -13,12 +13,12 @@ from nexus.academic_state import (
     refresh_from_snapshot,
     tasks_from_obligations,
 )
-from nexus.academic_state_service import AcademicStateService
-from nexus.aggregators.brightspace import BrightspaceAggregator, FeedConfig
-from nexus.io_utils import atomic_write_text
+from nexus.core.academic_state_service import AcademicStateService
+from nexus.core.aggregators.brightspace import BrightspaceAggregator, FeedConfig
+from nexus.core.io_utils import atomic_write_text
 from nexus.knowledge.sqlite_store import SQLiteStore
-from nexus.models import Task
-from nexus.task_service import add_manual_task, mark_task_done, save_completions, start_task
+from nexus.core.models import Task
+from nexus.core.task_service import add_manual_task, mark_task_done, save_completions, start_task
 
 
 def _task(

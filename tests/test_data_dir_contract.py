@@ -4,10 +4,10 @@ import json
 import os
 from pathlib import Path
 
-from nexus.aggregation import AggregationResult, run_aggregation
-from nexus.aggregators.google import GoogleAggregator
-from nexus.config import AppConfig
-from nexus.models import FeedSource, Task
+from nexus.core.aggregation import AggregationResult, run_aggregation
+from nexus.core.aggregators.google import GoogleAggregator
+from nexus.core.config import AppConfig
+from nexus.core.models import FeedSource, Task
 
 
 def test_storage_and_pipeline_use_runtime_data_dir(monkeypatch, tmp_path):
@@ -15,7 +15,7 @@ def test_storage_and_pipeline_use_runtime_data_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("NEXUS_DATA_DIR", str(data_dir))
 
     from nexus.pipeline import run_mvp_pipeline
-    from nexus.storage import load_feeds, load_tasks, save_feeds, save_tasks
+    from nexus.core.storage import load_feeds, load_tasks, save_feeds, save_tasks
 
     task = Task(id="local-1", title="Local task", due_at=None, source="test")
     feed = FeedSource(
@@ -199,7 +199,7 @@ def test_aggregation_google_config_is_isolated_between_runtimes(monkeypatch, tmp
 
     monkeypatch.setattr(GoogleAggregator, "fetch_tasks", fake_fetch)
     monkeypatch.setattr(
-        "nexus.aggregators.google.default_config",
+        "nexus.core.aggregators.google.default_config",
         lambda: (_ for _ in ()).throw(AssertionError("ambient config was read")),
     )
 

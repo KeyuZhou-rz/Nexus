@@ -8,7 +8,7 @@ from pathlib import Path
 def main() -> None:
     from streamlit.web import cli as streamlit_cli
 
-    app_path = Path(__file__).resolve().parents[1] / "dashboard_app.py"
+    app_path = Path(__file__).resolve().parents[1] / "core" / "dashboard_app.py"
     sys.argv = ["streamlit", "run", str(app_path), *sys.argv[1:]]
     streamlit_cli.main()
 

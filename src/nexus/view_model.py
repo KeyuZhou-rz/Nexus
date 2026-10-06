@@ -7,8 +7,8 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
-from ..models import Task
-from ..utils import localize_dt
+from .core.models import Task
+from .core.utils import localize_dt
 
 
 @dataclass

@@ -5,8 +5,8 @@ from datetime import timedelta
 from statistics import median
 from time import perf_counter
 
-from nexus.today import evaluate_state
-from nexus.v1_config import V1_NOW, V1_TIMEZONE_NAME
+from nexus.core.today import evaluate_state
+from nexus.core.v1_config import V1_NOW, V1_TIMEZONE_NAME
 
 state = {
     "revision": 1,

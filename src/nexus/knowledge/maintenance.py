@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from .maintenance_lock import maintenance_lock
-from .connection_registry import active_connection_counts
+from ..core.connection_registry import active_connection_counts
 
 
 BACKUP_FORMAT_VERSION = 1

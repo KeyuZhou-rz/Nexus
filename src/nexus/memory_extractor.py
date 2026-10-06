@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from .utils import normalize_topic
+from .core.utils import normalize_topic
 
 
 @dataclass

@@ -9,7 +9,7 @@ from .utils import stable_id
 from .v1_config import RISK_SEVERITY, V1_THRESHOLDS
 
 try:
-    from .intelligence.risk import RiskAssessment
+    from .risk import RiskAssessment
 except ImportError:  # sibling module may land later; ranking is duck-typed
     RiskAssessment = Any  # type: ignore[misc,assignment]
 

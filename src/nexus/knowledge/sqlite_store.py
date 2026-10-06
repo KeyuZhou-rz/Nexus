@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 
-from ..config import ensure_private_runtime_dir
-from .connection_registry import register_connection, unregister_connection
+from ..core.config import ensure_private_runtime_dir
+from ..core.connection_registry import register_connection, unregister_connection
 
 
 # schema.sql 与本文件同目录
@@ -128,7 +128,7 @@ def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
 
 def default_db_path() -> Path:
     """默认 SQLite 路径，基于 config.data_dir 推导绝对路径，避免硬编码相对路径。"""
-    from ..config import default_config
+    from ..core.config import default_config
     return default_config().data_dir / "nexus.db"
 
 

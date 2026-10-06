@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Any
 
-from ..config import AppConfig
+from ..core.config import AppConfig
 from ..knowledge.llm_gateway import (
     LLMGateway,
     LLMGatewayError,

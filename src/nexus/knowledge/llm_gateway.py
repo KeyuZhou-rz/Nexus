@@ -11,7 +11,7 @@ from typing import Any
 
 import requests
 
-from ..config import _load_dotenv as _load_env
+from ..core.config import _load_dotenv as _load_env
 
 _load_env()
 logger = logging.getLogger(__name__)

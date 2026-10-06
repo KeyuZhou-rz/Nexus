@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from nexus.io_utils import atomic_write_json
+from nexus.core.io_utils import atomic_write_json
 
 DEFAULT_SESSION_PATH = Path(__file__).resolve().parents[3] / "data" / "brightspace_session.json"
 

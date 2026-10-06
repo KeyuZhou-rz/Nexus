@@ -4,9 +4,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nexus.academic_state import persist_obligations
+from nexus.core.academic_state import persist_obligations
 from nexus.changes import acknowledge_change, change_key, list_inbox_changes, mail_change_items
-from nexus.models import Task
+from nexus.core.models import Task
 
 
 def _task(

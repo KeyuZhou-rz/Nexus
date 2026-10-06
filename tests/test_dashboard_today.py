@@ -4,12 +4,12 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
-from nexus.academic_state_service import AcademicStateService
-from nexus.action_service import ActionService
-from nexus.today import build_today
-from nexus.v1_config import V1_NOW
+from nexus.core.academic_state_service import AcademicStateService
+from nexus.core.action_service import ActionService
+from nexus.core.today import build_today
+from nexus.core.v1_config import V1_NOW
 
-APP_PATH = Path(__file__).parents[1] / 'src/nexus/dashboard_app.py'
+APP_PATH = Path(__file__).parents[1] / 'src/nexus/core/dashboard_app.py'
 
 
 def seeded_app(monkeypatch, tmp_path):
@@ -79,7 +79,7 @@ def test_completed_selection_cannot_be_started_again(monkeypatch, tmp_path):
 
 
 def test_missing_source_task_stays_visible_and_can_be_confirmed_by_starting(monkeypatch, tmp_path):
-    from nexus.models import Task
+    from nexus.core.models import Task
     state = AcademicStateService(tmp_path)
     task = Task(id='school:one', title='Course assignment', source='brightspace', due_at=V1_NOW + timedelta(days=1), tags=['assignment'])
     state.ingest_snapshot([task], source='brightspace', now=V1_NOW)

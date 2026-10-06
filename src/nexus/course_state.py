@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from .academic_state import _spent_hours, is_obligation_candidate
-from .intelligence.workload import _pace_line, resolve_effort
-from .models import Task
-from .utils import localize_dt
+from .core.academic_state import _spent_hours, is_obligation_candidate
+from .core.workload import _pace_line, resolve_effort
+from .core.models import Task
+from .core.utils import localize_dt
 
 UNASSIGNED_COURSE = "未分课程"
 

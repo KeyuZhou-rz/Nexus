@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from .intelligence.workload import effort_key, is_actionable_deadline, resolve_effort
+from .workload import effort_key, is_actionable_deadline, resolve_effort
 from .models import Task
 from .utils import localize_dt, stable_id
 
@@ -122,7 +122,7 @@ def persist_obligations(
 
 def refresh_from_snapshot(data_dir: Path, snapshot: list[Task]) -> list[Task]:
     """Bootstrap legacy snapshots once; subsequent page reads are projections."""
-    from .knowledge.sqlite_store import SQLiteStore
+    from ..knowledge.sqlite_store import SQLiteStore
 
     store = SQLiteStore(Path(data_dir) / "nexus.db")
     if not store.list_obligations():
@@ -136,7 +136,7 @@ def refresh_from_snapshot(data_dir: Path, snapshot: list[Task]) -> list[Task]:
 
 def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
     """Project persisted obligations back onto Task objects for Tonight."""
-    from .knowledge.sqlite_store import SQLiteStore
+    from ..knowledge.sqlite_store import SQLiteStore
 
     root = Path(data_dir).expanduser()
     db_path = root / "nexus.db"
@@ -193,7 +193,7 @@ def tasks_from_obligations(data_dir: Path, snapshot: list[Task]) -> list[Task]:
 
 
 def recent_changes(data_dir: Path, *, limit: int = 5) -> list[dict[str, Any]]:
-    from .knowledge.sqlite_store import SQLiteStore
+    from ..knowledge.sqlite_store import SQLiteStore
 
     db_path = Path(data_dir).expanduser() / "nexus.db"
     if not db_path.is_file():

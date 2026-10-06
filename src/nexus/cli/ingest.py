@@ -20,7 +20,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from ..failure_queue import failure_key, update_failure_queue
+from ..core.failure_queue import failure_key, update_failure_queue
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 

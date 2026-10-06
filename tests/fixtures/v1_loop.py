@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from nexus.models import Task
-from nexus.v1_config import V1_NOW, V1_TZ
+from nexus.core.models import Task
+from nexus.core.v1_config import V1_NOW, V1_TZ
 
 CS_TITLE = "CS Assignment 2"
 HISTORY_TITLE = "History Reading"

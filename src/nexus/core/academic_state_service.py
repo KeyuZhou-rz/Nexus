@@ -18,8 +18,8 @@ from .academic_state import (
     normalize_title,
     obligation_id_for_task,
 )
-from .intelligence.workload import effort_key
-from .knowledge.sqlite_store import SQLiteStore, connect
+from .workload import effort_key
+from ..knowledge.sqlite_store import SQLiteStore, connect
 from .models import Task
 from .storage import load_tasks, save_tasks
 from .task_service import load_completions

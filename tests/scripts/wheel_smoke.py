@@ -244,7 +244,7 @@ def run_smoke(*, dist_dir: Path, timeout_seconds: int) -> dict[str, Any]:
                 "-c",
                 (
                     "import json, pathlib; "
-                    "from nexus.dashboard import app as dashboard; "
+                    "from nexus.core.dashboard import app as dashboard; "
                     "print(json.dumps({"
                     "'data_dir': str(dashboard.default_config().data_dir), "
                     "'dashboard_file': str(pathlib.Path(dashboard.__file__).resolve())}))"

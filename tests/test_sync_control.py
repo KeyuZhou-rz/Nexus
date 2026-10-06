@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nexus.config import AppConfig
-from nexus.io_utils import atomic_write_json
-from nexus.sync_control import build_sync_status
+from nexus.core.config import AppConfig
+from nexus.core.io_utils import atomic_write_json
+from nexus.core.sync_control import build_sync_status
 
 
 def test_sync_control_reports_configured_fresh_and_task_counts(tmp_path: Path) -> None:

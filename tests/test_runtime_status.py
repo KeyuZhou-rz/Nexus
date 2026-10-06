@@ -7,10 +7,10 @@ from datetime import datetime, timedelta
 from nexus.cli import db_backup
 from nexus.cli.sessions import main as sessions_main
 from nexus.cli.status import main as status_main
-from nexus.failure_queue import update_failure_queue
-from nexus.io_utils import atomic_write_json
+from nexus.core.failure_queue import update_failure_queue
+from nexus.core.io_utils import atomic_write_json
 from nexus.knowledge.sqlite_store import SQLiteStore
-from nexus.runtime_status import build_runtime_status
+from nexus.core.runtime_status import build_runtime_status
 
 
 def test_runtime_status_reads_reports_queues_and_session_backlog(tmp_path) -> None:

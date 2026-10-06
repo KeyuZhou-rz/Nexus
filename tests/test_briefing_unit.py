@@ -14,7 +14,7 @@ from nexus.intelligence.briefing import (
     _rule_briefing,
     select_exam_reminders,
 )
-from nexus.models import Task
+from nexus.core.models import Task
 
 
 # ---------------------------------------------------------------------------

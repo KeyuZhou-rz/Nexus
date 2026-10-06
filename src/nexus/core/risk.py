@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, tzinfo
 
-from ..availability import CapacityResult, normalize_due_at
-from ..v1_config import (
+from .availability import CapacityResult, normalize_due_at
+from .v1_config import (
     INACTIVE_OBLIGATION_STATUSES,
     V1_THRESHOLDS,
     V1_TZ,

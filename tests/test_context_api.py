@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from nexus.context_api import build_context
-from nexus.io_utils import atomic_write_json
+from nexus.core.context_api import build_context
+from nexus.core.io_utils import atomic_write_json
 from nexus.knowledge.memory_api import MemoryAPI
 from nexus.knowledge.sqlite_store import SQLiteStore
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.config import AppConfig
+from nexus.core.config import AppConfig
 from nexus.intelligence.llm import LLMClient
 from nexus.knowledge.llm_client import KnowledgeLLMClient
 from nexus.knowledge.llm_gateway import LLMGateway, LLMGatewayError, LLMResponse

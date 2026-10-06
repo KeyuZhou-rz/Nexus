@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nexus.schemas import validate_task_dict
+from nexus.core.schemas import validate_task_dict
 
 
 def test_validate_task_dict_ok():

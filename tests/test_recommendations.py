@@ -4,12 +4,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from nexus.recommendations import rank_assessments, select_today
-from nexus.utils import stable_id
-from nexus.v1_config import V1_NOW, V1_THRESHOLDS
+from nexus.core.recommendations import rank_assessments, select_today
+from nexus.core.utils import stable_id
+from nexus.core.v1_config import V1_NOW, V1_THRESHOLDS
 
 try:
-    from nexus.intelligence.risk import RiskAssessment
+    from nexus.core.risk import RiskAssessment
 except ImportError:
     from dataclasses import dataclass
 
@@ -162,7 +162,7 @@ def test_rank_tie_breaks() -> None:
 
 
 def test_module_does_not_mention_priority() -> None:
-    text = Path("src/nexus/recommendations.py").read_text(encoding="utf-8")
+    text = Path("src/nexus/core/recommendations.py").read_text(encoding="utf-8")
     assert "priority" not in text
 
 

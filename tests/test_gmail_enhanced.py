@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from nexus.aggregators.google import GoogleAggregator
-from nexus.models import Task
+from nexus.core.aggregators.google import GoogleAggregator
+from nexus.core.models import Task
 
 
 # ── E1: _decode_email_body ───────────────────────────────────────────

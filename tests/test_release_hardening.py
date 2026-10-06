@@ -5,15 +5,15 @@ import sqlite3
 
 import pytest
 
-from nexus.academic_state import refresh_from_snapshot, tasks_from_obligations
-from nexus.academic_state_service import AcademicStateService
-from nexus.action_service import ActionService
-from nexus.context_api import build_context
+from nexus.core.academic_state import refresh_from_snapshot, tasks_from_obligations
+from nexus.core.academic_state_service import AcademicStateService
+from nexus.core.action_service import ActionService
+from nexus.core.context_api import build_context
 from nexus.knowledge.sqlite_store import connect
-from nexus.models import Task
-from nexus.storage import save_tasks
-from nexus.today import build_today
-from nexus.v1_config import V1_NOW, V1_TIMEZONE_NAME
+from nexus.core.models import Task
+from nexus.core.storage import save_tasks
+from nexus.core.today import build_today
+from nexus.core.v1_config import V1_NOW, V1_TIMEZONE_NAME
 
 
 def seed(root, *, title="Homework", remaining=6):
@@ -184,9 +184,9 @@ def test_manual_obligation_survives_complete_external_snapshot(tmp_path):
 def test_successful_calendar_sync_changes_capacity_and_cancellation_restores_it(
     monkeypatch, tmp_path
 ):
-    from nexus.aggregation import run_aggregation
-    from nexus.aggregators.google import GoogleAggregator
-    from nexus.config import AppConfig
+    from nexus.core.aggregation import run_aggregation
+    from nexus.core.aggregators.google import GoogleAggregator
+    from nexus.core.config import AppConfig
 
     service, task, _ = seed(tmp_path)
     service.update_obligation(
@@ -236,8 +236,8 @@ def test_successful_calendar_sync_changes_capacity_and_cancellation_restores_it(
 
 def test_google_calendar_pagination_stable_identity_and_duration(tmp_path):
     from unittest.mock import MagicMock
-    from nexus.aggregators.google import GoogleAggregator
-    from nexus.config import AppConfig
+    from nexus.core.aggregators.google import GoogleAggregator
+    from nexus.core.config import AppConfig
 
     api = MagicMock()
     api.calendarList().list().execute.return_value = {
@@ -279,8 +279,8 @@ def test_workspace_stop_resume_complete_and_defer_use_the_same_obligation(
     from datetime import datetime
     from pathlib import Path
     from streamlit.testing.v1 import AppTest
-    import nexus.dashboard.app as dashboard
-    import nexus.action_service as actions_module
+    import nexus.core.dashboard.app as dashboard
+    import nexus.core.action_service as actions_module
 
     service, task, _ = seed(tmp_path)
     second = service.add_manual_obligation(
@@ -300,7 +300,7 @@ def test_workspace_stop_resume_complete_and_defer_use_the_same_obligation(
     monkeypatch.setattr(actions_module, "_resolve_now", lambda now: now or clock[0])
     monkeypatch.setenv("NEXUS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
-    app_path = Path(__file__).parents[1] / "src/nexus/dashboard_app.py"
+    app_path = Path(__file__).parents[1] / "src/nexus/core/dashboard_app.py"
     app = AppTest.from_file(app_path).run(timeout=30)
     assert not app.exception
     ActionService(tmp_path).defer(task.obligation_id, reason="Later", now=clock[0])
@@ -389,7 +389,7 @@ def test_cancelled_calendar_obligation_leaves_today_and_can_be_restored(tmp_path
 
 
 def test_legacy_timer_can_stop_and_complete_without_counting_the_break(tmp_path):
-    from nexus.task_service import save_completions
+    from nexus.core.task_service import save_completions
 
     service, task, actions = seed(tmp_path)
     save_completions(tmp_path, {task.id: {"started_at": V1_NOW.isoformat()}})
@@ -403,7 +403,7 @@ def test_legacy_timer_can_stop_and_complete_without_counting_the_break(tmp_path)
 
 
 def test_legacy_completion_import_rolls_back_and_retries_as_one_transaction(tmp_path):
-    from nexus.task_service import save_completions
+    from nexus.core.task_service import save_completions
 
     service, task, _ = seed(tmp_path)
     save_completions(
@@ -425,7 +425,7 @@ def test_legacy_completion_import_rolls_back_and_retries_as_one_transaction(tmp_
 
 
 def test_existing_database_imports_legacy_completion_on_first_refresh(tmp_path):
-    from nexus.task_service import save_completions
+    from nexus.core.task_service import save_completions
 
     service, task, _ = seed(tmp_path)
     save_completions(
@@ -487,7 +487,7 @@ def test_concurrent_state_write_cannot_overwrite_committed_completion(
 ):
     from contextlib import contextmanager
     from threading import Event, Thread
-    import nexus.action_service as module
+    import nexus.core.action_service as module
 
     service, task, actions = seed(tmp_path)
     attempting = Event()
@@ -601,7 +601,7 @@ def test_state_form_prefills_independent_items_and_uses_deadline_date_timezone(
     monkeypatch.setenv("NEXUS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("NEXUS_LLM_ENABLED", "0")
     app = AppTest.from_file(
-        Path(__file__).parents[1] / "src/nexus/dashboard_app.py"
+        Path(__file__).parents[1] / "src/nexus/core/dashboard_app.py"
     ).run(timeout=30)
     assert not app.exception
     app.button(key=f"task:{second['id']}").click().run()

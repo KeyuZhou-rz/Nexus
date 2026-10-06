@@ -26,10 +26,10 @@ from typing import Any
 
 import pytest
 
-from nexus.io_utils import atomic_write_json
+from nexus.core.io_utils import atomic_write_json
 from nexus.knowledge.maintenance import create_backup, verify_backup
 from nexus.knowledge.maintenance_lock import maintenance_lock
-from nexus.sync_service import SyncBusyError, _sync_lock
+from nexus.core.sync_service import SyncBusyError, _sync_lock
 
 
 SEED = 0x4E45585553

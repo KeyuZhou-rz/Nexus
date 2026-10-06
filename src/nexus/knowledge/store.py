@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .connection_registry import register_connection, unregister_connection
+from ..core.connection_registry import register_connection, unregister_connection
 
 
 class CourseCollectionNotFoundError(LookupError):

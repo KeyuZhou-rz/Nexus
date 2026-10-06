@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import stat
 
-from nexus.sync_service import run_sync
+from nexus.core.sync_service import run_sync
 
 
 def test_run_sync_offline_persists_all_artifacts_in_requested_data_dir(
@@ -33,15 +33,15 @@ def test_run_sync_offline_persists_all_artifacts_in_requested_data_dir(
         raise AssertionError("offline sync attempted to call an external provider")
 
     monkeypatch.setattr(
-        "nexus.aggregation.BrightspaceAggregator.fetch_tasks",
+        "nexus.core.aggregation.BrightspaceAggregator.fetch_tasks",
         unexpected_external_call,
     )
     monkeypatch.setattr(
-        "nexus.aggregation.GoogleAggregator.fetch_tasks",
+        "nexus.core.aggregation.GoogleAggregator.fetch_tasks",
         unexpected_external_call,
     )
     monkeypatch.setattr(
-        "nexus.aggregation.CanvasLMSConnector.to_tasks",
+        "nexus.core.aggregation.CanvasLMSConnector.to_tasks",
         unexpected_external_call,
     )
     monkeypatch.setattr(

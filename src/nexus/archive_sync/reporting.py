@@ -1,7 +1,7 @@
 """Backward-compatible archive imports for the shared failure queue."""
 from __future__ import annotations
 
-from ..failure_queue import (
+from ..core.failure_queue import (
     DEFAULT_MAX_RETRIES,
     build_failure_report,
     load_failure_queue,

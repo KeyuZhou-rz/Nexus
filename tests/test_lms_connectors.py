@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.aggregators.lms_base import (
+from nexus.core.aggregators.lms_base import (
     Announcement,
     Assignment,
     Course,
@@ -14,7 +14,7 @@ from nexus.aggregators.lms_base import (
     LMSConnector,
     _format_bytes,
 )
-from nexus.aggregators.brightspace import FeedConfig
+from nexus.core.aggregators.brightspace import FeedConfig
 
 
 # ── X1: Domain models & LMSConnector ─────────────────────────────────
@@ -152,7 +152,7 @@ class TestLMSConnectorToTasks:
 
 class TestBrightspaceLMSConnector:
     def test_list_courses_from_feeds(self):
-        from nexus.aggregators.brightspace_lms import BrightspaceLMSConnector
+        from nexus.core.aggregators.brightspace_lms import BrightspaceLMSConnector
 
         connector = BrightspaceLMSConnector(
             ical_feeds=[
@@ -166,7 +166,7 @@ class TestBrightspaceLMSConnector:
         assert course_ids == {"CS202", "CS305"}
 
     def test_list_courses_dedupes(self):
-        from nexus.aggregators.brightspace_lms import BrightspaceLMSConnector
+        from nexus.core.aggregators.brightspace_lms import BrightspaceLMSConnector
 
         connector = BrightspaceLMSConnector(
             ical_feeds=[FeedConfig(name="OS", url="http://ex.com/os.ics", course="CS202")],
@@ -176,7 +176,7 @@ class TestBrightspaceLMSConnector:
         assert len(courses) == 1  # deduped
 
     def test_list_assignments_filters_by_course(self):
-        from nexus.aggregators.brightspace_lms import BrightspaceLMSConnector
+        from nexus.core.aggregators.brightspace_lms import BrightspaceLMSConnector
 
         connector = BrightspaceLMSConnector(
             ical_feeds=[FeedConfig(name="DB", url="http://ex.com/db.ics", course="CS305")],
@@ -186,7 +186,7 @@ class TestBrightspaceLMSConnector:
         assert assignments == []
 
     def test_empty_feeds_return_empty_lists(self):
-        from nexus.aggregators.brightspace_lms import BrightspaceLMSConnector
+        from nexus.core.aggregators.brightspace_lms import BrightspaceLMSConnector
 
         connector = BrightspaceLMSConnector()
         assert connector.list_courses() == []
@@ -195,7 +195,7 @@ class TestBrightspaceLMSConnector:
         assert connector.list_files("ANY") == []
 
     def test_to_tasks_integration(self, monkeypatch):
-        from nexus.aggregators.brightspace_lms import BrightspaceLMSConnector
+        from nexus.core.aggregators.brightspace_lms import BrightspaceLMSConnector
         from icalendar import Calendar
 
         connector = BrightspaceLMSConnector(
@@ -212,7 +212,7 @@ class TestBrightspaceLMSConnector:
         assert tasks == []
 
     def test_list_files_no_archive_dir(self):
-        from nexus.aggregators.brightspace_lms import BrightspaceLMSConnector
+        from nexus.core.aggregators.brightspace_lms import BrightspaceLMSConnector
 
         connector = BrightspaceLMSConnector()
         assert connector.list_files("CS202") == []
@@ -222,7 +222,7 @@ class TestBrightspaceLMSConnector:
 
 class TestCanvasLMSConnector:
     def test_initialization(self):
-        from nexus.aggregators.canvas import CanvasLMSConnector
+        from nexus.core.aggregators.canvas import CanvasLMSConnector
 
         connector = CanvasLMSConnector(
             base_url="https://canvas.instructure.com",
@@ -234,7 +234,7 @@ class TestCanvasLMSConnector:
         assert connector.per_page == 50
 
     def test_per_page_capped_at_100(self):
-        from nexus.aggregators.canvas import CanvasLMSConnector
+        from nexus.core.aggregators.canvas import CanvasLMSConnector
 
         connector = CanvasLMSConnector(
             base_url="https://canvas.example.com",
@@ -244,7 +244,7 @@ class TestCanvasLMSConnector:
         assert connector.per_page == 100
 
     def test_no_token_returns_empty_lists(self):
-        from nexus.aggregators.canvas import CanvasLMSConnector
+        from nexus.core.aggregators.canvas import CanvasLMSConnector
 
         connector = CanvasLMSConnector(
             base_url="https://canvas.example.com",
@@ -255,7 +255,7 @@ class TestCanvasLMSConnector:
         assert connector.list_assignments("1") == []
 
     def test_headers_contain_bearer(self):
-        from nexus.aggregators.canvas import CanvasLMSConnector
+        from nexus.core.aggregators.canvas import CanvasLMSConnector
 
         connector = CanvasLMSConnector(
             base_url="https://canvas.example.com",
@@ -266,7 +266,7 @@ class TestCanvasLMSConnector:
         assert headers["Accept"] == "application/json"
 
     def test_to_tasks_without_token(self):
-        from nexus.aggregators.canvas import CanvasLMSConnector
+        from nexus.core.aggregators.canvas import CanvasLMSConnector
 
         connector = CanvasLMSConnector(
             base_url="https://canvas.example.com",

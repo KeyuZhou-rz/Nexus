@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from nexus.dashboard.view_model import (
+from nexus.view_model import (
     DashboardItem,
     _briefing_lines,
     _greeting,
@@ -13,7 +13,7 @@ from nexus.dashboard.view_model import (
     build_dashboard_state,
     render_task_card,
 )
-from nexus.models import Task
+from nexus.core.models import Task
 
 
 def _task(

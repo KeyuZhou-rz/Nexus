@@ -16,8 +16,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    from nexus.config import default_config
-    from nexus.runtime_status import build_runtime_status
+    from nexus.core.config import default_config
+    from nexus.core.runtime_status import build_runtime_status
 
     data_dir = args.data_dir or default_config().data_dir
     print(json.dumps(build_runtime_status(data_dir, db_path=args.db_path), ensure_ascii=False, indent=2))

@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from nexus.io_utils import atomic_write_json
+from nexus.core.io_utils import atomic_write_json
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -25,7 +25,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    from nexus.config import default_config
+    from nexus.core.config import default_config
     from nexus.knowledge.session_manager import SessionManager
     from nexus.knowledge.sqlite_store import SQLiteStore
     from nexus.knowledge.user_profile import UserProfileManager

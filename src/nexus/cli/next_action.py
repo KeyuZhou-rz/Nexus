@@ -5,8 +5,8 @@ import argparse
 import json
 from pathlib import Path
 
-from ..config import default_config
-from ..context_api import persist_next_action
+from ..core.config import default_config
+from ..core.context_api import persist_next_action
 
 
 def main(argv: list[str] | None = None) -> int:

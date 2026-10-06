@@ -5,11 +5,11 @@ from datetime import timedelta
 
 import pytest
 
-from nexus.academic_state_service import AcademicStateService
-from nexus.action_service import ActionService
+from nexus.core.academic_state_service import AcademicStateService
+from nexus.core.action_service import ActionService
 from nexus.knowledge.sqlite_store import SQLiteStore
-from nexus.today import build_today
-from nexus.v1_config import V1_NOW
+from nexus.core.today import build_today
+from nexus.core.v1_config import V1_NOW
 
 from tests.fixtures.v1_loop import CS_TITLE, cs_due_original
 
@@ -91,8 +91,8 @@ def test_defer_does_not_change_deadline_or_complete(tmp_path) -> None:
 
 
 def test_complete_survives_snapshot_refresh(tmp_path) -> None:
-    from nexus.academic_state import persist_obligations
-    from nexus.models import Task
+    from nexus.core.academic_state import persist_obligations
+    from nexus.core.models import Task
 
     service, actions, oid = _seed(tmp_path)
     actions.complete(oid, effort_minutes=90, now=V1_NOW)

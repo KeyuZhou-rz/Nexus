@@ -17,7 +17,7 @@ from nexus.intelligence.briefing import (
     build_briefing,
 )
 from nexus.intelligence.llm import LLMError
-from nexus.models import Task
+from nexus.core.models import Task
 
 
 # ── helpers ──────────────────────────────────────────────────────────

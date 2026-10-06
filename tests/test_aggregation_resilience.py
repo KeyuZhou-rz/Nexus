@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from nexus import aggregation
-from nexus.config import AppConfig
-from nexus.models import FeedSource, Task
-from nexus.storage import load_tasks, save_feeds, save_tasks
+from nexus.core import aggregation
+from nexus.core.config import AppConfig
+from nexus.core.models import FeedSource, Task
+from nexus.core.storage import load_tasks, save_feeds, save_tasks
 
 
 class _GoogleFailStub:

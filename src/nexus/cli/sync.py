@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from ..sync_service import run_sync
+from ..core.sync_service import run_sync
 
 
 def main(argv: list[str] | None = None) -> int:

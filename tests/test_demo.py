@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from nexus.context_api import build_context
+from nexus.core.context_api import build_context
 from nexus.demo import DEMO_MARKER, create_demo_runtime
-from nexus.storage import load_tasks
+from nexus.core.storage import load_tasks
 
 
 def test_demo_runtime_builds_complete_synthetic_context(tmp_path: Path) -> None:
@@ -42,7 +42,7 @@ def test_demo_runtime_builds_complete_synthetic_context(tmp_path: Path) -> None:
 
 
 def test_demo_runtime_records_assignment_deadline_change(tmp_path: Path) -> None:
-    from nexus.academic_state import recent_changes
+    from nexus.core.academic_state import recent_changes
 
     data_dir = tmp_path / "week"
     create_demo_runtime(data_dir)
@@ -54,7 +54,7 @@ def test_demo_runtime_records_assignment_deadline_change(tmp_path: Path) -> None
 def test_v1_loop_scenario_proves_deadline_and_completion(tmp_path: Path) -> None:
     from nexus.demo import run_v1_loop_scenario
 
-    from nexus.v1_config import V1_NOW
+    from nexus.core.v1_config import V1_NOW
 
     payload = run_v1_loop_scenario(tmp_path / "v1", now=V1_NOW)
     assert payload["ok"] is True
@@ -71,7 +71,7 @@ def test_v1_loop_scenario_proves_deadline_and_completion(tmp_path: Path) -> None
 
 
 def test_demo_runtime_accepts_initialized_empty_directory(tmp_path: Path) -> None:
-    from nexus.onboarding import initialize_runtime
+    from nexus.core.onboarding import initialize_runtime
 
     data_dir = tmp_path / "ready"
     initialize_runtime(data_dir)

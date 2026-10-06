@@ -8,8 +8,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import AppConfig, default_config
-from .storage import load_feeds
+from .core.config import AppConfig, default_config
+from .core.storage import load_feeds
 
 
 @dataclass

@@ -18,12 +18,12 @@ from .availability import (
     CapacityResult,
     compute_capacities,
 )
-from .intelligence.risk import (
+from .risk import (
     RiskAssessment,
     estimate_remaining,
     evaluate_obligation_risk,
 )
-from .intelligence.workload import (
+from .workload import (
     DEFAULT_EFFORT_HOURS,
     EFFORT_HOURS_BY_TAG,
     learned_effort_hours,

@@ -5,9 +5,9 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 from nexus.demo import create_demo_runtime
-from nexus.storage import load_feeds, load_tasks
+from nexus.core.storage import load_feeds, load_tasks
 
-APP_PATH = Path(__file__).parents[1] / 'src/nexus/dashboard_app.py'
+APP_PATH = Path(__file__).parents[1] / 'src/nexus/core/dashboard_app.py'
 
 
 def open_app(monkeypatch, data_dir):
@@ -70,7 +70,7 @@ def test_dashboard_sync_button_uses_shared_sync_service(monkeypatch, tmp_path):
         calls.append(kwargs)
         return {'status': 'succeeded', 'summary': {'task_count': 3}}
 
-    monkeypatch.setattr('nexus.dashboard.app.run_sync', fake_sync)
+    monkeypatch.setattr('nexus.core.dashboard.app.run_sync', fake_sync)
     app = open_app(monkeypatch, data_dir)
     # AppTest can interact with widgets inside the collapsed expander.
     click(app, '更新课程任务')
@@ -89,7 +89,7 @@ def test_dashboard_sync_includes_google_when_authorized(monkeypatch, tmp_path):
         calls.append(kwargs)
         return {'status': 'succeeded'}
 
-    monkeypatch.setattr('nexus.dashboard.app.run_sync', fake_sync)
+    monkeypatch.setattr('nexus.core.dashboard.app.run_sync', fake_sync)
     app = open_app(monkeypatch, data_dir)
     click(app, '更新课程任务')
     assert calls == [{'data_dir': data_dir, 'trigger': 'dashboard', 'include_google': True}]
@@ -104,7 +104,7 @@ def test_dashboard_setup_syncs_feed_without_google(monkeypatch, tmp_path):
         calls.append(kwargs)
         return {'status': 'succeeded', 'summary': {'task_count': 4}}
 
-    monkeypatch.setattr('nexus.dashboard.app.run_sync', fake_sync)
+    monkeypatch.setattr('nexus.core.dashboard.app.run_sync', fake_sync)
     app = open_app(monkeypatch, data_dir)
     next(item for item in app.text_input if item.label == '课程名称').input('Circuits')
     next(item for item in app.text_input if item.label == '日历订阅链接').input('https://example.edu/cal.ics')
@@ -130,7 +130,7 @@ def test_custom_deadline_uses_its_date_timezone_and_requires_only_a_title(monkey
 
 
 def test_blank_custom_title_does_not_create_an_obligation(monkeypatch, tmp_path):
-    from nexus.academic_state_service import AcademicStateService
+    from nexus.core.academic_state_service import AcademicStateService
     app = open_app(monkeypatch, tmp_path)
     click(app, '＋ 自定义任务')
     click(app, '加入清单')

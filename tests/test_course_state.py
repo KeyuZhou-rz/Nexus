@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from nexus.course_state import UNASSIGNED_COURSE, build_course_states
-from nexus.intelligence.workload import EFFORT_HOURS_BY_TAG
-from nexus.models import Task
+from nexus.core.workload import EFFORT_HOURS_BY_TAG
+from nexus.core.models import Task
 
 
 def _task(

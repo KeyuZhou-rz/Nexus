@@ -5,8 +5,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from nexus.config import default_config
-from nexus.io_utils import atomic_write_json
+from nexus.core.config import default_config
+from nexus.core.io_utils import atomic_write_json
 
 
 def main() -> int:

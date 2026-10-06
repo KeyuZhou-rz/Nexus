@@ -5,9 +5,9 @@ import argparse
 import json
 from pathlib import Path
 
-from ..config import default_config
-from ..models import FeedSource
-from ..onboarding import initialize_runtime, upsert_feed
+from ..core.config import default_config
+from ..core.models import FeedSource
+from ..core.onboarding import initialize_runtime, upsert_feed
 
 
 def main(argv: list[str] | None = None) -> int:

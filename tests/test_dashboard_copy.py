@@ -1,5 +1,5 @@
-from nexus.dashboard.copy import first_step_copy, freshness_copy, risk_label, why_copy
-from nexus.v1_config import V1_NOW
+from nexus.core.dashboard.copy import first_step_copy, freshness_copy, risk_label, why_copy
+from nexus.core.v1_config import V1_NOW
 
 
 def test_risk_and_reasons_are_plain_language() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import stat
 
-from nexus.aggregators.google import _atomic_write_secret
+from nexus.core.aggregators.google import _atomic_write_secret
 
 
 def test_atomic_secret_write_replaces_and_restricts_permissions(tmp_path):

@@ -12,9 +12,9 @@ from typing import Any
 
 import pytest
 
-import nexus.sync_service as sync_service
+import nexus.core.sync_service as sync_service
 from nexus.cli import sync as sync_cli
-from nexus.sync_service import (
+from nexus.core.sync_service import (
     LOCK_PROTOCOL,
     LOCK_STALE_AFTER_SECONDS,
     SyncBusyError,
@@ -72,10 +72,10 @@ def _context() -> dict:
 
 def test_run_sync_writes_privacy_bounded_receipt(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nexus.sync_service.run_mvp_pipeline",
+        "nexus.core.sync_service.run_mvp_pipeline",
         lambda **_: {"ok": True, "report_path": str(tmp_path / "pipeline_report.json")},
     )
-    monkeypatch.setattr("nexus.sync_service.build_context", lambda **_: _context())
+    monkeypatch.setattr("nexus.core.sync_service.build_context", lambda **_: _context())
 
     receipt = run_sync(data_dir=tmp_path, trigger="test")
 
@@ -98,11 +98,11 @@ def test_run_sync_writes_privacy_bounded_receipt(tmp_path: Path, monkeypatch) ->
 
 def test_sync_receipt_omits_provider_error_text(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nexus.sync_service.run_mvp_pipeline",
+        "nexus.core.sync_service.run_mvp_pipeline",
         lambda **_: {"ok": False, "report_path": str(tmp_path / "pipeline_report.json")},
     )
     monkeypatch.setattr(
-        "nexus.sync_service.build_context",
+        "nexus.core.sync_service.build_context",
         lambda **_: {
             **_context(),
             "sync": {"sources": {"brightspace": {
@@ -123,7 +123,7 @@ def test_run_sync_returns_busy_without_overwriting_existing_receipt(tmp_path: Pa
     (tmp_path / "sync_receipt.json").write_text('{"status":"succeeded"}', encoding="utf-8")
     with _sync_lock(tmp_path / ".sync.lock", run_id="other", trigger="scheduler"):
         monkeypatch.setattr(
-            "nexus.sync_service.run_mvp_pipeline",
+            "nexus.core.sync_service.run_mvp_pipeline",
             lambda **_: (_ for _ in ()).throw(AssertionError("must not run")),
         )
         receipt = run_sync(data_dir=tmp_path, trigger="dashboard")
@@ -139,7 +139,7 @@ def test_run_sync_returns_busy_without_overwriting_existing_receipt(tmp_path: Pa
 
 def test_run_sync_records_failure_without_leaking_exception_details(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "nexus.sync_service.run_mvp_pipeline",
+        "nexus.core.sync_service.run_mvp_pipeline",
         lambda **_: (_ for _ in ()).throw(RuntimeError("token=secret")),
     )
 
@@ -241,7 +241,7 @@ def test_sync_lock_reclaims_dead_local_owner(tmp_path: Path, monkeypatch) -> Non
         assert (pid, signal) == (dead_pid, 0)
         raise ProcessLookupError
 
-    monkeypatch.setattr("nexus.sync_service.os.kill", report_dead)
+    monkeypatch.setattr("nexus.core.sync_service.os.kill", report_dead)
 
     with _sync_lock(lock_path, run_id="replacement", trigger="test"):
         assert json.loads(lock_path.read_text(encoding="utf-8"))["run_id"] == "replacement"
@@ -272,7 +272,7 @@ def test_sync_lock_does_not_reclaim_recent_foreign_host_owner(tmp_path: Path, mo
     }
     lock_path.write_text(json.dumps(foreign_owner), encoding="utf-8")
     monkeypatch.setattr(
-        "nexus.sync_service.os.kill",
+        "nexus.core.sync_service.os.kill",
         lambda *_: (_ for _ in ()).throw(AssertionError("foreign PID must not be probed")),
     )
 
@@ -298,7 +298,7 @@ def test_sync_lock_does_not_reclaim_expired_foreign_host_owner(
     stale_time = lock_path.stat().st_mtime - LOCK_STALE_AFTER_SECONDS - 1
     os.utime(lock_path, (stale_time, stale_time))
     monkeypatch.setattr(
-        "nexus.sync_service.os.kill",
+        "nexus.core.sync_service.os.kill",
         lambda *_: (_ for _ in ()).throw(AssertionError("foreign PID must not be probed")),
     )
 
@@ -325,7 +325,7 @@ def test_sync_lock_does_not_reclaim_expired_local_owner_when_pid_is_alive(
     os.utime(lock_path, (stale_time, stale_time))
     probes: list[tuple[int, int]] = []
     monkeypatch.setattr(
-        "nexus.sync_service.os.kill",
+        "nexus.core.sync_service.os.kill",
         lambda pid, signal: probes.append((pid, signal)),
     )
 
@@ -352,7 +352,7 @@ def test_sync_lock_does_not_reclaim_local_owner_when_pid_probe_is_denied(
     stale_time = lock_path.stat().st_mtime - LOCK_STALE_AFTER_SECONDS - 1
     os.utime(lock_path, (stale_time, stale_time))
     monkeypatch.setattr(
-        "nexus.sync_service.os.kill",
+        "nexus.core.sync_service.os.kill",
         lambda *_: (_ for _ in ()).throw(PermissionError()),
     )
 
@@ -379,7 +379,7 @@ def test_sync_lock_replaces_abandoned_same_protocol_marker_despite_pid_reuse(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        "nexus.sync_service.os.kill",
+        "nexus.core.sync_service.os.kill",
         lambda *_: (_ for _ in ()).throw(AssertionError("same protocol needs no PID probe")),
     )
 

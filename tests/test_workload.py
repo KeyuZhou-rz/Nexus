@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from nexus.intelligence.workload import (
+from nexus.core.workload import (
     build_judgment,
     effort_key,
     estimate_effort_hours,
     is_actionable_deadline,
     resolve_effort,
 )
-from nexus.models import Task
+from nexus.core.models import Task
 
 
 def _task(id_: str, title: str, due_at: datetime, tags: list[str] | None = None) -> Task:

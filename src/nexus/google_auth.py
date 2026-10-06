@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .config import default_config
-from .aggregators.google import SCOPES, _atomic_write_secret, _ensure_google_deps
+from .core.config import default_config
+from .core.aggregators.google import SCOPES, _atomic_write_secret, _ensure_google_deps
 
 
 def authorize_google(credentials_path: Path, token_path: Path) -> None:

@@ -6,8 +6,8 @@ import stat
 
 import pytest
 
-from nexus.models import FeedSource
-from nexus.onboarding import connect_calendar_feed, initialize_runtime, upsert_feed, validate_feed
+from nexus.core.models import FeedSource
+from nexus.core.onboarding import connect_calendar_feed, initialize_runtime, upsert_feed, validate_feed
 
 
 def test_initialize_runtime_is_idempotent_and_preserves_existing_data(tmp_path: Path) -> None:

@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from .academic_state import recent_changes
-from .io_utils import atomic_write_json
-from .models import Task
+from .core.academic_state import recent_changes
+from .core.io_utils import atomic_write_json
+from .core.models import Task
 
 ACK_FILENAME = "inbox_ack.json"
 

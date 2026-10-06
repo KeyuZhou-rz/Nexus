@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from nexus.models import Task
+from nexus.core.models import Task
 from nexus.tonight_plan import (
     TonightPlan,
     build_tonight_plan,

@@ -4,11 +4,11 @@ import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ..aggregation import run_aggregation
-from ..config import default_config
-from ..io_utils import atomic_write_json
+from ..core.aggregation import run_aggregation
+from ..core.config import default_config
+from ..core.io_utils import atomic_write_json
 from ..intelligence.briefing import briefing_payload, build_briefing
-from ..storage import load_tasks, save_tasks
+from ..core.storage import load_tasks, save_tasks
 
 
 def main() -> None:

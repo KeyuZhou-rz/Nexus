@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from .config import default_config
-from .intelligence.workload import effort_key
+from .workload import effort_key
 from .io_utils import atomic_write_json
-from .learning_focus import build_learning_focus
+from ..learning_focus import build_learning_focus
 from .runtime_status import build_runtime_status
 from .storage import load_tasks, tasks_last_updated
 from .sync_control import build_sync_status
@@ -52,9 +52,9 @@ def _learning_context(db_path: Path, course_id: str | None) -> dict[str, Any]:
         return {"available": False, "reason": "knowledge_store_not_initialized"}
 
     try:
-        from .knowledge.memory_api import MemoryAPI
-        from .knowledge.progress import ProgressService
-        from .knowledge.sqlite_store import SQLiteStore
+        from ..knowledge.memory_api import MemoryAPI
+        from ..knowledge.progress import ProgressService
+        from ..knowledge.sqlite_store import SQLiteStore
 
         store = SQLiteStore(db_path)
         progress = ProgressService(store).get_progress(course_id)

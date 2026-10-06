@@ -14,7 +14,7 @@ from nexus.knowledge.user_profile import UserProfileManager
 from nexus.knowledge.temporal_memory import TemporalMemory
 from nexus.memory_extractor import WeakPointCandidate
 from nexus.memory_writer import record_weak_point
-from nexus.utils import normalize_topic
+from nexus.core.utils import normalize_topic
 
 _DOC_PATTERNS = [
     re.compile(r"(?:common mistakes?|frequent errors?|pitfalls?|don'?t\s+confuse)\s*[:\-]\s*(?P<topic>[^.\n]{3,80})", re.IGNORECASE),

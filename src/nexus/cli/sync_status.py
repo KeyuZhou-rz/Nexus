@@ -16,8 +16,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="Emit JSON (the default output format)")
     args = parser.parse_args(argv)
 
-    from nexus.config import default_config
-    from nexus.sync_control import build_sync_status
+    from nexus.core.config import default_config
+    from nexus.core.sync_control import build_sync_status
 
     config = default_config()
     root = args.data_dir or config.data_dir

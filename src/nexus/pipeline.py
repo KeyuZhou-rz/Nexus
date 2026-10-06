@@ -6,12 +6,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .aggregation import AggregationResult, run_aggregation
+from .core.aggregation import AggregationResult, run_aggregation
 from .archive_sync import run_archive_sync_subprocess
-from .config import default_config
-from .io_utils import atomic_write_json
+from .core.config import default_config
+from .core.io_utils import atomic_write_json
 from .intelligence.briefing import briefing_payload, build_briefing
-from .storage import load_tasks
+from .core.storage import load_tasks
 
 
 @dataclass

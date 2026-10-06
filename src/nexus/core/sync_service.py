@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover - exercised by monkeypatch on POSIX CI
 from .config import default_config, ensure_private_runtime_dir
 from .context_api import build_context
 from .io_utils import atomic_write_json
-from .pipeline import run_mvp_pipeline
+from ..pipeline import run_mvp_pipeline
 
 
 SYNC_LOCK = ".sync.lock"

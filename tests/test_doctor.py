@@ -6,12 +6,12 @@ from pathlib import Path
 import sys
 from types import ModuleType
 
-from nexus.config import AppConfig
+from nexus.core.config import AppConfig
 from nexus.doctor import run_doctor
-from nexus.config import default_config
+from nexus.core.config import default_config
 from nexus.knowledge.sqlite_store import SQLiteStore
-from nexus.models import FeedSource
-from nexus.storage import save_feeds
+from nexus.core.models import FeedSource
+from nexus.core.storage import save_feeds
 
 
 def test_doctor_reports_missing_feeds_warning(tmp_path):

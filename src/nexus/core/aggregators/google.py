@@ -457,7 +457,7 @@ class GoogleAggregator(Aggregator):
             return {}
 
         try:
-            from ..knowledge.llm_gateway import gateway
+            from ...knowledge.llm_gateway import gateway
         except Exception:
             return {}
 

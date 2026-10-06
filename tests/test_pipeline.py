@@ -4,8 +4,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from nexus.aggregation import AggregationResult
-from nexus.config import AppConfig
+from nexus.core.aggregation import AggregationResult
+from nexus.core.config import AppConfig
 from nexus.pipeline import run_mvp_pipeline
 
 
