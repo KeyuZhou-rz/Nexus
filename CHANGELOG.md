@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-10-17
+
+Terminal-first personal release: Nexus answers one question from the terminal, which coursework task to do now.
+
+- Bare `nexus` refreshes course calendars when the last sync is over two hours old or `feeds.json` changed, then prints one task with its course, deadline and remaining hours, plus the next three. `--offline` skips the refresh.
+- Added `nexus start`, `nexus pause`, `nexus done [keyword]` and `nexus add "title" --due 10-20 --hours 2`. They use the same action service and recommendation as the dashboard.
+- `nexus --help` lists the product commands first and the frozen extensions separately.
+- Core Google sync now reads Calendar only; inbox messages are fetched only by `nexus pipeline`.
+- Fixed the inbox extraction prompt raising `KeyError` on its literal JSON braces, which failed the whole Google source whenever LLM extraction was enabled.
+- Tests always run against a temporary `NEXUS_DATA_DIR`. Previously some wrote fixture tasks into the real `data/nexus.db`, where they became the top recommendation.
+- Removed orphaned modules (`course_state`, `changes`, `tonight_plan`, `view_model`), phase notes, the Private Beta guide, the old reference and scratch scripts.
+- Rewrote README, PRODUCT and ROADMAP around the terminal-first product.
+
 ## 0.3.0b3 - 2026-10-06
 
 V1 engineering hardening candidate; real Brightspace/Chrome acceptance is recorded in `docs/TESTING.md`. Google/Canvas, scheduler, and first-week beta acceptance remain pending.
