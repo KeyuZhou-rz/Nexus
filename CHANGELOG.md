@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.4.1 - 2026-10-17
+
+Makes the first week of self-use measurable and stops submitted work from holding the top slot.
+
+- Overdue work untouched for more than a day after its deadline no longer becomes the current task in the terminal, dashboard or context; `nexus` shows it on one line ("已过截止 … 交了就 nexus done"), and starting it brings it back.
+- Added `nexus week`: days used, recommendations started or completed within a day, completions that had been recommended, completions without a timer, tasks added by hand, and estimated versus measured hours over the last seven days.
+- Recommendations shown in the terminal or dashboard are logged to `shown.jsonl` in the data directory (owner-only, deduplicated per task within 30 minutes).
+- Fixed `nexus add --due MM-DD` rolling dates earlier than today into next year; a month-day now takes the year nearest today, and dates outside the current year show their year.
+
 ## 0.4.0 - 2026-10-17
 
 Terminal-first personal release: Nexus answers one question from the terminal, which coursework task to do now.

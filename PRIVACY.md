@@ -13,6 +13,9 @@ the configured `NEXUS_DATA_DIR` on the user's machine.
   `nexus sync-status` read local snapshots and do not start synchronization or
   call an LLM.
 - LLM use is disabled unless `NEXUS_LLM_ENABLED=1` is set explicitly.
+- `nexus` and the dashboard append the recommended task ID and a timestamp to
+  `shown.jsonl` in the data directory (at most once per task per 30 minutes);
+  only `nexus week` reads it, and it never leaves the machine.
 - Streamlit usage statistics are disabled in `.streamlit/config.toml`.
 - Nexus does not include an analytics service, advertising SDK, hosted account,
   or Nexus-operated telemetry endpoint.

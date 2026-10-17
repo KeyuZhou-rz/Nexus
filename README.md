@@ -65,6 +65,7 @@ nexus --data-dir /tmp/nexus-demo
 | `nexus done` | 完成正在做的、或者刚才推荐的那件 |
 | `nexus done 关键词` | 完成标题或课程里包含关键词的那件，比如 `nexus done physics`；`start` 也可以带关键词 |
 | `nexus add "准备展示" --due 10-23 --hours 2` | 补上日历里没有的任务；`--due` 也接受 `2026-10-23` 和 `"10-23 18:00"`，不写时间就按 23:59 |
+| `nexus week` | 最近 7 天：用了几天、推荐的有几件真的做了、手动补了几件、估计和实际用时差多少 |
 | `nexus dashboard` | 在浏览器里看全部任务，修改截止时间和剩余用时 |
 | `nexus sync` | 立刻刷新课程日历 |
 | `nexus next --json` / `nexus context` | 给脚本或其他工具读的 JSON |
@@ -74,6 +75,7 @@ nexus --data-dir /tmp/nexus-demo
 ## 它怎么排序
 
 - 已过期的排最前，然后按截止时间从近到远；同时截止的，剩余工作多的在前。
+- 过了截止超过一天、之后也没动过的任务，多半已经交了：它不再占第一位，改成一行「已过截止 … 交了就 `nexus done`」的提示。对它 `nexus start` 就会回到排序里。
 - 剩余工作依次取：你填的剩余时间、实测用时、同类作业的历史用时，最后才用默认估计。
 - 设好每周可学时段后，还会比较「剩余工作」和「截止前能学的时间」，做不完的提到最前面。没有可学时段时不会假装算出风险。可学时段目前还没有命令行入口，见路线图。
 
@@ -83,6 +85,7 @@ nexus --data-dir /tmp/nexus-demo
 
 - 所有状态都在 `data/`（`nexus.db`、`tasks.json`、`feeds.json`），整个目录不进 git。设置 `NEXUS_DATA_DIR` 可以换位置。
 - 订阅链接里带有私人 token，只存在 `data/feeds.json`，界面里不会显示。
+- 推荐过哪件任务记在 `data/shown.jsonl`（只有时间和任务 ID，同一件 30 分钟内只记一次），只给 `nexus week` 用。
 - 默认同步只读 Brightspace 日历和 Google Calendar；不会打开浏览器，也不会调用大模型。
 
 ## 项目结构
