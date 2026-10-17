@@ -1,13 +1,17 @@
 # Nexus Privacy
 
-Nexus 0.3 Private Beta is local-first. Tasks, briefings, imported course files,
+Nexus is local-first. Tasks, briefings, imported course files,
 learning events, mastery state, OAuth tokens, and vector indexes are stored in
 the configured `NEXUS_DATA_DIR` on the user's machine.
 
 ## Default behavior
 
-- `nexus dashboard`, `nexus context`, `nexus status`, and `nexus sync-status`
-  read local snapshots and do not start synchronization or call an LLM.
+- `nexus` (no command) refreshes the configured course calendars and Google
+  Calendar when the last sync is more than two hours old; `nexus --offline`
+  skips the refresh. It never calls an LLM.
+- `nexus next`, `nexus dashboard`, `nexus context`, `nexus status`, and
+  `nexus sync-status` read local snapshots and do not start synchronization or
+  call an LLM.
 - LLM use is disabled unless `NEXUS_LLM_ENABLED=1` is set explicitly.
 - Streamlit usage statistics are disabled in `.streamlit/config.toml`.
 - Nexus does not include an analytics service, advertising SDK, hosted account,
@@ -21,7 +25,8 @@ enabled:
 | Action | Destination | Data involved |
 |---|---|---|
 | Brightspace iCal/RSS aggregation | Configured feed URL | Feed URL and normal HTTP metadata |
-| Google authorization and sync | Google OAuth, Gmail, Calendar APIs | OAuth credentials and requested course-related messages/events |
+| Google authorization and sync | Google OAuth and Calendar APIs | OAuth credentials and calendar events |
+| `nexus pipeline` (frozen extension) | Gmail API | Unread messages from the last 30 days, for briefings |
 | Canvas sync | Configured Canvas instance | Canvas access token and course/task requests |
 | Archive sync | Configured Brightspace instance | Login/session data and requested course files |
 | LLM features | Configured model provider | The prompt assembled for the requested feature |

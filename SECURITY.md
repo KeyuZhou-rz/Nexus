@@ -2,8 +2,8 @@
 
 ## Supported version
 
-Nexus `0.3.x` Private Beta receives security fixes. Earlier development
-snapshots are unsupported.
+The latest `0.4.x` release receives security fixes. Earlier snapshots are
+unsupported.
 
 ## Reporting
 
