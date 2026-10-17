@@ -9,17 +9,19 @@ from pathlib import Path
 
 from ..core.academic_state import display_course
 from ..core.academic_state_service import AcademicStateService
-from ..core.action_service import ActionService
 from ..core.config import default_config
 from ..core.context_api import persist_next_action
 from ..core.dashboard.copy import hours_copy, local_due, when_copy
 from ..core.storage import load_feeds
 from ..core.sync_service import load_sync_receipt, run_sync
+from ..core.today import build_today
+from ..core.usage_log import record_shown
 from ..core.v1_config import V1_TZ
 
 OPEN_STATUSES = {"open", "in_progress", "overdue", "missing"}
 STALE_AFTER = timedelta(hours=2)
 MORE_LIMIT = 3
+CONFIRM_LIMIT = 3
 
 
 def _data_dir(value: Path | None) -> Path:
@@ -62,16 +64,31 @@ def needs_sync(data_dir: Path, *, now: datetime | None = None) -> bool:
     return feeds_path.is_file() and feeds_path.stat().st_mtime > last.timestamp()
 
 
+def _confirm_line(rows: list[dict], unconfirmed: set[str]) -> str | None:
+    titles = [row["title"] for row in rows if row["id"] in unconfirmed]
+    if not titles:
+        return None
+    shown = "、".join(titles[:CONFIRM_LIMIT])
+    if len(titles) > CONFIRM_LIMIT:
+        shown += f" 等 {len(titles)} 件"
+    return f"已过截止  {shown} · 交了就 nexus done 关键词，还要做就 nexus start 关键词"
+
+
 def render(data_dir: Path, payload: dict, *, now: datetime | None = None) -> str:
     current = (now or datetime.now(timezone.utc)).astimezone(V1_TZ)
     rows = open_rows(data_dir)
-    running = ActionService(data_dir).running_action()
+    today = build_today(data_dir)
+    running = today.running
+    unconfirmed = set(today.overdue_unconfirmed)
+    confirm = _confirm_line(rows, unconfirmed)
     focus_id = running["obligation_id"] if running else payload.get("obligation_id")
     focus = next((row for row in rows if row["id"] == focus_id), None)
     lines: list[str] = []
 
     if focus is None or not payload.get("available") and not running:
         lines.append("现在没有要做的事。")
+        if confirm:
+            lines.append(confirm)
         if not load_feeds(data_dir / "feeds.json"):
             lines.append('接入课程：nexus init --feed-url "<Brightspace 日历订阅链接>"')
         lines.append('加一件：nexus add "任务" --due 10-20')
@@ -90,8 +107,13 @@ def render(data_dir: Path, payload: dict, *, now: datetime | None = None) -> str
     lines.append("        " + " · ".join(detail))
     if not running and payload.get("suggestion"):
         lines.append("        " + payload["suggestion"])
+    if not running:
+        record_shown(data_dir, focus["id"], surface="cli", now=current)
+    if confirm:
+        lines.append("")
+        lines.append(confirm)
 
-    more = [row for row in rows if row["id"] != focus["id"]][:MORE_LIMIT]
+    more = [row for row in rows if row["id"] != focus["id"] and row["id"] not in unconfirmed][:MORE_LIMIT]
     if more:
         lines.append("")
         for index, row in enumerate(more):

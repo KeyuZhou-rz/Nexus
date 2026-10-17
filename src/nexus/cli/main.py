@@ -10,6 +10,7 @@ COMMANDS = {
     "pause": ("nexus.cli.act:pause", "Pause the running task"),
     "done": ("nexus.cli.act:done", "Mark the current task (or one matching a keyword) complete"),
     "add": ("nexus.cli.act:add", "Add a task the course calendar does not have"),
+    "week": ("nexus.cli.week", "Show the last seven days: use, recommendations followed, estimates"),
     "dashboard": ("nexus.cli.dashboard", "Open the full task list in the browser"),
     "sync": ("nexus.cli.sync", "Refresh course calendars now"),
     "init": ("nexus.cli.init", "Initialize the runtime and connect a course calendar feed"),

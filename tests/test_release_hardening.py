@@ -618,7 +618,7 @@ def test_state_form_prefills_independent_items_and_uses_deadline_date_timezone(
 @pytest.mark.parametrize("availability", [False, True])
 def test_past_deadline_does_not_turn_a_new_work_block_into_one_minute(tmp_path, availability):
     service, task, _ = seed(tmp_path)
-    service.update_obligation(task.obligation_id, due_at=V1_NOW - timedelta(days=1), now=V1_NOW)
+    service.update_obligation(task.obligation_id, due_at=V1_NOW - timedelta(hours=2), now=V1_NOW)
     if availability:
         service.add_availability_rule(weekday=0, starts_local="16:00", ends_local="18:00", timezone=V1_TIMEZONE_NAME)
     today = build_today(tmp_path, now=V1_NOW)

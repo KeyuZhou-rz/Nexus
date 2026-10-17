@@ -19,6 +19,7 @@ from ..storage import load_feeds, load_tasks, tasks_last_updated
 from ..sync_service import load_sync_receipt, run_sync
 from ..task_service import apply_completions, load_completions
 from ..today import build_today
+from ..usage_log import record_shown
 from ..v1_config import V1_TIMEZONE_NAME
 from .copy import local_due, when_copy
 from .styles import DASHBOARD_CSS
@@ -45,6 +46,8 @@ def main() -> None:
     today = build_today(data_dir, now=now)
     selected_id = _selected_id(open_rows, done_rows, today)
     selected = next((row for row in rows if row["id"] == selected_id), None)
+    if today.recommendation and today.recommendation.obligation_id and not today.running:
+        record_shown(data_dir, today.recommendation.obligation_id, surface="dashboard", now=now)
 
     _render_header(data_dir)
     notice = st.session_state.pop("notice", None)
@@ -59,6 +62,8 @@ def main() -> None:
         with left, st.container(key="task-list"):
             st.markdown("## 有什么任务")
             st.caption(f"{len(open_rows)} 件未完成")
+            if today.overdue_unconfirmed:
+                st.caption(f"{len(today.overdue_unconfirmed)} 件已过截止超过一天，交了就点完成；还要做就点开始。")
             if not open_rows:
                 st.caption("清单是空的。可以加上自己的任务，或接入课程日历。" if not done_rows else "这些任务都做完了。")
             for row in open_rows:
@@ -80,7 +85,13 @@ def _selected_id(open_rows, done_rows, today) -> str | None:
         return selected
     if today.recommendation and today.recommendation.obligation_id:
         return today.recommendation.obligation_id
-    return next((row["id"] for row in open_rows if row["id"] not in today.deferred_until), None)
+    return next(
+        (
+            row["id"] for row in open_rows
+            if row["id"] not in today.deferred_until and row["id"] not in today.overdue_unconfirmed
+        ),
+        None,
+    )
 
 
 def _render_header(data_dir: Path) -> None:

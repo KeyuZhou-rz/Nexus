@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 V1_TIMEZONE_NAME = "America/New_York"
@@ -11,6 +11,9 @@ V1_TZ = ZoneInfo(V1_TIMEZONE_NAME)
 V1_NOW = datetime(2026, 9, 7, 9, 0, tzinfo=V1_TZ)
 
 INACTIVE_OBLIGATION_STATUSES = frozenset({"done", "completed", "cancelled"})
+# Overdue work untouched this long after its deadline is probably submitted:
+# ask the student to confirm instead of keeping it as the top pick.
+UNCONFIRMED_OVERDUE_AFTER = timedelta(hours=24)
 ACTIVE_OBLIGATION_STATUSES = frozenset({"open", "in_progress"})
 RISK_BANDS = ("overdue", "high", "medium", "low", "unscored")
 RISK_SEVERITY = {

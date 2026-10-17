@@ -29,7 +29,7 @@ from .workload import (
     learned_effort_hours,
 )
 from .recommendations import Recommendation, select_today
-from .v1_config import ACTIVE_OBLIGATION_STATUSES, V1_THRESHOLDS
+from .v1_config import ACTIVE_OBLIGATION_STATUSES, UNCONFIRMED_OVERDUE_AFTER, V1_THRESHOLDS
 
 
 @dataclass
@@ -42,6 +42,7 @@ class TodayView:
     missing_input: str | None = None
     freshness: str | None = None
     deferred_until: dict[str, datetime] = field(default_factory=dict)
+    overdue_unconfirmed: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +69,7 @@ class TodayView:
             "deferred_until": {
                 oid: stamp.isoformat() for oid, stamp in self.deferred_until.items()
             },
+            "overdue_unconfirmed": list(self.overdue_unconfirmed),
         }
 
 
@@ -233,19 +235,34 @@ def today_from_state(
     current = _resolve_now(now)
     assessments, contiguous, titles, next_steps = evaluate_state(state, now=current)
     deferred = {}
-    seen = set()
+    last_touched: dict[str, datetime | None] = {}
     for event in state.get("latest_action_events", state.get("action_events")) or []:
         oid = event["obligation_id"]
-        if oid in seen:
+        if oid in last_touched:
             continue
-        seen.add(oid)
+        touched = _parse_due(event.get("occurred_at"))
+        last_touched[oid] = (
+            touched.replace(tzinfo=current.tzinfo) if touched and touched.tzinfo is None else touched
+        )
         if event["event_type"] == "deferred":
             payload = event.get("payload_json") or "{}"
             details = json.loads(payload) if isinstance(payload, str) else payload
             until = _parse_due(details.get("next_review_at"))
             if until and until > current:
                 deferred[oid] = until
-    eligible = [item for item in assessments if item.obligation_id not in deferred]
+
+    def awaiting_confirmation(item: RiskAssessment) -> bool:
+        if item.band != "overdue" or item.due_at is None:
+            return False
+        touched = last_touched.get(item.obligation_id)
+        worked_since_due = touched is not None and touched > item.due_at
+        return item.due_at <= current - UNCONFIRMED_OVERDUE_AFTER and not worked_since_due
+
+    unconfirmed = tuple(item.obligation_id for item in assessments if awaiting_confirmation(item))
+    eligible = [
+        item for item in assessments
+        if item.obligation_id not in deferred and item.obligation_id not in unconfirmed
+    ]
     running_id = None if running is None else str(running["obligation_id"])
     recommendation = select_today(
         assessments if running else eligible,
@@ -261,6 +278,8 @@ def today_from_state(
     missing = None if recommendation is None else recommendation.missing_input
     if not running and deferred and not eligible:
         missing = "deferred"
+    elif not running and unconfirmed and not eligible:
+        missing = "overdue_unconfirmed"
     return TodayView(
         now=current,
         revision=int(state.get("revision") or 0),
@@ -270,6 +289,7 @@ def today_from_state(
         missing_input=missing,
         freshness=current.isoformat(),
         deferred_until=deferred,
+        overdue_unconfirmed=unconfirmed,
     )
 
 

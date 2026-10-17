@@ -1,5 +1,5 @@
 """Task selection and feedback stay attached to canonical obligation IDs."""
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
@@ -7,15 +7,17 @@ from streamlit.testing.v1 import AppTest
 from nexus.core.academic_state_service import AcademicStateService
 from nexus.core.action_service import ActionService
 from nexus.core.today import build_today
-from nexus.core.v1_config import V1_NOW
+from nexus.core.v1_config import V1_NOW, V1_TZ
 
 APP_PATH = Path(__file__).parents[1] / 'src/nexus/core/dashboard_app.py'
 
 
 def seeded_app(monkeypatch, tmp_path):
     state = AcademicStateService(tmp_path)
-    first = state.add_manual_obligation(title='Reading', course='CS', due_at=V1_NOW + timedelta(days=1), remaining_hours=2)
-    second = state.add_manual_obligation(title='Reading', course='Math', due_at=V1_NOW + timedelta(days=8), remaining_hours=3)
+    # The page renders against the real clock, so seed deadlines relative to it.
+    now = datetime.now(V1_TZ).replace(second=0, microsecond=0)
+    first = state.add_manual_obligation(title='Reading', course='CS', due_at=now + timedelta(days=1), remaining_hours=2)
+    second = state.add_manual_obligation(title='Reading', course='Math', due_at=now + timedelta(days=8), remaining_hours=3)
     monkeypatch.setenv('NEXUS_DATA_DIR', str(tmp_path))
     monkeypatch.setenv('NEXUS_LLM_ENABLED', '0')
     return state, first, second, AppTest.from_file(APP_PATH).run(timeout=30)
@@ -117,3 +119,16 @@ def test_legacy_deferred_tasks_remain_selectable_without_an_automatic_restart(mo
     app.button(key=f'task:{first["id"]}').click().run()
     app.button(key=f'start:{first["id"]}').click().run()
     assert actions.running_action()['obligation_id'] == first['id']
+
+
+def test_stale_overdue_work_is_not_auto_selected(monkeypatch, tmp_path):
+    state = AcademicStateService(tmp_path)
+    now = datetime.now(V1_TZ).replace(second=0, microsecond=0)
+    stale = state.add_manual_obligation(title='Old essay', due_at=now - timedelta(days=3), remaining_hours=1)
+    monkeypatch.setenv('NEXUS_DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('NEXUS_LLM_ENABLED', '0')
+    app = AppTest.from_file(APP_PATH).run(timeout=30)
+    assert not app.exception
+    assert app.button(key=f'task:{stale["id"]}')
+    assert not any(b.key == f'start:{stale["id"]}' for b in app.button)
+    assert any('已过截止超过一天' in item.value for item in app.caption)

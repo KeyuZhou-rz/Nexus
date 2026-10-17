@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from nexus.core.context_api import build_context
@@ -35,7 +36,9 @@ def test_build_context_is_stable_and_read_only_for_empty_runtime(tmp_path: Path)
     )
     before = (tmp_path / "tasks.json").read_text(encoding="utf-8")
 
-    payload = build_context(data_dir=tmp_path, course_id="CS202_OS")
+    payload = build_context(
+        data_dir=tmp_path, course_id="CS202_OS", now=datetime(2026, 8, 5, tzinfo=timezone.utc),
+    )
 
     assert payload["schema_version"] == "1.0"
     assert payload["scope"]["course_id"] == "CS202_OS"
