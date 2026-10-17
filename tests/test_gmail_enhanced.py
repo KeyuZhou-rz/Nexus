@@ -141,6 +141,23 @@ class TestStructuredExtraction:
         result = gmail_extract.extract_structured_fields("Subject", "")
         assert result == {}
 
+    def test_extract_formats_prompt_with_literal_json_braces(self, monkeypatch):
+        from types import SimpleNamespace
+        from nexus.knowledge import llm_gateway
+
+        sent = {}
+
+        def fake_chat(*, messages, **_kwargs):
+            sent["prompt"] = messages[-1]["content"]
+            return SimpleNamespace(content='{"deadline": "2026-10-20"}')
+
+        monkeypatch.setattr(type(llm_gateway.gateway), "is_configured", property(lambda self: True))
+        monkeypatch.setattr(llm_gateway.gateway, "chat", fake_chat)
+        result = gmail_extract.extract_structured_fields("HW3 due", "Homework 3 is due next Tuesday.")
+        assert result == {"deadline": "2026-10-20"}
+        assert '"exam_date": "ISO date or null"' in sent["prompt"]
+        assert "Subject: HW3 due" in sent["prompt"]
+
     def test_enrich_task_no_op_with_empty_extraction(self, monkeypatch):
         monkeypatch.setattr(gmail_extract, "extract_structured_fields", lambda s, b: {})
         task = Task(

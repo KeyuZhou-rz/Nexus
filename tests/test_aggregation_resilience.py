@@ -180,3 +180,23 @@ def test_successful_feed_refresh_preserves_archive_only_brightspace_tasks(
         "new-1",
     }
     assert result.source_status["brightspace"] == "succeeded"
+
+
+def test_core_google_sync_skips_gmail_unless_requested(monkeypatch, tmp_path: Path):
+    seen = []
+
+    class _GoogleSpy:
+        def __init__(self, *args, **kwargs):
+            seen.append(kwargs.get("include_gmail"))
+
+        def fetch_tasks(self):
+            return []
+
+    monkeypatch.setattr(aggregation, "GoogleAggregator", _GoogleSpy)
+    monkeypatch.setattr(aggregation, "_google_configured", lambda config: True)
+    config = AppConfig(data_dir=tmp_path)
+
+    aggregation.run_aggregation(include_canvas=False, data_dir=tmp_path, config=config)
+    aggregation.run_aggregation(include_canvas=False, data_dir=tmp_path, config=config, include_gmail=True)
+
+    assert seen == [False, True]

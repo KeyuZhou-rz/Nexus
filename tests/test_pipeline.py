@@ -21,7 +21,7 @@ def test_run_mvp_pipeline_writes_report_and_briefing(tmp_path: Path, monkeypatch
     data_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("nexus.pipeline.default_config", lambda: AppConfig(data_dir=data_dir))
-    monkeypatch.setattr("nexus.core.collect.run_aggregation", lambda include_google=True, data_dir=None, config=None, email_enricher=None: AggregationResult(tasks=[], errors=[]))
+    monkeypatch.setattr("nexus.core.collect.run_aggregation", lambda include_google=True, data_dir=None, config=None, email_enricher=None, include_gmail=False: AggregationResult(tasks=[], errors=[]))
     monkeypatch.setattr("nexus.pipeline.load_tasks", lambda path=None: [])
     monkeypatch.setattr(
         "nexus.pipeline.build_briefing",
@@ -65,7 +65,7 @@ def test_run_mvp_pipeline_continues_when_archive_sync_fails(tmp_path: Path, monk
         lambda timeout=420: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     monkeypatch.setenv("NEXUS_BRIGHTSPACE_URL", "https://example.invalid")
-    monkeypatch.setattr("nexus.core.collect.run_aggregation", lambda include_google=True, data_dir=None, config=None, email_enricher=None: AggregationResult(tasks=[], errors=[]))
+    monkeypatch.setattr("nexus.core.collect.run_aggregation", lambda include_google=True, data_dir=None, config=None, email_enricher=None, include_gmail=False: AggregationResult(tasks=[], errors=[]))
     monkeypatch.setattr("nexus.pipeline.load_tasks", lambda path=None: [])
     monkeypatch.setattr(
         "nexus.pipeline.build_briefing",

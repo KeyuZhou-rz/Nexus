@@ -15,14 +15,14 @@ logger = logging.getLogger(__name__)
 EXTRACT_STRUCTURED_PROMPT = (
     "Extract structured academic information from this email.\n"
     "Return JSON only with these optional fields (omit if not found):\n"
-    "{\n"
+    "{{\n"
     '  "exam_date": "ISO date or null",\n'
     '  "deadline": "ISO date or null",\n'
     '  "action_items": ["action 1", "action 2"],\n'
     '  "course_hint": "course name or null",\n'
     '  "priority": "high|medium|low",\n'
     '  "summary_zh": "one-line Chinese summary"\n'
-    "}\n\n"
+    "}}\n\n"
     "Subject: {subject}\n\n"
     "Body:\n{body_text}"
 )

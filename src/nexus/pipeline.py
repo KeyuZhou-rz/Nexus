@@ -84,6 +84,7 @@ def run_mvp_pipeline(
         config,
         include_google=include_google,
         email_enricher=enrich_email_task if use_llm else None,
+        include_gmail=True,
     ))
 
     try:

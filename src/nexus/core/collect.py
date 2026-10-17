@@ -66,6 +66,7 @@ def aggregation_step(
     *,
     include_google: bool,
     email_enricher: Callable[[Task, str, str], Task] | None = None,
+    include_gmail: bool = False,
 ) -> StepResult:
     try:
         aggregation: AggregationResult = run_aggregation(
@@ -73,6 +74,7 @@ def aggregation_step(
             data_dir=config.data_dir,
             config=config,
             email_enricher=email_enricher,
+            include_gmail=include_gmail,
         )
     except Exception as exc:
         return StepResult(

@@ -107,6 +107,7 @@ def run_aggregation(
     data_dir: Path | None = None,
     config: AppConfig | None = None,
     email_enricher: Callable[[Task, str, str], Task] | None = None,
+    include_gmail: bool = False,
 ) -> AggregationResult:
     """
     执行完整的数据聚合流程。
@@ -114,7 +115,7 @@ def run_aggregation(
     流程：
     1. 加载并分类订阅源。
     2. Brightspace (iCal/RSS) → 课程/作业数据。
-    3. (可选) Google Calendar/Gmail。
+    3. (可选) Google Calendar；Gmail 仅在 ``include_gmail`` 时拉取（扩展用）。
     4. (可选) Canvas LMS REST API。
     5. 合并 + 去重 + 按来源合入旧快照（单个源失败不丢失该源历史数据）。
     6. 保存到磁盘 (tasks.json)。
@@ -186,7 +187,9 @@ def run_aggregation(
         preserve_snapshot("Google", ("gcal", "gmail", "google"), "skipped")
     else:
         try:
-            tasks.extend(GoogleAggregator(config=config, email_enricher=email_enricher).fetch_tasks())
+            tasks.extend(GoogleAggregator(
+                config=config, include_gmail=include_gmail, email_enricher=email_enricher,
+            ).fetch_tasks())
             source_status["google"] = "succeeded"
             resolved_failures.add(failure_key({"operation": "aggregation", "source": "google"}))
         except Exception as exc:
