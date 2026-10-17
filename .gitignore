@@ -28,7 +28,7 @@ data/**
 tasks.json
 *.local.json
 
-# The private-beta quickstart creates this local runtime at the repository root.
+# Local demo runtimes (`make practice`, `nexus demo`).
 nexus-data/
 nexus-practice/
 
@@ -48,11 +48,11 @@ source .env
 # Streamlit secrets (contains API keys)
 .streamlit/secrets.toml
 
-# Agent tooling runtime state (project agent definitions are source-controlled)
-.codex/*
-!.codex/agents/
-.codex/agents/**
-!.codex/agents/*.toml
+# Local agent tooling stays on this machine
+.claude/
+.codex/
+codex.md
+CLAUDE.md
 
 # Runtime data artifacts
 data/conversations/
