@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
-from ..academic_state import _parse_due, display_course, refresh_from_snapshot
+from ..academic_state import display_course, refresh_from_snapshot
 from ..academic_state_service import AcademicStateService
 from ..action_service import ActionService
 from ..config import default_config
@@ -20,6 +20,7 @@ from ..sync_service import load_sync_receipt, run_sync
 from ..task_service import apply_completions, load_completions
 from ..today import build_today
 from ..v1_config import V1_TIMEZONE_NAME
+from .copy import local_due, when_copy
 from .styles import DASHBOARD_CSS
 
 
@@ -38,7 +39,7 @@ def main() -> None:
     rows = service.store.list_obligations()
     open_rows = sorted(
         (row for row in rows if row["status"] in OPEN_STATUSES),
-        key=lambda row: (row["status"] == "missing", _local_due(row) or datetime.max.replace(tzinfo=TIMEZONE), row["id"]),
+        key=lambda row: (row["status"] == "missing", local_due(row) or datetime.max.replace(tzinfo=TIMEZONE), row["id"]),
     )
     done_rows = [row for row in rows if row["status"] == "done"]
     today = build_today(data_dir, now=now)
@@ -96,30 +97,10 @@ def _render_header(data_dir: Path) -> None:
             st.rerun()
 
 
-def _local_due(row) -> datetime | None:
-    due = _parse_due(row.get("due_at"))
-    if due is None:
-        return None
-    return due.astimezone(TIMEZONE) if due.tzinfo else due.replace(tzinfo=TIMEZONE)
-
-
-def _when(row, now: datetime) -> str:
-    if row["status"] == "done":
-        return "已完成"
-    due = _local_due(row)
-    if due is None:
-        return "没有截止日期 · 来源待核对" if row["status"] == "missing" else "没有截止日期"
-    days = (due.date() - now.date()).days
-    label = "今天" if days == 0 else "明天" if days == 1 else due.strftime("%m 月 %d 日")
-    overdue = " · 已过截止" if due < now else ""
-    uncertain = " · 来源待核对" if row["status"] == "missing" else ""
-    return f"{label} {due:%H:%M} 截止{overdue}{uncertain}"
-
-
 def _render_task_row(row, selected_id, running, now) -> None:
     course = display_course(row.get("course")) or "自己的任务"
     title = row["title"]
-    label = f"{title}\n\n{course} · {_when(row, now)}"
+    label = f"{title}\n\n{course} · {when_copy(row, now)}"
     is_running = running and running["obligation_id"] != row["id"]
     if st.button(
         label, key=f"task:{row['id']}",
@@ -149,7 +130,7 @@ def _render_current_task(row, today, service, data_dir, now) -> None:
     )
     course = display_course(row.get("course")) or "自己的任务"
     st.caption(course)
-    st.caption(_when(row, now))
+    st.caption(when_copy(row, now))
     if done:
         return
     if row["status"] == "missing":
@@ -213,12 +194,12 @@ def _render_custom_task(service, data_dir) -> None:
 
 def _render_edit_task(row, service, data_dir, now) -> None:
     oid = row["id"]
-    due = _local_due(row)
-    local_due = due or now
+    due = local_due(row)
+    shown_due = due or now
     with st.form(f"edit:{oid}"):
         has_due = st.checkbox("设置截止时间", value=due is not None, key=f"has-due:{oid}")
-        due_date = st.date_input("截止日期", value=local_due.date(), key=f"due-date:{oid}")
-        due_time = st.time_input("截止时间", value=local_due.time(), key=f"due-time:{oid}")
+        due_date = st.date_input("截止日期", value=shown_due.date(), key=f"due-date:{oid}")
+        due_time = st.time_input("截止时间", value=shown_due.time(), key=f"due-time:{oid}")
         remaining = st.number_input(
             "还剩多少小时（可选）", min_value=0.0,
             value=row.get("remaining_hours"), step=0.5, key=f"remaining:{oid}",

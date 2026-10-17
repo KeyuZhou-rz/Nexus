@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from ..academic_state import _parse_due
 from ..utils import localize_dt
+from ..v1_config import V1_TZ
 
 WEEKDAYS_ZH = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
@@ -106,3 +108,23 @@ def weekday_label(weekday: int) -> str:
     if 0 <= int(weekday) <= 6:
         return WEEKDAYS_ZH[int(weekday)]
     return f"周{weekday}"
+
+
+def local_due(row) -> datetime | None:
+    due = _parse_due(row.get("due_at"))
+    if due is None:
+        return None
+    return due.astimezone(V1_TZ) if due.tzinfo else due.replace(tzinfo=V1_TZ)
+
+
+def when_copy(row, now: datetime) -> str:
+    if row["status"] == "done":
+        return "已完成"
+    due = local_due(row)
+    if due is None:
+        return "没有截止日期 · 来源待核对" if row["status"] == "missing" else "没有截止日期"
+    days = (due.date() - now.date()).days
+    label = "今天" if days == 0 else "明天" if days == 1 else due.strftime("%m 月 %d 日")
+    overdue = " · 已过截止" if due < now else ""
+    uncertain = " · 来源待核对" if row["status"] == "missing" else ""
+    return f"{label} {due:%H:%M} 截止{overdue}{uncertain}"
