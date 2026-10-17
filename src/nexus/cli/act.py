@@ -100,16 +100,22 @@ def done(argv: list[str] | None = None) -> int:
 
 
 def _parse_due(value: str, now: datetime) -> datetime:
+    """Read 2026-10-20, 10-20 or "10-20 18:00"; a month-day takes the year nearest today."""
     date_part, _, time_part = value.strip().partition(" ")
-    pieces = date_part.split("-")
-    if len(pieces) == 2:
-        pieces = [str(now.year), *pieces]
-    year, month, day = (int(piece) for piece in pieces)
+    pieces = [int(piece) for piece in date_part.split("-")]
     clock = time.fromisoformat(time_part) if time_part else time(23, 59)
-    due = datetime(year, month, day, clock.hour, clock.minute, tzinfo=V1_TZ)
-    if len(date_part.split("-")) == 2 and due.date() < now.date():
-        due = due.replace(year=year + 1)
-    return due
+    if len(pieces) == 3:
+        return datetime(*pieces, clock.hour, clock.minute, tzinfo=V1_TZ)
+    month, day = pieces
+    candidates = []
+    for year in (now.year - 1, now.year, now.year + 1):
+        try:
+            candidates.append(datetime(year, month, day, clock.hour, clock.minute, tzinfo=V1_TZ))
+        except ValueError:
+            continue
+    if not candidates:
+        raise ValueError(value)
+    return min(candidates, key=lambda due: abs(due - now))
 
 
 def add(argv: list[str] | None = None) -> int:

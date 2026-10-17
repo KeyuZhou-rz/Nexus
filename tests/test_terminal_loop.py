@@ -115,12 +115,20 @@ def test_add_creates_a_manual_task_with_local_deadline(tmp_path: Path, capsys) -
     assert (due.month, due.day, due.hour, due.minute) == (10, 23, 18, 0)
 
 
-def test_short_due_dates_default_to_end_of_day_and_roll_forward() -> None:
+def test_short_due_dates_default_to_end_of_day_and_take_the_nearest_year() -> None:
     now = datetime(2026, 12, 30, 9, 0, tzinfo=V1_TZ)
     assert act._parse_due("12-31", now) == datetime(2026, 12, 31, 23, 59, tzinfo=V1_TZ)
     assert act._parse_due("01-05", now) == datetime(2027, 1, 5, 23, 59, tzinfo=V1_TZ)
-    with pytest.raises(ValueError):
-        act._parse_due("13-45", now)
+    assert act._parse_due("12-20 18:00", now) == datetime(2026, 12, 20, 18, 0, tzinfo=V1_TZ)
+    january = datetime(2027, 1, 3, 9, 0, tzinfo=V1_TZ)
+    assert act._parse_due("12-20", january) == datetime(2026, 12, 20, 23, 59, tzinfo=V1_TZ)
+    october = datetime(2026, 10, 17, 9, 0, tzinfo=V1_TZ)
+    assert act._parse_due("10-10", october) == datetime(2026, 10, 10, 23, 59, tzinfo=V1_TZ)
+    leap_year = datetime(2028, 2, 1, 9, 0, tzinfo=V1_TZ)
+    assert act._parse_due("02-29", leap_year) == datetime(2028, 2, 29, 23, 59, tzinfo=V1_TZ)
+    for invalid in ("02-29", "13-45"):
+        with pytest.raises(ValueError):
+            act._parse_due(invalid, now)
 
 
 def test_empty_runtime_explains_how_to_start(tmp_path: Path, capsys) -> None:

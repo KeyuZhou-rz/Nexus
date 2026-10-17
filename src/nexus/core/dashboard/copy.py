@@ -124,7 +124,10 @@ def when_copy(row, now: datetime) -> str:
     if due is None:
         return "没有截止日期 · 来源待核对" if row["status"] == "missing" else "没有截止日期"
     days = (due.date() - now.date()).days
-    label = "今天" if days == 0 else "明天" if days == 1 else due.strftime("%m 月 %d 日")
+    label = (
+        "今天" if days == 0 else "明天" if days == 1
+        else due.strftime("%m 月 %d 日" if due.year == now.year else "%Y 年 %m 月 %d 日")
+    )
     overdue = " · 已过截止" if due < now else ""
     uncertain = " · 来源待核对" if row["status"] == "missing" else ""
     return f"{label} {due:%H:%M} 截止{overdue}{uncertain}"
